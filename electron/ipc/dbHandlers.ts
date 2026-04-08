@@ -122,6 +122,7 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:deleteCard', (_event, cardId: number) => {
     db.prepare('DELETE FROM card_schedule WHERE card_id = ?').run(cardId)
     db.prepare('DELETE FROM review_log WHERE card_id = ?').run(cardId)
+    db.prepare('DELETE FROM mc_review_log WHERE card_id = ?').run(cardId)
     db.prepare('DELETE FROM cards WHERE id = ?').run(cardId)
     return { success: true }
   })
