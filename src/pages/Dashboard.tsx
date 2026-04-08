@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import SubjectCard from '../components/SubjectCard'
@@ -200,23 +200,23 @@ export default function Dashboard(): React.JSX.Element {
                   )}
                 </div>
               </div>
-              <button
-                onClick={() => navigate('/study')}
-                className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-lg font-medium text-sm transition-colors flex-shrink-0"
-              >
-                Start Review →
-              </button>
+              <StudyMenu baseRoute="/study" />
             </div>
           </div>
         ) : (
-          <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-200 dark:border-emerald-800 p-6 text-center">
-            <div className="text-2xl mb-2">🎉</div>
-            <h3 className="font-semibold text-emerald-800 dark:text-emerald-300 mb-1">
-              You're all caught up!
-            </h3>
-            <p className="text-sm text-emerald-600 dark:text-emerald-400">
-              No cards are due today. Great work staying on top of your studies!
-            </p>
+          <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-200 dark:border-emerald-800 p-6">
+            <div className="flex items-center justify-between gap-6">
+              <div>
+                <div className="text-2xl mb-1">🎉</div>
+                <h3 className="font-semibold text-emerald-800 dark:text-emerald-300 mb-1">
+                  You're all caught up!
+                </h3>
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">
+                  No cards are due today. Great work staying on top of your studies!
+                </p>
+              </div>
+              <StudyMenu baseRoute="/study" />
+            </div>
           </div>
         )}
       </div>
@@ -341,6 +341,59 @@ export default function Dashboard(): React.JSX.Element {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StudyMenu({ baseRoute }: { baseRoute: string }): React.JSX.Element {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function close(e: MouseEvent): void {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [open])
+
+  const options = [
+    { label: 'Flashcards', desc: 'Review your flashcard decks', route: `${baseRoute}?type=flashcard`, dot: 'bg-violet-500' },
+    { label: 'Active Recall', desc: 'Open-ended recall questions', route: `${baseRoute}?type=active_recall`, dot: 'bg-indigo-500' },
+    { label: 'Multiple Choice', desc: 'Practice with answer options', route: `${baseRoute}?mode=mc`, dot: 'bg-blue-500' },
+  ]
+
+  return (
+    <div className="relative flex-shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-lg font-medium text-sm transition-colors flex items-center gap-2"
+      >
+        Study Now
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
+          <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg py-1.5 z-50">
+          {options.map(opt => (
+            <button
+              key={opt.label}
+              onClick={() => { setOpen(false); navigate(opt.route) }}
+              className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors flex items-start gap-3"
+            >
+              <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${opt.dot}`} />
+              <div>
+                <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{opt.label}</div>
+                <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{opt.desc}</div>
+              </div>
+            </button>
+          ))}
         </div>
       )}
     </div>

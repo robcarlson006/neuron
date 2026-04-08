@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import FlashCard from '../components/FlashCard'
 import ActiveRecallCard from '../components/ActiveRecallCard'
+import MultipleChoiceCard from '../components/MultipleChoiceCard'
 import type { Card, CardSchedule, SessionSummary } from '../types'
 
 interface StudyCard extends Card {
@@ -17,10 +18,14 @@ type EmptyReason = 'no-cards' | 'new-cards' | 'all-caught-up'
 
 export default function StudySession(): React.JSX.Element {
   const { subjectId } = useParams<{ subjectId?: string }>()
+  const [searchParams] = useSearchParams()
+  const isMCMode = searchParams.get('mode') === 'mc'
+  const typeFilter = searchParams.get('type') as 'flashcard' | 'active_recall' | null
   const { user } = useAppStore()
   const navigate = useNavigate()
 
   const [cards, setCards] = useState<StudyCard[]>([])
+  const [allCards, setAllCards] = useState<StudyCard[]>([]) // full pool for MC distractors
   const [skippedCards, setSkippedCards] = useState<StudyCard[]>([])
   const [currentIdx, setCurrentIdx] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -44,10 +49,18 @@ export default function StudySession(): React.JSX.Element {
     try {
       const subjectIdNum = subjectId ? Number(subjectId) : undefined
 
-      if (studyAll) {
-        // Load all cards regardless of due date
+      if (isMCMode) {
+        // MC mode always uses all cards as the pool
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        setCards(all as StudyCard[])
+        if (all.length === 0) {
+          setEmptyReason('no-cards')
+          setCards([])
+        } else {
+          // Shuffle for MC
+          const shuffled = [...all].sort(() => Math.random() - 0.5) as StudyCard[]
+          setCards(shuffled)
+          setAllCards(all as StudyCard[])
+        }
         setSummary({ total: all.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
         setSkippedCards([])
         setCurrentIdx(0)
@@ -55,20 +68,32 @@ export default function StudySession(): React.JSX.Element {
         return
       }
 
-      const due = await window.electronAPI.getDueCards(user.id, subjectIdNum)
-
-      if (due.length === 0) {
-        // Determine why there are no due cards
+      if (studyAll) {
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        if (all.length === 0) {
+        const filtered = typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[]
+        setCards(filtered)
+        setSummary({ total: filtered.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
+        setSkippedCards([])
+        setCurrentIdx(0)
+        setPhase('studying')
+        return
+      }
+
+      const due = await window.electronAPI.getDueCards(user.id, subjectIdNum)
+      const filteredDue = typeFilter ? (due as StudyCard[]).filter(c => c.type === typeFilter) : due as StudyCard[]
+
+      if (filteredDue.length === 0) {
+        const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
+        const filteredAll = typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[]
+        if (filteredAll.length === 0) {
           setEmptyReason('no-cards')
         } else {
-          const hasNewCards = all.some((c: StudyCard) => c.repetitions === 0)
+          const hasNewCards = filteredAll.some((c: StudyCard) => c.repetitions === 0)
           setEmptyReason(hasNewCards ? 'new-cards' : 'all-caught-up')
         }
         setCards([])
       } else {
-        setCards(due as StudyCard[])
+        setCards(filteredDue)
       }
 
       setSummary({ total: due.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
@@ -82,6 +107,7 @@ export default function StudySession(): React.JSX.Element {
   const currentCards = phase === 'studying' ? cards : skippedCards
   const currentCard = currentCards[currentIdx]
 
+  // SM2 review — only used in normal mode
   async function processReview(quality: number): Promise<void> {
     if (!currentCard || !user) return
 
@@ -112,6 +138,30 @@ export default function StudySession(): React.JSX.Element {
         cardId: currentCard.id,
         quality,
         wasCorrect: quality >= 3
+      }]
+    }))
+
+    advance()
+  }
+
+  // MC review — logs to mc_review_log, never touches SM2
+  async function handleMCResult(wasCorrect: boolean): Promise<void> {
+    if (!currentCard || !user) return
+
+    await window.electronAPI.saveMCReview({
+      cardId: currentCard.id,
+      userId: user.id,
+      wasCorrect
+    })
+
+    setSummary(prev => ({
+      ...prev,
+      correct: wasCorrect ? prev.correct + 1 : prev.correct,
+      incorrect: !wasCorrect ? prev.incorrect + 1 : prev.incorrect,
+      cardsReviewed: [...prev.cardsReviewed, {
+        cardId: currentCard.id,
+        quality: wasCorrect ? 5 : 1,
+        wasCorrect
       }]
     }))
 
@@ -277,10 +327,10 @@ export default function StudySession(): React.JSX.Element {
               {accuracy >= 80 ? '🏆' : accuracy >= 60 ? '👍' : '💪'}
             </div>
             <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50 mb-1">
-              Session Complete!
+              {isMCMode ? 'Practice Complete!' : 'Session Complete!'}
             </h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              You reviewed {reviewed} card{reviewed !== 1 ? 's' : ''}
+              You answered {reviewed} question{reviewed !== 1 ? 's' : ''}
               {summary.skipped > 0 ? ` and skipped ${summary.skipped}` : ''}
             </p>
           </div>
@@ -318,6 +368,12 @@ export default function StudySession(): React.JSX.Element {
                 />
               </div>
             </div>
+
+            {isMCMode && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-3 text-center">
+                Multiple choice results are tracked separately and don't affect your spaced repetition schedule.
+              </p>
+            )}
           </div>
 
           <div className="flex gap-3">
@@ -343,7 +399,10 @@ export default function StudySession(): React.JSX.Element {
       {/* Top bar */}
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
         <div className="h-0.5 bg-slate-100 dark:bg-slate-800">
-          <div className="h-0.5 bg-violet-500 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+          <div
+            className={`h-0.5 transition-all duration-300 ${isMCMode ? 'bg-blue-500' : 'bg-violet-500'}`}
+            style={{ width: `${progressPercent}%` }}
+          />
         </div>
 
         <div className="flex items-center justify-between px-8 py-4">
@@ -358,6 +417,11 @@ export default function StudySession(): React.JSX.Element {
           </button>
 
           <div className="flex items-center gap-3 text-sm">
+            {isMCMode && (
+              <span className="text-blue-600 dark:text-blue-400 font-medium text-xs px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 rounded-full border border-blue-200 dark:border-blue-800">
+                Multiple Choice
+              </span>
+            )}
             {phase === 'skipped' && (
               <span className="text-amber-500 dark:text-amber-400 font-medium text-xs px-2 py-0.5 bg-amber-50 dark:bg-amber-900/30 rounded-full">
                 Reviewing skipped
@@ -366,17 +430,30 @@ export default function StudySession(): React.JSX.Element {
             <span className="text-emerald-600 dark:text-emerald-400 font-medium">{summary.correct} correct</span>
             <span className="text-slate-300 dark:text-slate-600">·</span>
             <span className="text-red-500 font-medium">{summary.incorrect} incorrect</span>
-            <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
-            <span className="text-slate-400 dark:text-slate-500 text-xs hidden sm:inline">
-              <kbd className="font-mono">Space</kbd> to flip · <kbd className="font-mono">1</kbd><kbd className="font-mono">2</kbd><kbd className="font-mono">3</kbd> to rate
-            </span>
+            {!isMCMode && (
+              <>
+                <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
+                <span className="text-slate-400 dark:text-slate-500 text-xs hidden sm:inline">
+                  <kbd className="font-mono">Space</kbd> to flip · <kbd className="font-mono">1</kbd><kbd className="font-mono">2</kbd><kbd className="font-mono">3</kbd> to rate
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* Card area */}
       <div className="flex-1 flex items-center justify-center p-8">
-        {currentCard.type === 'flashcard' ? (
+        {isMCMode ? (
+          <MultipleChoiceCard
+            card={currentCard}
+            allCards={allCards}
+            onResult={handleMCResult}
+            onSkip={phase === 'studying' ? handleSkip : undefined}
+            cardNumber={currentIdx + 1}
+            totalCards={currentCards.length}
+          />
+        ) : currentCard.type === 'flashcard' ? (
           <FlashCard
             card={currentCard}
             onResult={processReview}

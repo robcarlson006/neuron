@@ -9,7 +9,8 @@ import type {
   Diagnostic,
   SM2Result,
   GeneratedCards,
-  EvaluationResult
+  EvaluationResult,
+  MCStats
 } from '../src/types'
 
 const electronAPI = {
@@ -91,6 +92,12 @@ const electronAPI = {
     ipcRenderer.invoke('db:getStreakData', userId),
   getWeakestCards: (userId: number, limit?: number): Promise<(Card & { avg_quality: number })[]> =>
     ipcRenderer.invoke('db:getWeakestCards', userId, limit),
+
+  // Multiple choice
+  saveMCReview: (params: { cardId: number; userId: number; wasCorrect: boolean }): Promise<{ id: number }> =>
+    ipcRenderer.invoke('db:saveMCReview', params),
+  getMCStats: (userId: number, days?: number): Promise<MCStats> =>
+    ipcRenderer.invoke('db:getMCStats', userId, days),
 
   // Meta
   getMeta: (key: string): Promise<string | null> => ipcRenderer.invoke('db:getMeta', key),

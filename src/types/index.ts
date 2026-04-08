@@ -140,6 +140,19 @@ export interface SessionSummary {
   cardsReviewed: ReviewResult[]
 }
 
+export interface MCReviewLog {
+  id: number
+  card_id: number
+  user_id: number
+  reviewed_at: string
+  was_correct: number
+}
+
+export interface MCStats {
+  total: number
+  correct: number
+}
+
 export type Theme = 'light' | 'dark'
 
 export interface AppSettings {

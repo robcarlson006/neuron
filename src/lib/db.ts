@@ -93,6 +93,16 @@ export const DB_SCHEMA = `
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS mc_review_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    reviewed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    was_correct INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (card_id) REFERENCES cards(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 `
 
 export const MASTERED_INTERVAL = 21

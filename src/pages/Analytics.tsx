@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import ProgressChart from '../components/ProgressChart'
-import type { ReviewLog, Card } from '../types'
+import type { ReviewLog, Card, MCStats } from '../types'
 
 interface ReviewDataPoint {
   date: string
@@ -24,6 +24,7 @@ export default function Analytics(): React.JSX.Element {
   const [correctRate, setCorrectRate] = useState(0)
   const [loading, setLoading] = useState(true)
   const [chartType, setChartType] = useState<'area' | 'bar'>('bar')
+  const [mcStats, setMCStats] = useState<MCStats>({ total: 0, correct: 0 })
 
   useEffect(() => {
     if (user) loadAnalytics()
@@ -88,6 +89,9 @@ export default function Analytics(): React.JSX.Element {
 
       const weak = await window.electronAPI.getWeakestCards(user.id, 10) as WeakCard[]
       setWeakCards(weak)
+
+      const mc = await window.electronAPI.getMCStats(user.id, 30)
+      setMCStats(mc)
     } catch (err) {
       console.error('Analytics load error:', err)
     } finally {
@@ -207,6 +211,46 @@ export default function Analytics(): React.JSX.Element {
             </div>
             <p className="text-sm text-slate-400 dark:text-slate-500">No review data yet.</p>
             <p className="text-xs text-slate-300 dark:text-slate-600 mt-1">Start studying to see your progress here!</p>
+          </div>
+        )}
+      </div>
+
+      {/* Multiple Choice Stats */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6 mb-6">
+        <div className="flex items-center gap-2 mb-5">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Multiple Choice Practice</h2>
+          <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-full text-xs font-medium">Last 30 days</span>
+        </div>
+        {mcStats.total === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="w-10 h-10 bg-blue-50 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-3">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="4" width="16" height="13" rx="2.5" stroke="currentColor" strokeWidth="1.5" className="text-blue-400 dark:text-blue-500" fill="none" />
+                <circle cx="6.5" cy="10.5" r="1.5" fill="currentColor" className="text-blue-400 dark:text-blue-500" />
+                <path d="M10 10.5H15.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="text-blue-400 dark:text-blue-500" />
+                <circle cx="6.5" cy="14" r="1.5" fill="currentColor" className="text-blue-300 dark:text-blue-600" />
+                <path d="M10 14H15.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="text-blue-300 dark:text-blue-600" />
+              </svg>
+            </div>
+            <p className="text-sm text-slate-400 dark:text-slate-500">No multiple choice practice yet.</p>
+            <p className="text-xs text-slate-300 dark:text-slate-600 mt-1">Use the Multiple Choice mode to practice without affecting your schedule.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-800">
+              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{mcStats.total}</div>
+              <div className="text-xs font-medium text-slate-400 dark:text-slate-500 mt-1">Questions Answered</div>
+            </div>
+            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-4 border border-emerald-100 dark:border-emerald-800">
+              <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{mcStats.correct}</div>
+              <div className="text-xs font-medium text-slate-400 dark:text-slate-500 mt-1">Correct</div>
+            </div>
+            <div className="bg-violet-50 dark:bg-violet-900/20 rounded-xl p-4 border border-violet-100 dark:border-violet-800">
+              <div className="text-2xl font-bold text-violet-600 dark:text-violet-400">
+                {mcStats.total > 0 ? Math.round((mcStats.correct / mcStats.total) * 100) : 0}%
+              </div>
+              <div className="text-xs font-medium text-slate-400 dark:text-slate-500 mt-1">MC Accuracy</div>
+            </div>
           </div>
         )}
       </div>

@@ -432,4 +432,28 @@ export function registerDbHandlers(): void {
 
     return { sm2Result, success: true }
   })
+
+  // Multiple choice review log
+  ipcMain.handle('db:saveMCReview', (_event, params: { cardId: number; userId: number; wasCorrect: boolean }) => {
+    const { cardId, userId, wasCorrect } = params
+    const result = db.prepare(
+      'INSERT INTO mc_review_log (card_id, user_id, reviewed_at, was_correct) VALUES (?, ?, ?, ?)'
+    ).run(cardId, userId, new Date().toISOString(), wasCorrect ? 1 : 0)
+    return { id: result.lastInsertRowid }
+  })
+
+  ipcMain.handle('db:getMCStats', (_event, userId: number, days?: number) => {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - (days ?? 30))
+    const cutoffStr = cutoff.toISOString().split('T')[0]
+
+    const rows = db.prepare(
+      `SELECT was_correct FROM mc_review_log
+       WHERE user_id = ? AND date(reviewed_at) >= ?`
+    ).all(userId, cutoffStr) as { was_correct: number }[]
+
+    const total = rows.length
+    const correct = rows.filter(r => r.was_correct).length
+    return { total, correct }
+  })
 }

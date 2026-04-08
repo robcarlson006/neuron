@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { SubjectWithStats } from '../types'
 
@@ -151,18 +151,10 @@ export default function SubjectCard({ data, onDelete }: SubjectCardProps): React
           )}
         </div>
 
-        {/* Study button if cards due */}
-        {cardsDue > 0 && (
+        {/* Study Now button */}
+        {totalCards > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                navigate(`/study/${subject.id}`)
-              }}
-              className="w-full bg-violet-600 hover:bg-violet-700 text-white py-2 rounded-lg font-medium text-sm transition-colors"
-            >
-              Study Now · {cardsDue} cards
-            </button>
+            <SubjectStudyMenu subjectId={subject.id} cardsDue={cardsDue} />
           </div>
         )}
       </div>
@@ -219,5 +211,60 @@ export default function SubjectCard({ data, onDelete }: SubjectCardProps): React
         </div>
       )}
     </>
+  )
+}
+
+function SubjectStudyMenu({ subjectId, cardsDue }: { subjectId: number; cardsDue: number }): React.JSX.Element {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const closeMenu = useCallback((e: MouseEvent) => {
+    if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    window.addEventListener('mousedown', closeMenu)
+    return () => window.removeEventListener('mousedown', closeMenu)
+  }, [open, closeMenu])
+
+  const base = `/study/${subjectId}`
+  const options = [
+    { label: 'Flashcards', desc: 'Review flashcard decks', route: `${base}?type=flashcard`, dot: 'bg-violet-500' },
+    { label: 'Active Recall', desc: 'Open-ended recall questions', route: `${base}?type=active_recall`, dot: 'bg-indigo-500' },
+    { label: 'Multiple Choice', desc: 'Practice with answer options', route: `${base}?mode=mc`, dot: 'bg-blue-500' },
+  ]
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o) }}
+        className="w-full bg-violet-600 hover:bg-violet-700 text-white py-2 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+      >
+        Study Now{cardsDue > 0 ? ` · ${cardsDue} due` : ''}
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
+          <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 bottom-full mb-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg py-1.5 z-50">
+          {options.map(opt => (
+            <button
+              key={opt.label}
+              onClick={(e) => { e.stopPropagation(); setOpen(false); navigate(opt.route) }}
+              className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors flex items-start gap-3"
+            >
+              <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${opt.dot}`} />
+              <div>
+                <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{opt.label}</div>
+                <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{opt.desc}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
