@@ -10,10 +10,10 @@ function drawNeuron(canvas) {
   const cy = size / 2;
   const scale = size / 1024;
 
-  // Background - deep dark blue/purple
+  // Background - soft light lavender-to-periwinkle
   const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.7);
-  bg.addColorStop(0, '#0d0d2b');
-  bg.addColorStop(1, '#050510');
+  bg.addColorStop(0, '#f5f0ff');
+  bg.addColorStop(1, '#e8efff');
   ctx.fillStyle = bg;
   ctx.beginPath();
   ctx.roundRect(0, 0, size, size, size * 0.18);
@@ -103,7 +103,7 @@ function drawNeuron(canvas) {
   }
 
   // === DENDRITES (top-left branching tree) ===
-  const dendColor = '#7b6fff';
+  const dendColor = '#a78bfa';
   const dw = S(4);
 
   // Main dendrite trunk going upper-left
@@ -129,18 +129,18 @@ function drawNeuron(canvas) {
   glowCurve(cx - S(120), cy + S(20), cx - S(150), cy + S(80), cx - S(200), cy + S(100), dendColor, dw * 0.55);
 
   // Dendrite tips (synaptic terminals)
-  dot(cx - S(230), cy - S(130), S(8), '#a89fff');
-  dot(cx - S(240), cy - S(50), S(6), '#a89fff');
-  dot(cx - S(170), cy - S(290), S(7), '#a89fff');
-  dot(cx - S(90), cy - S(310), S(6), '#a89fff');
-  dot(cx + S(230), cy - S(80), S(7), '#a89fff');
-  dot(cx + S(200), cy - S(280), S(6), '#a89fff');
-  dot(cx + S(290), cy - S(130), S(6), '#a89fff');
-  dot(cx - S(230), cy - S(20), S(7), '#a89fff');
-  dot(cx - S(200), cy + S(100), S(6), '#a89fff');
+  dot(cx - S(230), cy - S(130), S(8), '#c4b5fd');
+  dot(cx - S(240), cy - S(50), S(6), '#c4b5fd');
+  dot(cx - S(170), cy - S(290), S(7), '#c4b5fd');
+  dot(cx - S(90), cy - S(310), S(6), '#c4b5fd');
+  dot(cx + S(230), cy - S(80), S(7), '#c4b5fd');
+  dot(cx + S(200), cy - S(280), S(6), '#c4b5fd');
+  dot(cx + S(290), cy - S(130), S(6), '#c4b5fd');
+  dot(cx - S(230), cy - S(20), S(7), '#c4b5fd');
+  dot(cx - S(200), cy + S(100), S(6), '#c4b5fd');
 
   // === AXON (going lower-right, long) ===
-  const axonColor = '#00e5ff';
+  const axonColor = '#38bdf8';
   const aw = S(5);
 
   glowCurve(cx, cy, cx + S(80), cy + S(100), cx + S(130), cy + S(210), axonColor, aw);
@@ -150,18 +150,18 @@ function drawNeuron(canvas) {
   glowCurve(cx + S(80), cy + S(100), cx + S(140), cy + S(120), cx + S(200), cy + S(160), axonColor, aw * 0.55, 0.85);
   glowCurve(cx + S(130), cy + S(210), cx + S(200), cy + S(230), cx + S(260), cy + S(210), axonColor, aw * 0.5, 0.85);
 
-  // Synaptic terminals at axon ends (bright cyan dots)
-  dot(cx + S(110), cy + S(330), S(10), '#00e5ff');
-  dot(cx + S(200), cy + S(160), S(8), '#00e5ff');
-  dot(cx + S(260), cy + S(210), S(8), '#00e5ff');
+  // Synaptic terminals at axon ends (sky blue dots)
+  dot(cx + S(110), cy + S(330), S(10), '#7dd3fc');
+  dot(cx + S(200), cy + S(160), S(8), '#7dd3fc');
+  dot(cx + S(260), cy + S(210), S(8), '#7dd3fc');
 
   // === SOMA (cell body) ===
   const somaR = S(78);
 
   // Outer glow halo
   const halo = ctx.createRadialGradient(cx, cy, somaR * 0.5, cx, cy, somaR * 2.2);
-  halo.addColorStop(0, 'rgba(100,80,255,0.35)');
-  halo.addColorStop(0.5, 'rgba(60,40,200,0.12)');
+  halo.addColorStop(0, 'rgba(167,139,250,0.35)');
+  halo.addColorStop(0.5, 'rgba(139,92,246,0.12)');
   halo.addColorStop(1, 'transparent');
   ctx.save();
   ctx.fillStyle = halo;
@@ -170,11 +170,11 @@ function drawNeuron(canvas) {
   ctx.fill();
   ctx.restore();
 
-  // Soma body gradient
+  // Soma body gradient - lighter purple
   const somaGrad = ctx.createRadialGradient(cx - S(20), cy - S(20), S(5), cx, cy, somaR);
-  somaGrad.addColorStop(0, '#5a4fff');
-  somaGrad.addColorStop(0.45, '#3a28cc');
-  somaGrad.addColorStop(1, '#1a1060');
+  somaGrad.addColorStop(0, '#c4b5fd');
+  somaGrad.addColorStop(0.45, '#8b5cf6');
+  somaGrad.addColorStop(1, '#6d28d9');
   ctx.save();
   ctx.fillStyle = somaGrad;
   ctx.beginPath();
@@ -185,7 +185,7 @@ function drawNeuron(canvas) {
   // Soma border glow
   ctx.save();
   ctx.globalAlpha = 0.7;
-  ctx.strokeStyle = '#8b7aff';
+  ctx.strokeStyle = '#c4b5fd';
   ctx.lineWidth = S(3);
   ctx.beginPath();
   ctx.arc(cx, cy, somaR, 0, Math.PI * 2);
@@ -195,9 +195,9 @@ function drawNeuron(canvas) {
   // Nucleus
   const nucR = S(32);
   const nucGrad = ctx.createRadialGradient(cx - S(8), cy - S(8), S(2), cx, cy, nucR);
-  nucGrad.addColorStop(0, '#c0b8ff');
-  nucGrad.addColorStop(0.5, '#7060e8');
-  nucGrad.addColorStop(1, '#3020a0');
+  nucGrad.addColorStop(0, '#ede9fe');
+  nucGrad.addColorStop(0.5, '#a78bfa');
+  nucGrad.addColorStop(1, '#7c3aed');
   ctx.save();
   ctx.fillStyle = nucGrad;
   ctx.beginPath();
@@ -205,7 +205,7 @@ function drawNeuron(canvas) {
   ctx.fill();
 
   ctx.globalAlpha = 0.5;
-  ctx.strokeStyle = '#b0a0ff';
+  ctx.strokeStyle = '#c4b5fd';
   ctx.lineWidth = S(1.5);
   ctx.stroke();
   ctx.restore();

@@ -1,6 +1,7 @@
 import React from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
+import NeuronLogo from './NeuronLogo'
 
 function IconGrid(): React.JSX.Element {
   return (
@@ -93,23 +94,12 @@ export default function Sidebar(): React.JSX.Element {
     : 'U'
 
   return (
-    <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col flex-shrink-0">
+    <aside className="w-60 min-h-screen bg-neuron-100 dark:bg-neuron-950 border-r border-neuron-200 dark:border-neuron-800 flex flex-col flex-shrink-0">
       {/* App branding */}
-      <div className="px-5 pt-6 pb-5 border-b border-slate-100 dark:border-slate-800">
+      <div className="px-5 pt-10 pb-5 border-b border-neuron-200 dark:border-neuron-800">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-sm flex-shrink-0">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Neuron: central soma + dendrites */}
-              <circle cx="8" cy="8" r="2.5" fill="white" opacity="0.95"/>
-              <path d="M8 5.5V2.5M8 10.5V13.5M5.5 8H2.5M10.5 8H13.5" stroke="white" strokeWidth="1.4" strokeLinecap="round" opacity="0.9"/>
-              <path d="M6 6L4 4M10 10L12 12M10 6L12 4M6 10L4 12" stroke="white" strokeWidth="1.2" strokeLinecap="round" opacity="0.6"/>
-              <circle cx="8" cy="2.5" r="1" fill="white" opacity="0.7"/>
-              <circle cx="8" cy="13.5" r="1" fill="white" opacity="0.7"/>
-              <circle cx="2.5" cy="8" r="1" fill="white" opacity="0.7"/>
-              <circle cx="13.5" cy="8" r="1" fill="white" opacity="0.7"/>
-            </svg>
-          </div>
-          <span className="font-semibold text-slate-900 dark:text-slate-50 text-base tracking-tight">Neuron</span>
+          <NeuronLogo size={32} className="flex-shrink-0 rounded-lg" />
+          <span className="font-semibold text-neuron-900 dark:text-neuron-100 text-base tracking-tight">Neuron</span>
         </div>
       </div>
 
@@ -117,7 +107,7 @@ export default function Sidebar(): React.JSX.Element {
       <nav className="flex-1 px-3 py-4 space-y-5 overflow-y-auto">
         {/* STUDY section */}
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 px-2 mb-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-neuron-400 dark:text-neuron-500 px-2 mb-2">
             Study
           </p>
           <div className="space-y-0.5">
@@ -129,14 +119,14 @@ export default function Sidebar(): React.JSX.Element {
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
                     isActive
-                      ? 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400'
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
+                      ? 'bg-neuron-200 dark:bg-neuron-800/50 text-neuron-700 dark:text-neuron-300'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-neuron-200/60 dark:hover:bg-neuron-900/40 hover:text-neuron-800 dark:hover:text-neuron-200'
                   }`
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span className={isActive ? 'text-violet-500 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}>
+                    <span className={isActive ? 'text-neuron-600 dark:text-neuron-400' : 'text-slate-400 dark:text-slate-500'}>
                       {item.icon}
                     </span>
                     {item.label}
@@ -149,7 +139,7 @@ export default function Sidebar(): React.JSX.Element {
 
         {/* PROGRESS section */}
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 px-2 mb-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-neuron-400 dark:text-neuron-500 px-2 mb-2">
             Progress
           </p>
           <div className="space-y-0.5">
@@ -160,14 +150,14 @@ export default function Sidebar(): React.JSX.Element {
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
                     isActive
-                      ? 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400'
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
+                      ? 'bg-neuron-200 dark:bg-neuron-800/50 text-neuron-700 dark:text-neuron-300'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-neuron-200/60 dark:hover:bg-neuron-900/40 hover:text-neuron-800 dark:hover:text-neuron-200'
                   }`
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span className={isActive ? 'text-violet-500 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}>
+                    <span className={isActive ? 'text-neuron-600 dark:text-neuron-400' : 'text-slate-400 dark:text-slate-500'}>
                       {item.icon}
                     </span>
                     {item.label}
@@ -181,12 +171,12 @@ export default function Sidebar(): React.JSX.Element {
         {/* Subjects */}
         <div>
           <div className="flex items-center justify-between px-2 mb-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            <p className="text-xs font-medium uppercase tracking-wide text-neuron-400 dark:text-neuron-500">
               Subjects
             </p>
             <button
               onClick={() => navigate('/')}
-              className="w-5 h-5 rounded flex items-center justify-center text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm leading-none transition-colors"
+              className="w-5 h-5 rounded flex items-center justify-center text-neuron-400 hover:text-neuron-600 dark:hover:text-neuron-400 hover:bg-neuron-200 dark:hover:bg-neuron-800 text-sm leading-none transition-colors"
               title="Manage subjects"
             >
               +
@@ -200,8 +190,8 @@ export default function Sidebar(): React.JSX.Element {
                 className={({ isActive }) =>
                   `flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors truncate ${
                     isActive
-                      ? 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400'
-                      : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'
+                      ? 'bg-neuron-200 dark:bg-neuron-800/50 text-neuron-700 dark:text-neuron-300'
+                      : 'text-slate-500 dark:text-slate-400 hover:bg-neuron-200/60 dark:hover:bg-neuron-900/40 hover:text-neuron-800 dark:hover:text-neuron-200'
                   }`
                 }
               >
@@ -209,7 +199,7 @@ export default function Sidebar(): React.JSX.Element {
                   <>
                     <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                       isActive
-                        ? 'bg-violet-500'
+                        ? 'bg-neuron-500'
                         : subject.status === 'ongoing'
                         ? 'bg-amber-400'
                         : 'bg-emerald-400'
@@ -227,7 +217,7 @@ export default function Sidebar(): React.JSX.Element {
 
         {/* SETTINGS section */}
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 px-2 mb-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-neuron-400 dark:text-neuron-500 px-2 mb-2">
             Settings
           </p>
           <div className="space-y-0.5">
@@ -238,14 +228,14 @@ export default function Sidebar(): React.JSX.Element {
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
                     isActive
-                      ? 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400'
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
+                      ? 'bg-neuron-200 dark:bg-neuron-800/50 text-neuron-700 dark:text-neuron-300'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-neuron-200/60 dark:hover:bg-neuron-900/40 hover:text-neuron-800 dark:hover:text-neuron-200'
                   }`
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span className={isActive ? 'text-violet-500 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}>
+                    <span className={isActive ? 'text-neuron-600 dark:text-neuron-400' : 'text-slate-400 dark:text-slate-500'}>
                       {item.icon}
                     </span>
                     {item.label}
@@ -258,13 +248,13 @@ export default function Sidebar(): React.JSX.Element {
       </nav>
 
       {/* Footer: user + theme toggle */}
-      <div className="px-3 py-4 border-t border-slate-100 dark:border-slate-800 space-y-2">
+      <div className="px-3 py-4 border-t border-neuron-200 dark:border-neuron-800 space-y-2">
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}
-          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-neuron-500 dark:text-neuron-400 hover:bg-neuron-200 dark:hover:bg-neuron-900/40 hover:text-neuron-700 dark:hover:text-neuron-200 transition-colors"
         >
-          <span className="text-slate-400 dark:text-slate-500">
+          <span className="text-neuron-400 dark:text-neuron-500">
             {theme === 'light' ? <IconMoon /> : <IconSun />}
           </span>
           {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
@@ -273,7 +263,7 @@ export default function Sidebar(): React.JSX.Element {
         {/* User */}
         {user && (
           <div className="flex items-center gap-2.5 px-2.5 py-2">
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-indigo-500 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-neuron-400 to-sky-500 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
               {initials}
             </div>
             <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">

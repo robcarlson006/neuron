@@ -14,7 +14,7 @@
   }
 
   body {
-    @apply bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50;
+    @apply bg-neuron-50 dark:bg-neuron-950 text-slate-900 dark:text-slate-50;
     margin: 0;
     padding: 0;
   }
@@ -81,21 +81,21 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 dark:bg-slate-600 rounded-full;
+    @apply bg-neuron-200 dark:bg-neuron-800 rounded-full;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-400 dark:bg-slate-500;
+    @apply bg-neuron-300 dark:bg-neuron-700;
   }
 
   /* Drop zone */
   .drop-zone {
-    @apply border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-10 text-center transition-colors cursor-pointer;
+    @apply border-2 border-dashed border-neuron-200 dark:border-neuron-800 rounded-xl p-10 text-center transition-colors cursor-pointer;
   }
 
   .drop-zone:hover,
   .drop-zone.drag-over {
-    @apply border-violet-400 bg-violet-50 dark:border-violet-600 dark:bg-violet-900/10;
+    @apply border-neuron-400 bg-neuron-100 dark:border-neuron-600 dark:bg-neuron-900/10;
   }
 
   /* Button base */
@@ -104,11 +104,11 @@
   }
 
   .btn-primary {
-    @apply btn bg-violet-600 hover:bg-violet-700 text-white focus:ring-violet-500;
+    @apply btn bg-neuron-600 hover:bg-neuron-700 text-white focus:ring-neuron-500;
   }
 
   .btn-secondary {
-    @apply btn bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 focus:ring-slate-400;
+    @apply btn bg-neuron-100 hover:bg-neuron-200 dark:bg-neuron-900/40 dark:hover:bg-neuron-900/60 text-neuron-700 dark:text-neuron-300 focus:ring-neuron-400;
   }
 
   .btn-danger {
@@ -117,12 +117,12 @@
 
   /* Card styles */
   .card {
-    @apply bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6;
+    @apply bg-white dark:bg-neuron-900/40 rounded-xl border border-neuron-200 dark:border-neuron-800 shadow-sm p-6;
   }
 
   /* Input styles */
   .input {
-    @apply w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/50 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-colors text-sm;
+    @apply w-full px-3 py-2 rounded-lg border border-neuron-200 dark:border-neuron-700 bg-white dark:bg-neuron-900/50 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-neuron-500 focus:border-transparent transition-colors text-sm;
   }
 
   /* Badge styles */
@@ -131,7 +131,7 @@
   }
 
   .badge-violet {
-    @apply badge bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300;
+    @apply badge bg-neuron-100 dark:bg-neuron-900/40 text-neuron-700 dark:text-neuron-300;
   }
 
   .badge-emerald {
@@ -151,7 +151,11 @@
   }
 
   .badge-blue {
-    @apply badge bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300;
+    @apply badge bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300;
+  }
+
+  .badge-sky {
+    @apply badge bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300;
   }
 }
 
@@ -202,16 +206,16 @@ kbd {
   font-size: 0.7rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   line-height: 1.4;
-  color: #64748b;
-  background-color: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  color: #6d28d9;
+  background-color: #f5f0ff;
+  border: 1px solid #c4b5fd;
   border-radius: 4px;
-  box-shadow: 0 1px 0 #e2e8f0;
+  box-shadow: 0 1px 0 #c4b5fd;
 }
 
 .dark kbd {
-  color: #94a3b8;
-  background-color: #1e293b;
-  border-color: #334155;
-  box-shadow: 0 1px 0 #334155;
+  color: #a78bfa;
+  background-color: #2e1065;
+  border-color: #5b21b6;
+  box-shadow: 0 1px 0 #5b21b6;
 }
