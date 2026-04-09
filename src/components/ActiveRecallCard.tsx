@@ -31,8 +31,8 @@ export default function ActiveRecallCard({
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const tag = (e.target as HTMLElement).tagName
     if (phase === 'question') {
-      // Allow typing in textarea; Ctrl+Enter reveals answer
-      if (tag === 'TEXTAREA' && (e.key === 'Enter') && (e.ctrlKey || e.metaKey)) {
+      // Enter (without Shift) reveals the answer; Shift+Enter inserts a newline normally
+      if (tag === 'TEXTAREA' && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         setPhase('revealed')
       }
@@ -96,7 +96,7 @@ export default function ActiveRecallCard({
               data-testid="answer-input"
             />
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-              <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to reveal answer
+              <kbd>Enter</kbd> to reveal · <kbd>Shift</kbd>+<kbd>Enter</kbd> for new line
             </p>
           </div>
 

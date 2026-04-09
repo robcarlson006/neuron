@@ -19,7 +19,6 @@ interface DiagResult {
 
 type Phase = 'loading' | 'intro' | 'question' | 'revealed' | 'results' | 'error'
 
-
 // SM-2 quality mapping for the 5 diagnostic options
 // Anki-style: < 3 resets the card, ≥ 3 advances it
 const RATING_OPTIONS = [
@@ -40,6 +39,11 @@ const ratingClasses: Record<RatingColor, { btn: string; active: string }> = {
   violet:  { btn: 'bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40',   active: 'bg-violet-600 text-white border-violet-600' },
 }
 
+interface SavedSession {
+  cardIds: number[]
+  startIdx: number
+}
+
 export default function Diagnostics(): React.JSX.Element {
   const { subjectId } = useParams<{ subjectId: string }>()
   const { user, subjects } = useAppStore()
@@ -53,6 +57,9 @@ export default function Diagnostics(): React.JSX.Element {
   const [answer, setAnswer] = useState('')
   const [summary, setSummary] = useState<DiagnosticSummary | null>(null)
   const [error, setError] = useState('')
+  const [resumedFrom, setResumedFrom] = useState<number | null>(null)
+
+  const sessionKey = `diag_session_${subjectId}`
 
   // Ref to always have latest phase + submitRating in event listener
   const handlerRef = useRef<{ phase: Phase; onRate: (q: number) => void; onReveal: () => void }>({
@@ -73,13 +80,16 @@ export default function Diagnostics(): React.JSX.Element {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const tag = (e.target as HTMLElement).tagName
     const { phase: p, onRate, onReveal } = handlerRef.current
-    if (tag === 'INPUT' || tag === 'TEXTAREA') {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && p === 'question') {
+
+    if (tag === 'TEXTAREA') {
+      // Enter (without Shift) reveals the answer; Shift+Enter inserts a newline normally
+      if (e.key === 'Enter' && !e.shiftKey && p === 'question') {
         e.preventDefault()
         onReveal()
       }
       return
     }
+
     if (p === 'question' && (e.key === ' ' || e.key === 'Enter')) {
       e.preventDefault()
       onReveal()
@@ -98,6 +108,11 @@ export default function Diagnostics(): React.JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
+  // Persist current progress to localStorage so we can resume on re-entry
+  function saveProgress(cardIds: number[], idx: number): void {
+    localStorage.setItem(sessionKey, JSON.stringify({ cardIds, startIdx: idx } satisfies SavedSession))
+  }
+
   async function loadCards(): Promise<void> {
     if (!user) return
     try {
@@ -105,7 +120,7 @@ export default function Diagnostics(): React.JSX.Element {
       const schedules = await window.electronAPI.getAllSchedules(user.id, Number(subjectId)) as CardSchedule[]
       const scheduleMap = new Map(schedules.map(s => [s.card_id, s]))
 
-      let combined: DiagCard[] = allCards.map(c => {
+      const combined: DiagCard[] = allCards.map(c => {
         const s = scheduleMap.get(c.id) || { interval: 1, repetitions: 0, ease_factor: 2.5, due_date: '', last_reviewed_at: undefined }
         return { ...c, ...s }
       })
@@ -116,16 +131,35 @@ export default function Diagnostics(): React.JSX.Element {
         return
       }
 
-      // Weight toward weaker cards (lower ease_factor = harder)
-      combined = combined.sort((a, b) => a.ease_factor - b.ease_factor)
-
-      // Shuffle
-      for (let i = combined.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [combined[i], combined[j]] = [combined[j], combined[i]]
+      // ── Try to resume a saved session ─────────────────────────────────
+      const savedRaw = localStorage.getItem(sessionKey)
+      if (savedRaw) {
+        try {
+          const { cardIds, startIdx } = JSON.parse(savedRaw) as SavedSession
+          const cardMap = new Map(combined.map(c => [c.id, c]))
+          const ordered = cardIds.map(id => cardMap.get(id)).filter(Boolean) as DiagCard[]
+          if (ordered.length > 0 && startIdx > 0 && startIdx < ordered.length) {
+            setDiagCards(ordered)
+            setCurrentIdx(startIdx)
+            setResumedFrom(startIdx)
+            setPhase('question')
+            return
+          }
+        } catch {
+          // Corrupt data — fall through to fresh session
+          localStorage.removeItem(sessionKey)
+        }
       }
 
-      setDiagCards(combined)
+      // ── Fresh session: sort weakest first then shuffle ─────────────────
+      const sorted = [...combined].sort((a, b) => a.ease_factor - b.ease_factor)
+      for (let i = sorted.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [sorted[i], sorted[j]] = [sorted[j], sorted[i]]
+      }
+
+      saveProgress(sorted.map(c => c.id), 0)
+      setDiagCards(sorted)
       setPhase('intro')
     } catch {
       setError('Failed to load cards.')
@@ -166,10 +200,13 @@ export default function Diagnostics(): React.JSX.Element {
     setResults(newResults)
     setAnswer('')
 
-    if (currentIdx + 1 >= diagCards.length) {
+    const nextIdx = currentIdx + 1
+    if (nextIdx >= diagCards.length) {
+      localStorage.removeItem(sessionKey)
       finalizeDiagnostics(newResults)
     } else {
-      setCurrentIdx(i => i + 1)
+      saveProgress(diagCards.map(c => c.id), nextIdx)
+      setCurrentIdx(nextIdx)
       setPhase('question')
     }
   }
@@ -187,10 +224,13 @@ export default function Diagnostics(): React.JSX.Element {
     setResults(newResults)
     setAnswer('')
 
-    if (currentIdx + 1 >= diagCards.length) {
+    const nextIdx = currentIdx + 1
+    if (nextIdx >= diagCards.length) {
+      localStorage.removeItem(sessionKey)
       finalizeDiagnostics(newResults)
     } else {
-      setCurrentIdx(i => i + 1)
+      saveProgress(diagCards.map(c => c.id), nextIdx)
+      setCurrentIdx(nextIdx)
       setPhase('question')
     }
   }
@@ -417,6 +457,11 @@ export default function Diagnostics(): React.JSX.Element {
             Exit
           </button>
           <div className="flex items-center gap-3">
+            {resumedFrom !== null && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 font-medium">
+                Resumed
+              </span>
+            )}
             <span className="text-sm text-slate-500 dark:text-slate-400">
               {currentIdx + 1} / {diagCards.length}
             </span>
@@ -463,7 +508,7 @@ export default function Diagnostics(): React.JSX.Element {
               </div>
 
               <p className="text-xs text-slate-300 dark:text-slate-600 text-center -mt-3">
-                <kbd>Space</kbd> or <kbd>Enter</kbd> to reveal · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> inside text box
+                <kbd>Enter</kbd> to reveal · <kbd>Shift</kbd>+<kbd>Enter</kbd> for new line
               </p>
 
               <div className="flex gap-3">
