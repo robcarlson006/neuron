@@ -79,16 +79,6 @@ function initDatabase(): void {
   setDatabase(db)
 }
 
-async function seedHistoryData(): Promise<void> {
-  // Import and run seed after DB is ready
-  try {
-    const { seedHistoryData: seed } = await import('../seed/history-seed')
-    await seed()
-  } catch (err) {
-    console.error('Seed error:', err)
-  }
-}
-
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.studyhelper.app')
 
@@ -103,9 +93,6 @@ app.whenReady().then(async () => {
   registerDbHandlers()
   registerFileHandlers()
   registerGeminiHandlers()
-
-  // Seed history data on first launch
-  await seedHistoryData()
 
   createWindow()
   setupAutoUpdater()

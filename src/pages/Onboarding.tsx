@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../store/appStore'
 import NeuronLogo from '../components/NeuronLogo'
 
-export default function Onboarding(): React.JSX.Element {
+interface OnboardingProps {
+  onUserCreated?: () => void
+}
+
+export default function Onboarding({ onUserCreated }: OnboardingProps): React.JSX.Element {
   const { setUser, setSubjects } = useAppStore()
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
@@ -27,6 +31,7 @@ export default function Onboarding(): React.JSX.Element {
       const subjects = await window.electronAPI.getSubjects(user.id)
       setSubjects(subjects)
       setUser(user)
+      onUserCreated?.()
     } catch (err) {
       setError('Failed to save. Please try again.')
       console.error(err)

@@ -20,8 +20,6 @@ An AI-powered spaced repetition desktop application for smarter studying. StudyH
 
 - **Node.js 18+** — [Download](https://nodejs.org)
 - **npm 9+** (included with Node.js)
-- A **Gemini API key** from Google AI Studio
-
 ## Setup
 
 ### 1. Install dependencies
@@ -31,40 +29,11 @@ cd studyhelper
 npm install
 ```
 
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and add your Gemini API key:
-
-```
-GEMINI_API_KEY=your_key_here
-```
-
-> **Note**: The app comes pre-configured with a development API key for testing. You can also enter your API key through the Settings page in the app.
-
-### 3. Run the app
+### 2. Run the app
 
 ```bash
 npm run dev
 ```
-
-## Getting a Gemini API Key
-
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Sign in with your Google account
-3. Click **"Create API Key"**
-4. Copy the generated key
-
-## Entering Your API Key
-
-1. Launch StudyHelper
-2. Click **Settings** in the sidebar
-3. Under **Gemini API Key**, click **Change**
-4. Paste your API key and click **Save Key**
-5. Click **Test Connection** to verify it works
 
 ## Development
 
@@ -175,9 +144,6 @@ studyhelper/
 ```
 
 ## Troubleshooting
-
-### "Gemini API key not configured"
-Enter your API key in Settings → Gemini API Key, or set `GEMINI_API_KEY` in your `.env` file.
 
 ### "Failed to process file"
 - Ensure the file is not password-protected

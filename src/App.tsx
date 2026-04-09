@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAppStore } from './store/appStore'
 import Layout from './components/Layout'
+import DemoTour from './components/DemoTour'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
 import SubjectDetail from './pages/SubjectDetail'
@@ -14,7 +15,7 @@ import Settings from './pages/Settings'
 const api = window.electronAPI
 
 export default function App(): React.JSX.Element {
-  const { user, setUser, setSubjects, theme } = useAppStore()
+  const { user, setUser, setSubjects, theme, showDemo, setShowDemo } = useAppStore()
   const [loading, setLoading] = useState(true)
   const [updateReady, setUpdateReady] = useState(false)
   const [updateVersion, setUpdateVersion] = useState('')
@@ -28,6 +29,11 @@ export default function App(): React.JSX.Element {
         if (u) {
           const subs = await api.getSubjects(u.id)
           setSubjects(subs)
+          // Check if demo has been shown before
+          const demoShown = await api.getMeta('demo_shown')
+          if (!demoShown) {
+            setShowDemo(true)
+          }
         }
       } catch (err) {
         console.error('Init error:', err)
@@ -36,7 +42,7 @@ export default function App(): React.JSX.Element {
       }
     }
     init()
-  }, [setUser, setSubjects])
+  }, [setUser, setSubjects, setShowDemo])
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -54,6 +60,26 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  async function handleDemoComplete(): Promise<void> {
+    setShowDemo(false)
+    try {
+      await api.setMeta('demo_shown', 'true')
+    } catch (err) {
+      console.error('Failed to save demo state:', err)
+    }
+  }
+
+  // Called from Settings to replay the tour
+  async function handleStartDemo(): Promise<void> {
+    // Clear the meta flag so the demo is shown again
+    try {
+      await api.setMeta('demo_shown', '')
+    } catch {
+      // ignore
+    }
+    setShowDemo(true)
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
@@ -63,6 +89,13 @@ export default function App(): React.JSX.Element {
         </div>
       </div>
     )
+  }
+
+  // After onboarding completes, user is set — check via Onboarding's own submit
+  // which triggers setUser in store, but we also need to trigger demo check there.
+  // We handle it by passing onUserCreated to Onboarding.
+  async function handleUserCreated(): Promise<void> {
+    setShowDemo(true)
   }
 
   return (
@@ -87,10 +120,15 @@ export default function App(): React.JSX.Element {
         </div>
       )}
 
+      {/* Demo tour overlay — shown on first launch and when triggered from Settings */}
+      {showDemo && user && (
+        <DemoTour onComplete={handleDemoComplete} />
+      )}
+
       <Routes>
         {!user ? (
           <>
-            <Route path="/onboarding" element={<Onboarding />} />
+            <Route path="/onboarding" element={<Onboarding onUserCreated={handleUserCreated} />} />
             <Route path="*" element={<Navigate to="/onboarding" replace />} />
           </>
         ) : (
@@ -102,7 +140,7 @@ export default function App(): React.JSX.Element {
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/diagnostics/:subjectId" element={<Diagnostics />} />
             <Route path="/analytics" element={<Analytics />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/settings" element={<Settings onStartDemo={handleStartDemo} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         )}

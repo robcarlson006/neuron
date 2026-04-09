@@ -32,6 +32,7 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.zip
+            dist/latest-mac.yml
 
   build-windows:
     runs-on: windows-latest
@@ -55,3 +56,4 @@ jobs:
         with:
           files: |
             dist/*.exe
+            dist/latest.yml

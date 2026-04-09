@@ -362,9 +362,8 @@ function StudyMenu({ baseRoute }: { baseRoute: string }): React.JSX.Element {
   }, [open])
 
   const options = [
-    { label: 'Flashcards', desc: 'Review your flashcard decks', route: `${baseRoute}?type=flashcard`, dot: 'bg-violet-500' },
-    { label: 'Active Recall', desc: 'Open-ended recall questions', route: `${baseRoute}?type=active_recall`, dot: 'bg-indigo-500' },
-    { label: 'Multiple Choice', desc: 'Practice with answer options', route: `${baseRoute}?mode=mc`, dot: 'bg-blue-500' },
+    { label: 'Study Now', desc: 'Flashcards & active recall with spaced repetition', route: baseRoute, dot: 'bg-violet-500' },
+    { label: 'Multiple Choice', desc: 'Practice with answer options — no schedule impact', route: `${baseRoute}?mode=mc`, dot: 'bg-blue-500' },
   ]
 
   return (

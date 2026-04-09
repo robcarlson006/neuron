@@ -26,7 +26,7 @@ export function registerDbHandlers(): void {
     return user || null
   })
 
-  ipcMain.handle('db:saveUser', async (_event, name: string) => {
+  ipcMain.handle('db:saveUser', (_event, name: string) => {
     const existing = db.prepare('SELECT * FROM users LIMIT 1').get() as User | undefined
     if (existing) {
       db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, existing.id)
@@ -36,15 +36,7 @@ export function registerDbHandlers(): void {
         name,
         new Date().toISOString()
       )
-      const newUser = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid) as User
-      // Seed history data now that a real user exists
-      try {
-        const { seedHistoryData } = await import('../../seed/history-seed')
-        await seedHistoryData()
-      } catch (err) {
-        console.error('Seed after user creation failed:', err)
-      }
-      return newUser
+      return db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid) as User
     }
   })
 

@@ -231,9 +231,8 @@ function SubjectStudyMenu({ subjectId, cardsDue }: { subjectId: number; cardsDue
 
   const base = `/study/${subjectId}`
   const options = [
-    { label: 'Flashcards', desc: 'Review flashcard decks', route: `${base}?type=flashcard`, dot: 'bg-violet-500' },
-    { label: 'Active Recall', desc: 'Open-ended recall questions', route: `${base}?type=active_recall`, dot: 'bg-indigo-500' },
-    { label: 'Multiple Choice', desc: 'Practice with answer options', route: `${base}?mode=mc`, dot: 'bg-blue-500' },
+    { label: 'Study Now', desc: 'Flashcards & active recall with spaced repetition', route: base, dot: 'bg-violet-500' },
+    { label: 'Multiple Choice', desc: 'Practice with answer options — no schedule impact', route: `${base}?mode=mc`, dot: 'bg-blue-500' },
   ]
 
   return (

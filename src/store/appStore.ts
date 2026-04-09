@@ -7,6 +7,7 @@ interface AppState {
   theme: Theme
   isLoading: boolean
   error: string | null
+  showDemo: boolean
 
   // Actions
   setUser: (user: User | null) => void
@@ -18,6 +19,7 @@ interface AppState {
   updateSubject: (subject: Subject) => void
   removeSubject: (subjectId: number) => void
   addSubject: (subject: Subject) => void
+  setShowDemo: (show: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -26,6 +28,7 @@ export const useAppStore = create<AppState>((set) => ({
   theme: 'light',
   isLoading: false,
   error: null,
+  showDemo: false,
 
   setUser: (user) => set({ user }),
   setSubjects: (subjects) => set({ subjects }),
@@ -60,5 +63,6 @@ export const useAppStore = create<AppState>((set) => ({
   addSubject: (subject) =>
     set((state) => ({
       subjects: [subject, ...state.subjects]
-    }))
+    })),
+  setShowDemo: (show) => set({ showDemo: show })
 }))

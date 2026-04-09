@@ -1,7 +1,11 @@
 import React, { useState } from 'react'
 import { useAppStore } from '../store/appStore'
 
-export default function Settings(): React.JSX.Element {
+interface SettingsProps {
+  onStartDemo?: () => void
+}
+
+export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Element {
   const { user, setUser, theme, toggleTheme } = useAppStore()
   const [name, setName] = useState(user?.name || '')
   const [reminderTime, setReminderTime] = useState('09:00')
@@ -155,13 +159,28 @@ export default function Settings(): React.JSX.Element {
           </div>
         </section>
 
+        {/* Help section */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Help</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+            Replay the guided walkthrough to learn about every feature in Neuron.
+          </p>
+          <button
+            onClick={onStartDemo}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors shadow-sm"
+          >
+            <span>🎓</span>
+            Start Feature Tour
+          </button>
+        </section>
+
         {/* About section */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-3">About</h2>
           <div className="space-y-1.5 text-sm text-slate-500 dark:text-slate-400">
             <p>
               <span className="font-medium text-slate-700 dark:text-slate-300">Neuron</span>
-              {' '}v1.0.0
+              {' '}v1.4.0
             </p>
             <p>Built with Electron, React, and Google Gemini AI</p>
             <p>Spaced repetition powered by the SM-2 algorithm</p>
