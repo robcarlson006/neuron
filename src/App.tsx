@@ -16,6 +16,9 @@ const api = window.electronAPI
 export default function App(): React.JSX.Element {
   const { user, setUser, setSubjects, theme } = useAppStore()
   const [loading, setLoading] = useState(true)
+  const [updateReady, setUpdateReady] = useState(false)
+  const [updateVersion, setUpdateVersion] = useState('')
+  const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
     async function init(): Promise<void> {
@@ -43,6 +46,14 @@ export default function App(): React.JSX.Element {
     }
   }, [theme])
 
+  // Listen for auto-update events from main process
+  useEffect(() => {
+    api.onUpdateDownloaded((version) => {
+      setUpdateVersion(version)
+      setUpdateReady(true)
+    })
+  }, [])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
@@ -56,6 +67,26 @@ export default function App(): React.JSX.Element {
 
   return (
     <HashRouter>
+      {/* Update banner — shown after update is downloaded and ready to install */}
+      {updateReady && !dismissed && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg text-sm">
+          <span>⬆ Neuron {updateVersion} is ready to install</span>
+          <button
+            onClick={() => api.installUpdate()}
+            className="bg-white text-emerald-700 font-semibold px-3 py-1 rounded-lg hover:bg-emerald-50 transition-colors"
+          >
+            Restart & Update
+          </button>
+          <button
+            onClick={() => setDismissed(true)}
+            className="opacity-70 hover:opacity-100 transition-opacity ml-1"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <Routes>
         {!user ? (
           <>

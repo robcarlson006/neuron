@@ -122,7 +122,12 @@ const electronAPI = {
 
   // Meta
   getMeta: (key: string): Promise<string | null> => ipcRenderer.invoke('db:getMeta', key),
-  setMeta: (key: string, value: string): Promise<{ success: boolean }> => ipcRenderer.invoke('db:setMeta', key, value)
+  setMeta: (key: string, value: string): Promise<{ success: boolean }> => ipcRenderer.invoke('db:setMeta', key, value),
+
+  // Auto-updater
+  onUpdateAvailable: (cb: (version: string) => void) => ipcRenderer.on('update:available', (_e, v) => cb(v)),
+  onUpdateDownloaded: (cb: (version: string) => void) => ipcRenderer.on('update:downloaded', (_e, v) => cb(v)),
+  installUpdate: () => ipcRenderer.send('update:install')
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

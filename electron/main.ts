@@ -1,6 +1,7 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { autoUpdater } from 'electron-updater'
 import Database from 'better-sqlite3'
 import { DB_SCHEMA } from '../src/lib/db'
 import { registerDbHandlers, setDatabase } from './ipc/dbHandlers'
@@ -107,6 +108,7 @@ app.whenReady().then(async () => {
   await seedHistoryData()
 
   createWindow()
+  setupAutoUpdater()
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -117,4 +119,33 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// ── Auto-updater ──────────────────────────────────────────────────────────────
+function setupAutoUpdater(): void {
+  if (is.dev) return  // skip in dev mode
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('update:available', info.version)
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('update:downloaded', info.version)
+  })
+
+  autoUpdater.on('error', (err) => {
+    console.error('Auto-updater error:', err.message)
+  })
+
+  // Check on launch, then every 4 hours
+  autoUpdater.checkForUpdates().catch(() => {})
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000)
+}
+
+// Renderer can trigger "install now"
+ipcMain.on('update:install', () => {
+  autoUpdater.quitAndInstall()
 })

@@ -19,7 +19,6 @@ interface DiagResult {
 
 type Phase = 'loading' | 'intro' | 'question' | 'revealed' | 'results' | 'error'
 
-const MIN_CARDS = 20
 
 // SM-2 quality mapping for the 5 diagnostic options
 // Anki-style: < 3 resets the card, ≥ 3 advances it
@@ -118,7 +117,7 @@ export default function Diagnostics(): React.JSX.Element {
       }
 
       // Weight toward weaker cards (lower ease_factor = harder)
-      combined = combined.sort((a, b) => a.ease_factor - b.ease_factor).slice(0, MIN_CARDS)
+      combined = combined.sort((a, b) => a.ease_factor - b.ease_factor)
 
       // Shuffle
       for (let i = combined.length - 1; i > 0; i--) {

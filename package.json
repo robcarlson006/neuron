@@ -1,6 +1,6 @@
 {
   "name": "studyhelper",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Spaced repetition and active recall for smarter studying",
   "main": "out/main/index.js",
   "author": "Neuron",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "better-sqlite3": "^12.8.0",
+    "electron-updater": "^6.8.3",
     "katex": "^0.16.45",
     "mammoth": "^1.7.1",
     "officeparser": "^4.1.1",
@@ -80,6 +81,11 @@
     "linux": {
       "target": "AppImage",
       "icon": "build/icon.png"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "robcarlson006",
+      "repo": "neuron"
     }
   }
 }
