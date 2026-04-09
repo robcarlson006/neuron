@@ -64,6 +64,16 @@ function initDatabase(): void {
   } catch {
     // Column already exists — no-op
   }
+  try {
+    db.prepare('ALTER TABLE review_log ADD COLUMN response_time_ms INTEGER').run()
+  } catch {
+    // Column already exists — no-op
+  }
+  try {
+    db.prepare('ALTER TABLE cards ADD COLUMN folder_id INTEGER REFERENCES card_folders(id)').run()
+  } catch {
+    // Column already exists — no-op
+  }
 
   setDatabase(db)
 }

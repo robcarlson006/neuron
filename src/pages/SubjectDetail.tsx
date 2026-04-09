@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
-import type { Card, Deadline } from '../types'
+import type { Card, CardFolder, CardSchedule, Deadline } from '../types'
 
 type Tab = 'cards' | 'deadlines'
 
@@ -15,6 +15,7 @@ export default function SubjectDetail(): React.JSX.Element {
 
   const [cards, setCards] = useState<Card[]>([])
   const [deadlines, setDeadlines] = useState<Deadline[]>([])
+  const [folders, setFolders] = useState<CardFolder[]>([])
   const [activeTab, setActiveTab] = useState<Tab>('cards')
   const [newDeadlineLabel, setNewDeadlineLabel] = useState('')
   const [newDeadlineDate, setNewDeadlineDate] = useState('')
@@ -27,8 +28,13 @@ export default function SubjectDetail(): React.JSX.Element {
   const [newCardFront, setNewCardFront] = useState('')
   const [newCardBack, setNewCardBack] = useState('')
   const [newCardType, setNewCardType] = useState<'flashcard' | 'active_recall'>('flashcard')
+  const [newCardFolderId, setNewCardFolderId] = useState<number | null>(null)
   const [cardSearch, setCardSearch] = useState('')
   const [cardTypeFilter, setCardTypeFilter] = useState<'all' | 'flashcard' | 'active_recall'>('all')
+  const [folderFilter, setFolderFilter] = useState<'all' | 'uncategorized' | number>('all')
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [selectedCardForDetail, setSelectedCardForDetail] = useState<Card | null>(null)
   const [showTextImport, setShowTextImport] = useState(false)
 
   useEffect(() => {
@@ -41,12 +47,14 @@ export default function SubjectDetail(): React.JSX.Element {
   }, [subjectId])
 
   async function loadData(): Promise<void> {
-    const [c, d] = await Promise.all([
+    const [c, d, f] = await Promise.all([
       window.electronAPI.getCards(subjectId),
-      window.electronAPI.getDeadlines(subjectId)
+      window.electronAPI.getDeadlines(subjectId),
+      window.electronAPI.getFolders(subjectId)
     ])
     setCards(c)
     setDeadlines(d as Deadline[])
+    setFolders(f)
   }
 
   async function handleAddDeadline(): Promise<void> {
@@ -94,12 +102,38 @@ export default function SubjectDetail(): React.JSX.Element {
       type: newCardType,
       front: newCardFront.trim(),
       back: newCardBack.trim(),
+      folder_id: newCardFolderId,
       is_manual: 1
     }], user.id)
     await loadData()
     setNewCardFront('')
     setNewCardBack('')
+    setNewCardFolderId(null)
     setShowAddCard(false)
+  }
+
+  async function handleCreateFolder(): Promise<void> {
+    if (!newFolderName.trim()) return
+    const folder = await window.electronAPI.saveFolder({ subject_id: subjectId, name: newFolderName.trim() })
+    setFolders(prev => [...prev, folder].sort((a, b) => a.name.localeCompare(b.name)))
+    setNewFolderName('')
+    setShowNewFolderInput(false)
+  }
+
+  async function handleDeleteFolder(folderId: number): Promise<void> {
+    if (!confirm('Delete this folder? Cards inside will become uncategorised.')) return
+    await window.electronAPI.deleteFolder(folderId)
+    setFolders(prev => prev.filter(f => f.id !== folderId))
+    setCards(prev => prev.map(c => c.folder_id === folderId ? { ...c, folder_id: null } : c))
+    if (folderFilter === folderId) setFolderFilter('all')
+  }
+
+  async function handleMoveCard(cardId: number, folderId: number | null): Promise<void> {
+    await window.electronAPI.updateCardFolder(cardId, folderId)
+    setCards(prev => prev.map(c => c.id === cardId ? { ...c, folder_id: folderId } : c))
+    if (selectedCardForDetail?.id === cardId) {
+      setSelectedCardForDetail(prev => prev ? { ...prev, folder_id: folderId } : null)
+    }
   }
 
   async function handleDeleteCard(cardId: number): Promise<void> {
@@ -112,7 +146,10 @@ export default function SubjectDetail(): React.JSX.Element {
     const matchesSearch = !cardSearch.trim() ||
       c.front.toLowerCase().includes(cardSearch.toLowerCase()) ||
       c.back.toLowerCase().includes(cardSearch.toLowerCase())
-    return matchesType && matchesSearch
+    const matchesFolder =
+      folderFilter === 'all' ||
+      (folderFilter === 'uncategorized' ? !c.folder_id : c.folder_id === folderFilter)
+    return matchesType && matchesSearch && matchesFolder
   })
   const flashcards = filteredCards.filter(c => c.type === 'flashcard')
   const activeRecalls = filteredCards.filter(c => c.type === 'active_recall')
@@ -140,20 +177,17 @@ export default function SubjectDetail(): React.JSX.Element {
 
   return (
     <div className="p-8 max-w-5xl page-enter">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 mb-5 text-sm">
+      {/* Back navigation */}
+      <div className="mb-5">
         <button
           onClick={() => navigate('/')}
-          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors group"
         >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className="transition-transform group-hover:-translate-x-0.5">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           Dashboard
         </button>
-        <span className="text-slate-300 dark:text-slate-600">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M4.5 2.5L7.5 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-        <span className="text-slate-600 dark:text-slate-300 font-medium truncate">{subject.name}</span>
       </div>
 
       {/* Header */}
@@ -198,13 +232,7 @@ export default function SubjectDetail(): React.JSX.Element {
           >
             Diagnostics
           </button>
-          <button
-            onClick={() => navigate(`/study/${subjectId}`)}
-            className="btn-primary text-sm"
-            disabled={cards.length === 0}
-          >
-            Study Now
-          </button>
+          <SubjectDetailStudyMenu subjectId={subjectId} disabled={cards.length === 0} />
           <button
             onClick={() => setShowEditSubject(true)}
             className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
@@ -251,6 +279,70 @@ export default function SubjectDetail(): React.JSX.Element {
               + Add card manually
             </button>
           </div>
+
+          {/* Folder filter pills */}
+          {cards.length > 0 && (
+            <div className="mb-3">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(['all', 'uncategorized'] as const).map(key => (
+                  <button
+                    key={key}
+                    onClick={() => setFolderFilter(key)}
+                    className={`px-2.5 py-1 text-xs rounded-full border transition-colors font-medium ${
+                      folderFilter === key
+                        ? 'bg-violet-600 text-white border-violet-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                    }`}
+                  >
+                    {key === 'all' ? 'All' : 'Uncategorised'}
+                  </button>
+                ))}
+                {folders.map(folder => (
+                  <div key={folder.id} className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => setFolderFilter(folder.id)}
+                      className={`px-2.5 py-1 text-xs rounded-full border transition-colors font-medium ${
+                        folderFilter === folder.id
+                          ? 'bg-violet-600 text-white border-violet-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                      }`}
+                    >
+                      {folder.name}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteFolder(folder.id)}
+                      className="w-4 h-4 flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-400 dark:hover:text-red-400 transition-colors rounded-full"
+                      title={`Delete folder "${folder.name}"`}
+                    >
+                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 1L7 7M7 1L1 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                    </button>
+                  </div>
+                ))}
+                {showNewFolderInput ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      autoFocus
+                      className="px-2 py-1 text-xs rounded-full border border-violet-400 dark:border-violet-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 outline-none w-28"
+                      placeholder="Folder name"
+                      value={newFolderName}
+                      onChange={e => setNewFolderName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setShowNewFolderInput(false); setNewFolderName('') } }}
+                    />
+                    <button onClick={handleCreateFolder} disabled={!newFolderName.trim()} className="px-2 py-1 text-xs bg-violet-600 text-white rounded-full disabled:opacity-50">Add</button>
+                    <button onClick={() => { setShowNewFolderInput(false); setNewFolderName('') }} className="px-2 py-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">Cancel</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowNewFolderInput(true)}
+                    className="px-2.5 py-1 text-xs rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-400 dark:text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-400 dark:hover:border-violet-600 transition-colors"
+                  >
+                    + New folder
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Search & filter */}
           {cards.length > 0 && (
@@ -312,7 +404,14 @@ export default function SubjectDetail(): React.JSX.Element {
                   </div>
                   <div className="space-y-2">
                     {flashcards.map(card => (
-                      <CardRow key={card.id} card={card} onDelete={() => handleDeleteCard(card.id)} />
+                      <CardRow
+                        key={card.id}
+                        card={card}
+                        folders={folders}
+                        onDelete={() => handleDeleteCard(card.id)}
+                        onOpenDetail={() => setSelectedCardForDetail(card)}
+                        onMoveToFolder={(folderId) => handleMoveCard(card.id, folderId)}
+                      />
                     ))}
                   </div>
                 </div>
@@ -328,7 +427,14 @@ export default function SubjectDetail(): React.JSX.Element {
                   </div>
                   <div className="space-y-2">
                     {activeRecalls.map(card => (
-                      <CardRow key={card.id} card={card} onDelete={() => handleDeleteCard(card.id)} />
+                      <CardRow
+                        key={card.id}
+                        card={card}
+                        folders={folders}
+                        onDelete={() => handleDeleteCard(card.id)}
+                        onOpenDetail={() => setSelectedCardForDetail(card)}
+                        onMoveToFolder={(folderId) => handleMoveCard(card.id, folderId)}
+                      />
                     ))}
                   </div>
                 </div>
@@ -474,6 +580,19 @@ export default function SubjectDetail(): React.JSX.Element {
                   onChange={e => setNewCardBack(e.target.value)}
                 />
               </div>
+              {folders.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Folder (optional)</label>
+                  <select
+                    className="input"
+                    value={newCardFolderId ?? ''}
+                    onChange={e => setNewCardFolderId(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">No folder</option>
+                    {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setShowAddCard(false)} className="btn-secondary flex-1">Cancel</button>
@@ -492,6 +611,7 @@ export default function SubjectDetail(): React.JSX.Element {
       {/* Text Import Modal */}
       {showTextImport && (
         <TextImportModal
+          folders={folders}
           onClose={() => setShowTextImport(false)}
           onSave={async (importedCards) => {
             if (!user) return
@@ -502,6 +622,17 @@ export default function SubjectDetail(): React.JSX.Element {
             await loadData()
             setShowTextImport(false)
           }}
+        />
+      )}
+
+      {/* Card Detail Modal */}
+      {selectedCardForDetail && (
+        <CardDetailModal
+          card={selectedCardForDetail}
+          folders={folders}
+          userId={user?.id ?? 0}
+          onClose={() => setSelectedCardForDetail(null)}
+          onMoveToFolder={(folderId) => handleMoveCard(selectedCardForDetail.id, folderId)}
         />
       )}
 
@@ -569,12 +700,38 @@ export default function SubjectDetail(): React.JSX.Element {
 }
 
 
-function CardRow({ card, onDelete }: { card: Card; onDelete: () => void }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false)
+function CardRow({
+  card,
+  folders,
+  onDelete,
+  onOpenDetail,
+  onMoveToFolder
+}: {
+  card: Card
+  folders: CardFolder[]
+  onDelete: () => void
+  onOpenDetail: () => void
+  onMoveToFolder: (folderId: number | null) => void
+}): React.JSX.Element {
+  const folder = folders.find(f => f.id === card.folder_id)
+  const [showFolderMenu, setShowFolderMenu] = useState(false)
+  const folderMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showFolderMenu) return
+    function handleClick(e: MouseEvent) {
+      if (folderMenuRef.current && !folderMenuRef.current.contains(e.target as Node)) {
+        setShowFolderMenu(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [showFolderMenu])
+
   return (
     <div
       className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 cursor-pointer hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
-      onClick={() => setExpanded(!expanded)}
+      onClick={onOpenDetail}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -585,24 +742,182 @@ function CardRow({ card, onDelete }: { card: Card; onDelete: () => void }): Reac
           }`}>
             {card.type === 'flashcard' ? 'FC' : 'AR'}
           </span>
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-200 flex-1 truncate">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
+              {card.front}
+            </p>
+            {folder && (
+              <span className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 inline-flex items-center gap-1">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 2.5C1 2 1.5 1.5 2 1.5H4L5 3H8.5C9 3 9.5 3.5 9.5 4V8C9.5 8.5 9 9 8.5 9H2C1.5 9 1 8.5 1 8V2.5Z" stroke="currentColor" strokeWidth="1" fill="none"/></svg>
+                {folder.name}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {/* Folder assign button */}
+          <div className="relative" ref={folderMenuRef}>
+            <button
+              onClick={e => { e.stopPropagation(); setShowFolderMenu(v => !v) }}
+              className="p-1 rounded text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
+              title="Move to folder"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 2.5C1 1.9 1.4 1.5 2 1.5H4.5L5.5 3H9.5C10.1 3 10.5 3.4 10.5 4V9.5C10.5 10.1 10.1 10.5 9.5 10.5H2C1.4 10.5 1 10.1 1 9.5V2.5Z" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
+            </button>
+            {showFolderMenu && (
+              <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg py-1 z-40">
+                <button
+                  onClick={e => { e.stopPropagation(); onMoveToFolder(null); setShowFolderMenu(false) }}
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors ${!card.folder_id ? 'text-violet-600 dark:text-violet-400 font-medium' : 'text-slate-600 dark:text-slate-300'}`}
+                >
+                  No folder
+                </button>
+                {folders.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={e => { e.stopPropagation(); onMoveToFolder(f.id); setShowFolderMenu(false) }}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors ${card.folder_id === f.id ? 'text-violet-600 dark:text-violet-400 font-medium' : 'text-slate-600 dark:text-slate-300'}`}
+                  >
+                    {f.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={e => { e.stopPropagation(); onDelete() }}
+            className="text-slate-300 dark:text-slate-600 hover:text-red-400 dark:hover:text-red-400 p-1 rounded transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M1.5 1.5L10.5 10.5M10.5 1.5L1.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Card Detail Modal ─────────────────────────────────────────────────────────
+
+function CardDetailModal({
+  card,
+  folders,
+  userId,
+  onClose,
+  onMoveToFolder
+}: {
+  card: Card
+  folders: CardFolder[]
+  userId: number
+  onClose: () => void
+  onMoveToFolder: (folderId: number | null) => void
+}): React.JSX.Element {
+  const [stats, setStats] = useState<{
+    schedule: CardSchedule | null
+    review_count: number
+    avg_quality: number | null
+    avg_response_time_ms: number | null
+  } | null>(null)
+
+  useEffect(() => {
+    window.electronAPI.getCardStats(card.id, userId).then(setStats)
+  }, [card.id, userId])
+
+  function getUnderstandingLevel(schedule: CardSchedule | null, avgQuality: number | null, reviewCount: number) {
+    if (!schedule || reviewCount === 0) return { label: 'New', color: 'text-slate-500 dark:text-slate-400', bg: 'bg-slate-100 dark:bg-slate-700' }
+    if (schedule.interval >= 21 && schedule.ease_factor >= 2.5) return { label: 'Mastered', color: 'text-emerald-700 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-900/40' }
+    if (avgQuality !== null && avgQuality >= 4) return { label: 'Strong', color: 'text-blue-700 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-900/40' }
+    if (avgQuality !== null && avgQuality >= 2.5) return { label: 'Learning', color: 'text-violet-700 dark:text-violet-400', bg: 'bg-violet-100 dark:bg-violet-900/40' }
+    return { label: 'Needs Practice', color: 'text-amber-700 dark:text-amber-400', bg: 'bg-amber-100 dark:bg-amber-900/40' }
+  }
+
+  const level = stats ? getUnderstandingLevel(stats.schedule, stats.avg_quality, stats.review_count) : null
+  const avgSeconds = stats?.avg_response_time_ms != null ? (stats.avg_response_time_ms / 1000).toFixed(1) : null
+
+  return (
+    <div className="fixed inset-0 bg-black/40 dark:bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl w-full max-w-lg p-6 animate-slide-up"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+              card.type === 'flashcard'
+                ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
+                : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+            }`}>
+              {card.type === 'flashcard' ? 'Flashcard' : 'Active Recall'}
+            </span>
+            {level && (
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${level.bg} ${level.color}`}>
+                {level.label}
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors p-1 rounded-lg">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2L14 14M14 2L2 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+          </button>
+        </div>
+
+        {/* Front */}
+        <div className="mb-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
+            {card.type === 'flashcard' ? 'Term' : 'Question'}
+          </p>
+          <p className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">
             {card.front}
           </p>
         </div>
-        <button
-          onClick={e => { e.stopPropagation(); onDelete() }}
-          className="text-slate-300 dark:text-slate-600 hover:text-red-400 dark:hover:text-red-400 flex-shrink-0 p-1 rounded transition-colors"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M1.5 1.5L10.5 10.5M10.5 1.5L1.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
-      {expanded && (
-        <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 ml-9">
-          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{card.back}</p>
+
+        {/* Back */}
+        <div className="mb-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
+            {card.type === 'flashcard' ? 'Definition' : 'Model Answer'}
+          </p>
+          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">
+            {card.back}
+          </p>
         </div>
-      )}
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-slate-800 dark:text-slate-100">
+              {stats?.review_count ?? '—'}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Times practised</p>
+          </div>
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-slate-800 dark:text-slate-100">
+              {stats?.avg_quality != null ? (stats.avg_quality).toFixed(1) : '—'}
+              <span className="text-xs font-normal text-slate-400 dark:text-slate-500">/5</span>
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Avg quality</p>
+          </div>
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-slate-800 dark:text-slate-100">
+              {avgSeconds != null ? `${avgSeconds}s` : '—'}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Avg response</p>
+          </div>
+        </div>
+
+        {/* Folder assignment */}
+        <div>
+          <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Folder</label>
+          <select
+            className="input text-sm"
+            value={card.folder_id ?? ''}
+            onChange={e => onMoveToFolder(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">No folder</option>
+            {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        </div>
+      </div>
     </div>
   )
 }
@@ -784,15 +1099,17 @@ function PromptBox({ type }: PromptBoxProps): React.JSX.Element {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function TextImportModal({ onClose, onSave }: {
+function TextImportModal({ onClose, onSave, folders }: {
   onClose: () => void
-  onSave: (cards: { type: 'flashcard' | 'active_recall'; front: string; back: string }[]) => Promise<void>
+  onSave: (cards: { type: 'flashcard' | 'active_recall'; front: string; back: string; folder_id?: number | null }[]) => Promise<void>
+  folders: CardFolder[]
 }): React.JSX.Element {
   const [text, setText] = useState('')
   const [termSep, setTermSep] = useState('...')
   const [cardSep, setCardSep] = useState(';')
   const [eachLineIsCard, setEachLineIsCard] = useState(false)
   const [cardType, setCardType] = useState<'flashcard' | 'active_recall'>('flashcard')
+  const [importFolderId, setImportFolderId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [detectedFormat, setDetectedFormat] = useState<string | null>(null)
@@ -846,7 +1163,7 @@ function TextImportModal({ onClose, onSave }: {
     if (parsed.length === 0) return
     setSaving(true)
     try {
-      await onSave(parsed.map(c => ({ ...c, type: cardType })))
+      await onSave(parsed.map(c => ({ ...c, type: cardType, folder_id: importFolderId })))
     } finally {
       setSaving(false)
     }
@@ -989,6 +1306,23 @@ function TextImportModal({ onClose, onSave }: {
             </div>
           </div>
 
+          {/* Folder assignment */}
+          {folders.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
+                Add to Folder (optional)
+              </label>
+              <select
+                className="input text-sm"
+                value={importFolderId ?? ''}
+                onChange={e => setImportFolderId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">No folder</option>
+                {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+          )}
+
           {/* Paste area */}
           <div>
             <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
@@ -1062,6 +1396,70 @@ function TextImportModal({ onClose, onSave }: {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function SubjectDetailStudyMenu({ subjectId, disabled }: { subjectId: number; disabled: boolean }): React.JSX.Element {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const closeMenu = useCallback((e: MouseEvent) => {
+    if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    window.addEventListener('mousedown', closeMenu)
+    return () => window.removeEventListener('mousedown', closeMenu)
+  }, [open, closeMenu])
+
+  const options = [
+    {
+      label: 'Study Now',
+      desc: 'Flashcards & active recall with spaced repetition',
+      route: `/study/${subjectId}`,
+      dot: 'bg-violet-500'
+    },
+    {
+      label: 'Multiple Choice',
+      desc: 'Practice with answer options — no schedule impact',
+      route: `/study/${subjectId}?mode=mc`,
+      dot: 'bg-blue-500'
+    },
+  ]
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(o => !o)}
+        className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Study Now
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
+          <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg py-1.5 z-50">
+          {options.map(opt => (
+            <button
+              key={opt.label}
+              onClick={() => { setOpen(false); navigate(opt.route) }}
+              className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors flex items-start gap-3"
+            >
+              <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${opt.dot}`} />
+              <div>
+                <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{opt.label}</div>
+                <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{opt.desc}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -25,6 +25,7 @@ export default function Analytics(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [chartType, setChartType] = useState<'area' | 'bar'>('bar')
   const [mcStats, setMCStats] = useState<MCStats>({ total: 0, correct: 0 })
+  const [avgResponseMs, setAvgResponseMs] = useState<number | null>(null)
 
   useEffect(() => {
     if (user) loadAnalytics()
@@ -92,6 +93,9 @@ export default function Analytics(): React.JSX.Element {
 
       const mc = await window.electronAPI.getMCStats(user.id, 30)
       setMCStats(mc)
+
+      const rtResult = await window.electronAPI.getAvgResponseTime(user.id)
+      setAvgResponseMs(rtResult.avg_ms)
     } catch (err) {
       console.error('Analytics load error:', err)
     } finally {
@@ -122,7 +126,7 @@ export default function Analytics(): React.JSX.Element {
       </div>
 
       {/* Summary stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
         <StatCard
           value={totalMastered}
           label="Cards Mastered"
@@ -163,6 +167,17 @@ export default function Analytics(): React.JSX.Element {
           icon={
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M9 2C9 2 11 5 11 8C11 9.5 10.5 10.5 9.5 11.5C9.8 10.5 9.5 9 8.5 8C8.5 8 8 10 6.5 11C5.5 12 5 13 5 14C5 16.2 6.8 17 9 17C11.2 17 13 15.8 13 14C13 11 9 8 9 2Z" fill="currentColor" opacity="0.3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          }
+        />
+        <StatCard
+          value={avgResponseMs !== null ? `${(avgResponseMs / 1000).toFixed(1)}s` : '—'}
+          label="Avg Response Time"
+          color="slate"
+          icon={
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M9 5V9L12 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           }
         />

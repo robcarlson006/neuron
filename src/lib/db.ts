@@ -103,6 +103,14 @@ export const DB_SCHEMA = `
     FOREIGN KEY (card_id) REFERENCES cards(id),
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS card_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id)
+  );
 `
 
 export const MASTERED_INTERVAL = 21

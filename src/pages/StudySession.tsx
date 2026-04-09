@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import FlashCard from '../components/FlashCard'
@@ -28,6 +28,7 @@ export default function StudySession(): React.JSX.Element {
   const [allCards, setAllCards] = useState<StudyCard[]>([]) // full pool for MC distractors
   const [skippedCards, setSkippedCards] = useState<StudyCard[]>([])
   const [currentIdx, setCurrentIdx] = useState(0)
+  const cardStartTimeRef = useRef<number>(Date.now())
   const [loading, setLoading] = useState(true)
   const [phase, setPhase] = useState<'studying' | 'skipped' | 'done'>('studying')
   const [emptyReason, setEmptyReason] = useState<EmptyReason>('no-cards')
@@ -107,9 +108,16 @@ export default function StudySession(): React.JSX.Element {
   const currentCards = phase === 'studying' ? cards : skippedCards
   const currentCard = currentCards[currentIdx]
 
+  // Reset timer whenever the current card changes
+  useEffect(() => {
+    cardStartTimeRef.current = Date.now()
+  }, [currentIdx, phase])
+
   // SM2 review — only used in normal mode
   async function processReview(quality: number): Promise<void> {
     if (!currentCard || !user) return
+
+    const responseTimeMs = Date.now() - cardStartTimeRef.current
 
     const schedule: CardSchedule = {
       id: 0,
@@ -127,6 +135,7 @@ export default function StudySession(): React.JSX.Element {
       userId: user.id,
       quality,
       wasCorrect: quality >= 3,
+      responseTimeMs,
       currentSchedule: schedule
     })
 

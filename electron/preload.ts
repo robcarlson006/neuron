@@ -3,6 +3,7 @@ import type {
   User,
   Subject,
   Card,
+  CardFolder,
   CardSchedule,
   ReviewLog,
   Deadline,
@@ -46,6 +47,7 @@ const electronAPI = {
     wasCorrect: boolean
     userAnswer?: string
     aiFeedback?: string
+    responseTimeMs?: number
     currentSchedule: CardSchedule
   }): Promise<{ sm2Result: SM2Result; success: boolean }> =>
     ipcRenderer.invoke('db:processReview', params),
@@ -98,6 +100,25 @@ const electronAPI = {
     ipcRenderer.invoke('db:saveMCReview', params),
   getMCStats: (userId: number, days?: number): Promise<MCStats> =>
     ipcRenderer.invoke('db:getMCStats', userId, days),
+
+  // Folders
+  getFolders: (subjectId: number): Promise<CardFolder[]> => ipcRenderer.invoke('db:getFolders', subjectId),
+  saveFolder: (folder: Partial<CardFolder>): Promise<CardFolder> => ipcRenderer.invoke('db:saveFolder', folder),
+  deleteFolder: (folderId: number): Promise<{ success: boolean }> => ipcRenderer.invoke('db:deleteFolder', folderId),
+  updateCardFolder: (cardId: number, folderId: number | null): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('db:updateCardFolder', cardId, folderId),
+
+  // Card stats
+  getCardStats: (cardId: number, userId: number): Promise<{
+    schedule: CardSchedule | null
+    review_count: number
+    avg_quality: number | null
+    avg_response_time_ms: number | null
+  }> => ipcRenderer.invoke('db:getCardStats', cardId, userId),
+
+  // Response time analytics
+  getAvgResponseTime: (userId: number): Promise<{ avg_ms: number | null }> =>
+    ipcRenderer.invoke('db:getAvgResponseTime', userId),
 
   // Meta
   getMeta: (key: string): Promise<string | null> => ipcRenderer.invoke('db:getMeta', key),

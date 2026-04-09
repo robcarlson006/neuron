@@ -26,10 +26,18 @@ export interface Card {
   id: number
   subject_id: number
   material_id?: number
+  folder_id?: number | null
   type: 'flashcard' | 'active_recall'
   front: string
   back: string
   is_manual: number
+  created_at: string
+}
+
+export interface CardFolder {
+  id: number
+  subject_id: number
+  name: string
   created_at: string
 }
 
@@ -53,6 +61,7 @@ export interface ReviewLog {
   was_correct: number
   user_answer?: string
   ai_feedback?: string
+  response_time_ms?: number
 }
 
 export type DeadlineType = 'test' | 'quiz' | 'exam' | 'assignment' | 'presentation' | 'personal'

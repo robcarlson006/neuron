@@ -107,7 +107,7 @@ export default function CalendarView({ daysInfo, onDayClick, selectedDate }: Cal
             <button
               key={dateStr}
               onClick={() => onDayClick(dateStr)}
-              className={`relative p-1.5 rounded-lg text-sm transition-colors text-center min-h-[44px] flex flex-col items-center justify-start gap-0.5 ${
+              className={`relative p-1 rounded-lg text-sm transition-colors text-center min-h-[48px] flex flex-col items-center justify-start gap-0.5 ${
                 isSelected
                   ? 'bg-emerald-600 text-white'
                   : isToday
@@ -115,22 +115,25 @@ export default function CalendarView({ daysInfo, onDayClick, selectedDate }: Cal
                   : 'hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
               }`}
             >
-              <span className={`text-xs font-medium ${isToday && !isSelected ? 'font-bold' : ''}`}>
+              <span className={`text-xs font-medium leading-tight ${isToday && !isSelected ? 'font-bold' : ''}`}>
                 {day}
               </span>
 
-              <div className="flex gap-0.5 flex-wrap justify-center">
-                {cardsDue > 0 && (
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    isSelected ? 'bg-white/70' : 'bg-amber-400'
-                  }`} title={`${cardsDue} cards due`} />
-                )}
-                {hasDeadline && (
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    isSelected ? 'bg-white/70' : 'bg-red-400'
-                  }`} title="Deadline" />
-                )}
-              </div>
+              {cardsDue > 0 && (
+                <span className={`text-[10px] font-semibold leading-tight px-1 rounded-sm ${
+                  isSelected
+                    ? 'text-white/90'
+                    : 'text-amber-600 dark:text-amber-400'
+                }`} title={`${cardsDue} cards due`}>
+                  {cardsDue}
+                </span>
+              )}
+
+              {hasDeadline && (
+                <span className={`w-1 h-1 rounded-full flex-shrink-0 ${
+                  isSelected ? 'bg-white/70' : 'bg-red-400'
+                }`} title="Deadline" />
+              )}
             </button>
           )
         })}
@@ -139,8 +142,8 @@ export default function CalendarView({ daysInfo, onDayClick, selectedDate }: Cal
       {/* Legend */}
       <div className="flex gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 text-xs text-slate-400 dark:text-slate-500">
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-amber-400" />
-          Cards due
+          <span className="text-[10px] font-semibold text-amber-500">12</span>
+          Cards due (projected)
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-red-400" />

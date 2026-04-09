@@ -5,6 +5,7 @@ import type {
   User,
   Subject,
   Card,
+  CardFolder,
   CardSchedule,
   ReviewLog,
   Deadline,
@@ -100,12 +101,12 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:saveCard', (_event, card: Partial<Card>) => {
     if (card.id) {
       db.prepare(
-        'UPDATE cards SET front = ?, back = ?, type = ? WHERE id = ?'
-      ).run(card.front, card.back, card.type, card.id)
+        'UPDATE cards SET front = ?, back = ?, type = ?, folder_id = ? WHERE id = ?'
+      ).run(card.front, card.back, card.type, card.folder_id ?? null, card.id)
       return db.prepare('SELECT * FROM cards WHERE id = ?').get(card.id) as Card
     } else {
       const result = db.prepare(
-        'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(
         card.subject_id,
         card.material_id || null,
@@ -113,6 +114,7 @@ export function registerDbHandlers(): void {
         card.front,
         card.back,
         card.is_manual || 0,
+        card.folder_id ?? null,
         new Date().toISOString()
       )
       return db.prepare('SELECT * FROM cards WHERE id = ?').get(result.lastInsertRowid) as Card
@@ -129,7 +131,7 @@ export function registerDbHandlers(): void {
 
   ipcMain.handle('db:saveManyCards', (_event, cards: Partial<Card>[], userId: number) => {
     const insertCard = db.prepare(
-      'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     )
     const insertSchedule = db.prepare(
       'INSERT OR REPLACE INTO card_schedule (card_id, user_id, interval, repetitions, ease_factor, due_date, last_reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -145,6 +147,7 @@ export function registerDbHandlers(): void {
           card.front,
           card.back,
           card.is_manual || 0,
+          card.folder_id ?? null,
           new Date().toISOString()
         )
         const cardId = result.lastInsertRowid as number
@@ -393,9 +396,10 @@ export function registerDbHandlers(): void {
     wasCorrect: boolean
     userAnswer?: string
     aiFeedback?: string
+    responseTimeMs?: number
     currentSchedule: CardSchedule
   }) => {
-    const { cardId, userId, quality, wasCorrect, userAnswer, aiFeedback, currentSchedule } = params
+    const { cardId, userId, quality, wasCorrect, userAnswer, aiFeedback, responseTimeMs, currentSchedule } = params
     const sm2Result = sm2(quality, currentSchedule)
 
     // Apply exam boost: if the card's subject has an upcoming study-affecting deadline, cap the interval
@@ -428,8 +432,8 @@ export function registerDbHandlers(): void {
 
     // Log review
     db.prepare(
-      'INSERT INTO review_log (card_id, user_id, reviewed_at, quality, was_correct, user_answer, ai_feedback) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(cardId, userId, new Date().toISOString(), quality, wasCorrect ? 1 : 0, userAnswer || null, aiFeedback || null)
+      'INSERT INTO review_log (card_id, user_id, reviewed_at, quality, was_correct, user_answer, ai_feedback, response_time_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(cardId, userId, new Date().toISOString(), quality, wasCorrect ? 1 : 0, userAnswer || null, aiFeedback || null, responseTimeMs ?? null)
 
     return { sm2Result, success: true }
   })
@@ -441,6 +445,59 @@ export function registerDbHandlers(): void {
       'INSERT INTO mc_review_log (card_id, user_id, reviewed_at, was_correct) VALUES (?, ?, ?, ?)'
     ).run(cardId, userId, new Date().toISOString(), wasCorrect ? 1 : 0)
     return { id: result.lastInsertRowid }
+  })
+
+  // Folder handlers
+  ipcMain.handle('db:getFolders', (_event, subjectId: number) => {
+    return db.prepare('SELECT * FROM card_folders WHERE subject_id = ? ORDER BY name ASC').all(subjectId) as CardFolder[]
+  })
+
+  ipcMain.handle('db:saveFolder', (_event, folder: Partial<CardFolder>) => {
+    if (folder.id) {
+      db.prepare('UPDATE card_folders SET name = ? WHERE id = ?').run(folder.name, folder.id)
+      return db.prepare('SELECT * FROM card_folders WHERE id = ?').get(folder.id) as CardFolder
+    } else {
+      const result = db.prepare(
+        'INSERT INTO card_folders (subject_id, name, created_at) VALUES (?, ?, ?)'
+      ).run(folder.subject_id, folder.name, new Date().toISOString())
+      return db.prepare('SELECT * FROM card_folders WHERE id = ?').get(result.lastInsertRowid) as CardFolder
+    }
+  })
+
+  ipcMain.handle('db:deleteFolder', (_event, folderId: number) => {
+    db.prepare('UPDATE cards SET folder_id = NULL WHERE folder_id = ?').run(folderId)
+    db.prepare('DELETE FROM card_folders WHERE id = ?').run(folderId)
+    return { success: true }
+  })
+
+  ipcMain.handle('db:updateCardFolder', (_event, cardId: number, folderId: number | null) => {
+    db.prepare('UPDATE cards SET folder_id = ? WHERE id = ?').run(folderId, cardId)
+    return { success: true }
+  })
+
+  // Card stats for detail popup
+  ipcMain.handle('db:getCardStats', (_event, cardId: number, userId: number) => {
+    const schedule = db.prepare(
+      'SELECT * FROM card_schedule WHERE card_id = ? AND user_id = ?'
+    ).get(cardId, userId) as CardSchedule | undefined
+
+    const stats = db.prepare(`
+      SELECT
+        COUNT(*) as review_count,
+        AVG(quality) as avg_quality,
+        AVG(response_time_ms) as avg_response_time_ms
+      FROM review_log
+      WHERE card_id = ? AND user_id = ?
+    `).get(cardId, userId) as { review_count: number; avg_quality: number | null; avg_response_time_ms: number | null }
+
+    return { schedule: schedule || null, ...stats }
+  })
+
+  // Average response time across all cards
+  ipcMain.handle('db:getAvgResponseTime', (_event, userId: number) => {
+    return db.prepare(
+      'SELECT AVG(response_time_ms) as avg_ms FROM review_log WHERE user_id = ? AND response_time_ms IS NOT NULL'
+    ).get(userId) as { avg_ms: number | null }
   })
 
   ipcMain.handle('db:getMCStats', (_event, userId: number, days?: number) => {
