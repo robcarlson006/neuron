@@ -67,13 +67,13 @@ const STEPS: Step[] = [
     body: (
       <>
         <p>
-          Each class card has a <strong>three-dot menu (⋯)</strong> where you can:
+          Click the <strong>vertical three-dot button (⋮)</strong> on any class card to open its options:
         </p>
         <ul className="mt-2 space-y-1 text-sm">
-          <li>🗑️ <strong>Delete</strong> — remove the class entirely</li>
+          <li>🗑️ <strong>Delete</strong> — permanently removes the class and all its cards</li>
           <li>📗 <strong>Active</strong> — currently taking this course</li>
           <li>📘 <strong>Ongoing</strong> — long-term or self-study subject</li>
-          <li>📦 <strong>Archived</strong> — finished, keeps your dashboard clean</li>
+          <li>📦 <strong>Archived</strong> — finished; hides it from your main dashboard</li>
         </ul>
       </>
     ),
@@ -119,17 +119,21 @@ const STEPS: Step[] = [
         <p className="mb-2">Inside the Import panel:</p>
         <ul className="space-y-2 text-sm">
           <li>
-            <strong>AI Prompts</strong> — Optional instructions for the AI when
-            generating cards. Example: <em>"Focus on definitions and key dates."</em>
+            <strong>AI Prompt</strong> — Neuron generates a ready-made prompt
+            for you. Copy it, then paste it along with your study material into
+            any AI of your choice — ChatGPT, Claude, Gemini, etc. The AI will
+            return a formatted list of flashcards.
           </li>
           <li>
-            <strong>Paste Your Notes</strong> — Copy text from your notes or
-            textbook and paste it here. The AI reads it and generates cards.
+            <strong>Paste Cards Here</strong> — Take the cards the AI gave you
+            and paste them into this box.
           </li>
           <li>
-            <strong>Separators</strong> — If you're pasting pre-made cards
-            (front :: back), the separator (<code>::</code> by default) tells
-            Neuron where the question ends and the answer begins.
+            <strong>Separators</strong> — These tell Neuron how to split each
+            card's front from its back. The default is{' '}
+            <code>...</code> between question and answer, and <code>;</code>{' '}
+            between cards. Make sure your AI output matches these (or adjust
+            them to match).
           </li>
         </ul>
       </>
@@ -143,15 +147,15 @@ const STEPS: Step[] = [
     body: (
       <>
         <p>
-          <strong>Diagnostics</strong> runs a quick multiple-choice test across
-          your cards to find out which ones you already know and which are brand new
-          to you.
+          <strong>Diagnostics</strong> is how Neuron figures out your starting
+          level. It shows you each card and asks you to rate how well you know
+          it using the same 1–5 scale as a study session.
         </p>
         <p className="mt-2">
-          This is important: cards you <em>haven't</em> been diagnosed on are
-          assumed to be unknown and scheduled for immediate review. Diagnostics
-          lets you skip past cards you already know well so you're not wasting
-          time reviewing material you've mastered.
+          This matters because new cards are assumed completely unknown until
+          diagnosed. Running Diagnostics first lets you tell the algorithm which
+          cards you already know well — so it won't waste your time drilling
+          material you've already mastered.
         </p>
       </>
     ),

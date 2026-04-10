@@ -5,12 +5,13 @@ import type { SubjectWithStats } from '../types'
 interface SubjectCardProps {
   data: SubjectWithStats
   onDelete?: (subjectId: number) => void
+  onStatusChange?: (subjectId: number, status: 'active' | 'ongoing' | 'archived') => void
 }
 
-export default function SubjectCard({ data, onDelete }: SubjectCardProps): React.JSX.Element {
+export default function SubjectCard({ data, onDelete, onStatusChange }: SubjectCardProps): React.JSX.Element {
   const { subject, masteryPercent, cardsDue, nextDeadline, totalCards } = data
   const navigate = useNavigate()
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -38,14 +39,20 @@ export default function SubjectCard({ data, onDelete }: SubjectCardProps): React
     archived: 'border-l-slate-300 dark:border-l-slate-600'
   }
 
-  function handleContextMenu(e: React.MouseEvent): void {
-    e.preventDefault()
-    e.stopPropagation()
-    setContextMenu({ x: e.clientX, y: e.clientY })
-  }
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return
+    function handleClick(e: MouseEvent): void {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
 
   function handleDeleteClick(): void {
-    setContextMenu(null)
+    setMenuOpen(false)
     setConfirmDelete(true)
   }
 
@@ -54,22 +61,16 @@ export default function SubjectCard({ data, onDelete }: SubjectCardProps): React
     if (onDelete) onDelete(subject.id)
   }
 
-  // Close context menu on outside click
-  useEffect(() => {
-    if (!contextMenu) return
-    function handleClick(): void {
-      setContextMenu(null)
-    }
-    window.addEventListener('click', handleClick)
-    return () => window.removeEventListener('click', handleClick)
-  }, [contextMenu])
+  function handleStatusChange(status: 'active' | 'ongoing' | 'archived'): void {
+    setMenuOpen(false)
+    if (onStatusChange) onStatusChange(subject.id, status)
+  }
 
   return (
     <>
       <div
         className={`bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 border-l-4 ${accentColor[subject.status] || 'border-l-slate-300'} shadow-sm p-5 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 animate-fade-in`}
         onClick={() => navigate(`/subject/${subject.id}`)}
-        onContextMenu={handleContextMenu}
       >
         {/* Header */}
         <div className="flex items-start justify-between mb-4">
@@ -83,9 +84,76 @@ export default function SubjectCard({ data, onDelete }: SubjectCardProps): React
               </span>
             )}
           </div>
-          <span className={statusBadge[subject.status] || 'badge-slate'}>
-            {statusLabel[subject.status] || subject.status}
-          </span>
+
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <span className={statusBadge[subject.status] || 'badge-slate'}>
+              {statusLabel[subject.status] || subject.status}
+            </span>
+
+            {/* Three-dot menu */}
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(o => !o) }}
+                className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                aria-label="Subject options"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <circle cx="8" cy="3" r="1.5" />
+                  <circle cx="8" cy="8" r="1.5" />
+                  <circle cx="8" cy="13" r="1.5" />
+                </svg>
+              </button>
+
+              {menuOpen && (
+                <div
+                  className="absolute right-0 top-8 z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1.5 min-w-[176px]"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => { setMenuOpen(false); navigate(`/subject/${subject.id}`) }}
+                    className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    Open Subject
+                  </button>
+
+                  <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+
+                  {/* Status options */}
+                  <p className="px-4 pt-1 pb-0.5 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                    Set Status
+                  </p>
+                  {(['active', 'ongoing', 'archived'] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => handleStatusChange(s)}
+                      className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center gap-2 ${
+                        subject.status === s
+                          ? 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      <span>{s === 'active' ? '📗' : s === 'ongoing' ? '📘' : '📦'}</span>
+                      <span className="capitalize">{s}</span>
+                      {subject.status === s && (
+                        <svg className="ml-auto w-3.5 h-3.5" viewBox="0 0 14 14" fill="none">
+                          <path d="M2.5 7L5.5 10L11.5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+
+                  <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+
+                  <button
+                    onClick={handleDeleteClick}
+                    className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  >
+                    Delete Subject
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Mastery progress bar */}
@@ -158,30 +226,6 @@ export default function SubjectCard({ data, onDelete }: SubjectCardProps): React
           </div>
         )}
       </div>
-
-      {/* Context menu */}
-      {contextMenu && (
-        <div
-          ref={menuRef}
-          className="fixed z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-1 min-w-[160px]"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={e => e.stopPropagation()}
-        >
-          <button
-            onClick={() => navigate(`/subject/${subject.id}`)}
-            className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-          >
-            Open Subject
-          </button>
-          <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
-          <button
-            onClick={handleDeleteClick}
-            className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-          >
-            Delete Subject
-          </button>
-        </div>
-      )}
 
       {/* Delete confirmation modal */}
       {confirmDelete && (

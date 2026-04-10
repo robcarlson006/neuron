@@ -15,7 +15,7 @@ function getTimeOfDay(): string {
 }
 
 export default function Dashboard(): React.JSX.Element {
-  const { user, subjects, setSubjects, addSubject, removeSubject } = useAppStore()
+  const { user, subjects, setSubjects, addSubject, removeSubject, updateSubject } = useAppStore()
   const navigate = useNavigate()
   const [subjectStats, setSubjectStats] = useState<SubjectWithStats[]>([])
   const [totalDueToday, setTotalDueToday] = useState(0)
@@ -103,6 +103,17 @@ export default function Dashboard(): React.JSX.Element {
       removeSubject(subjectId)
     } catch (err) {
       console.error('Delete subject error:', err)
+    }
+  }
+
+  async function handleStatusChange(subjectId: number, status: 'active' | 'ongoing' | 'archived'): Promise<void> {
+    const subject = subjects.find(s => s.id === subjectId)
+    if (!subject) return
+    try {
+      const updated = await window.electronAPI.saveSubject({ ...subject, status })
+      updateSubject(updated)
+    } catch (err) {
+      console.error('Status change error:', err)
     }
   }
 
@@ -230,7 +241,7 @@ export default function Dashboard(): React.JSX.Element {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {ongoingSubjectStats.map(stats => (
-              <SubjectCard key={stats.subject.id} data={stats} onDelete={handleDeleteSubject} />
+              <SubjectCard key={stats.subject.id} data={stats} onDelete={handleDeleteSubject} onStatusChange={handleStatusChange} />
             ))}
           </div>
         </div>
@@ -267,7 +278,7 @@ export default function Dashboard(): React.JSX.Element {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {activeSubjectStats.map(stats => (
-              <SubjectCard key={stats.subject.id} data={stats} onDelete={handleDeleteSubject} />
+              <SubjectCard key={stats.subject.id} data={stats} onDelete={handleDeleteSubject} onStatusChange={handleStatusChange} />
             ))}
           </div>
         )}
