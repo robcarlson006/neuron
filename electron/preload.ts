@@ -145,7 +145,8 @@ const electronAPI = {
     ipcRenderer.invoke('updater:install', filePath),
   openReleasePage: (url: string): Promise<void> => ipcRenderer.invoke('updater:openReleasePage', url),
   cleanupUpdateFile: (filePath: string): Promise<void> => ipcRenderer.invoke('updater:cleanupFile', filePath),
-  onDownloadProgress: (cb: (pct: number) => void) => ipcRenderer.on('updater:download-progress', (_e, pct) => cb(pct))
+  onDownloadProgress: (cb: (pct: number) => void) => ipcRenderer.on('updater:download-progress', (_e, pct) => cb(pct)),
+  onUpdateError: (cb: (message: string) => void) => ipcRenderer.on('update:error', (_e, msg) => cb(msg))
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

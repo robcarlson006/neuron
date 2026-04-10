@@ -20,6 +20,7 @@ export default function App(): React.JSX.Element {
   const [updateReady, setUpdateReady] = useState(false)
   const [updateVersion, setUpdateVersion] = useState('')
   const [dismissed, setDismissed] = useState(false)
+  const [updateFailed, setUpdateFailed] = useState(false)
 
   useEffect(() => {
     async function init(): Promise<void> {
@@ -57,6 +58,9 @@ export default function App(): React.JSX.Element {
     api.onUpdateDownloaded((version) => {
       setUpdateVersion(version)
       setUpdateReady(true)
+    })
+    api.onUpdateError(() => {
+      setUpdateFailed(true)
     })
   }, [])
 
@@ -103,13 +107,27 @@ export default function App(): React.JSX.Element {
       {/* Update banner — shown after update is downloaded and ready to install */}
       {updateReady && !dismissed && (
         <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg text-sm">
-          <span>⬆ Neuron {updateVersion} is ready to install</span>
-          <button
-            onClick={() => api.installUpdate()}
-            className="bg-white text-emerald-700 font-semibold px-3 py-1 rounded-lg hover:bg-emerald-50 transition-colors"
-          >
-            Restart & Update
-          </button>
+          {updateFailed ? (
+            <>
+              <span>Update install failed. Please install manually.</span>
+              <button
+                onClick={() => api.openReleasePage('https://github.com/robcarlson006/neuron/releases/latest')}
+                className="bg-white text-emerald-700 font-semibold px-3 py-1 rounded-lg hover:bg-emerald-50 transition-colors"
+              >
+                Download
+              </button>
+            </>
+          ) : (
+            <>
+              <span>⬆ Neuron {updateVersion} is ready to install</span>
+              <button
+                onClick={() => { setUpdateFailed(false); api.installUpdate() }}
+                className="bg-white text-emerald-700 font-semibold px-3 py-1 rounded-lg hover:bg-emerald-50 transition-colors"
+              >
+                Restart & Update
+              </button>
+            </>
+          )}
           <button
             onClick={() => setDismissed(true)}
             className="opacity-70 hover:opacity-100 transition-opacity ml-1"

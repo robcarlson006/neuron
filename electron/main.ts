@@ -127,6 +127,7 @@ function setupAutoUpdater(): void {
 
   autoUpdater.on('error', (err) => {
     console.error('Auto-updater error:', err.message)
+    mainWindow?.webContents.send('update:error', err.message)
   })
 
   // Check on launch, then every 4 hours
@@ -136,5 +137,9 @@ function setupAutoUpdater(): void {
 
 // Renderer can trigger "install now"
 ipcMain.on('update:install', () => {
-  autoUpdater.quitAndInstall()
+  try {
+    autoUpdater.quitAndInstall()
+  } catch (err) {
+    mainWindow?.webContents.send('update:error', (err as Error).message)
+  }
 })
