@@ -1,273 +1,427 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import NeuronLogo from './NeuronLogo'
 
-interface DemoStep {
-  icon: React.ReactNode
+// ─── Step definitions ──────────────────────────────────────────────────────────
+
+interface Step {
+  id: string
+  modal?: boolean           // full blocking modal (welcome / complete)
+  navigateTo?: 'dashboard' | 'subject' | 'diagnostics' | 'study' | 'calendar' | 'analytics'
   title: string
-  description: string
-  tip?: string
+  body: React.ReactNode
+  cta: string
+  autoAdvanceOn?: 'subject-created' | 'subject-route'  // advance automatically on condition
 }
 
-const steps: DemoStep[] = [
+const STEPS: Step[] = [
   {
-    icon: <NeuronLogo size={64} className="drop-shadow-lg" />,
+    id: 'welcome',
+    modal: true,
     title: 'Welcome to Neuron!',
-    description:
-      'Neuron is your AI-powered study companion. It uses spaced repetition and active recall — the two most effective study techniques known to science — to help you learn faster and remember longer.',
-    tip: 'This tour takes about 2 minutes. You can always replay it from Settings → Help.'
+    body: (
+      <p>
+        Let's take a quick tour so you know exactly how to use every feature.
+        We'll walk through the whole app together — it takes about 2 minutes.
+      </p>
+    ),
+    cta: "Let's go →"
   },
   {
-    icon: (
-      <div className="text-5xl select-none">🏠</div>
-    ),
+    id: 'dashboard-intro',
+    navigateTo: 'dashboard',
     title: 'Your Dashboard',
-    description:
-      'The Dashboard is your home base. It shows all your subjects at a glance, how many flashcards are due for review today, and lets you jump straight into a study session with one click.',
-    tip: 'Cards due today appear as a badge on each subject. Green = you\'re on top of it!'
+    body: (
+      <p>
+        This is your <strong>Dashboard</strong> — the home for all your classes.
+        Every class you create shows up here with a count of how many flashcards
+        are due for review today. You can also start a study session directly
+        from here.
+      </p>
+    ),
+    cta: 'Next →'
   },
   {
-    icon: (
-      <div className="text-5xl select-none">📚</div>
+    id: 'create-class',
+    navigateTo: 'dashboard',
+    title: 'Create Your First Class',
+    body: (
+      <>
+        <p>
+          Click <strong>"+ New Subject"</strong> (top right) to add a class.
+          Give it a name like "Biology 101" and hit save.
+        </p>
+        <p className="mt-2 text-xs opacity-80">
+          Once you create one, the tour will continue automatically.
+        </p>
+      </>
     ),
-    title: 'Creating Subjects',
-    description:
-      'Start by creating a subject for each course or topic you\'re studying. Click the "+ New Subject" button on the Dashboard. Give it a name (e.g. "Biology 101") and an optional course code.',
-    tip: 'You can mark subjects as Active, Ongoing, or Archived to keep your Dashboard clean.'
+    cta: 'Skip this step →',
+    autoAdvanceOn: 'subject-created'
   },
   {
-    icon: (
-      <div className="text-5xl select-none">📄</div>
+    id: 'class-management',
+    navigateTo: 'dashboard',
+    title: 'Managing Your Classes',
+    body: (
+      <>
+        <p>
+          Each class card has a <strong>three-dot menu (⋯)</strong> where you can:
+        </p>
+        <ul className="mt-2 space-y-1 text-sm">
+          <li>🗑️ <strong>Delete</strong> — remove the class entirely</li>
+          <li>📗 <strong>Active</strong> — currently taking this course</li>
+          <li>📘 <strong>Ongoing</strong> — long-term or self-study subject</li>
+          <li>📦 <strong>Archived</strong> — finished, keeps your dashboard clean</li>
+        </ul>
+      </>
     ),
-    title: 'Uploading Your Materials',
-    description:
-      'Inside each subject, click "Upload File" to add your notes, textbook chapters, or slides. Neuron supports PDF, Word (.docx), and PowerPoint (.pptx) files.',
-    tip: 'The more detailed your notes, the better the AI-generated cards will be.'
+    cta: 'Next →'
   },
   {
-    icon: (
-      <div className="text-5xl select-none">✨</div>
+    id: 'enter-class',
+    navigateTo: 'dashboard',
+    title: 'Open Your Class',
+    body: (
+      <>
+        <p>
+          Click on any class card to open it. Inside you'll see your materials,
+          flashcard sets, and options to import new content.
+        </p>
+        <p className="mt-2 text-xs opacity-80">
+          Click your class now — the tour will follow you in.
+        </p>
+      </>
     ),
-    title: 'AI Card Generation',
-    description:
-      'After uploading a file, click "Generate Cards". Neuron sends your notes to Google Gemini AI, which automatically creates both flashcards and open-ended active recall questions for you.',
-    tip: 'You\'ll need a Google Gemini API key — add it in Settings. It\'s free to get started.'
+    cta: 'Skip — take me in →',
+    autoAdvanceOn: 'subject-route'
   },
   {
-    icon: (
-      <div className="text-5xl select-none">🃏</div>
+    id: 'import-intro',
+    navigateTo: 'subject',
+    title: 'Creating Your First Flashcard Set',
+    body: (
+      <p>
+        This is the inside of your class. Click the <strong>Import</strong> button
+        to create your first flashcard set. You can upload a file or paste your
+        notes directly.
+      </p>
     ),
-    title: 'Flashcards',
-    description:
-      'Flashcards have a front (the question or term) and a back (the answer). During a study session, you flip the card, then rate how well you knew it from 1 (blank) to 5 (perfect). That rating trains the algorithm.',
-    tip: 'You can also create cards manually from the subject page — great for adding your own.'
+    cta: 'Next →'
   },
   {
-    icon: (
-      <div className="text-5xl select-none">💭</div>
+    id: 'import-walkthrough',
+    navigateTo: 'subject',
+    title: 'How Import Works',
+    body: (
+      <>
+        <p className="mb-2">Inside the Import panel:</p>
+        <ul className="space-y-2 text-sm">
+          <li>
+            <strong>AI Prompts</strong> — Optional instructions for the AI when
+            generating cards. Example: <em>"Focus on definitions and key dates."</em>
+          </li>
+          <li>
+            <strong>Paste Your Notes</strong> — Copy text from your notes or
+            textbook and paste it here. The AI reads it and generates cards.
+          </li>
+          <li>
+            <strong>Separators</strong> — If you're pasting pre-made cards
+            (front :: back), the separator (<code>::</code> by default) tells
+            Neuron where the question ends and the answer begins.
+          </li>
+        </ul>
+      </>
     ),
-    title: 'Active Recall Questions',
-    description:
-      'Active recall questions ask you to write out a full answer in your own words. After you submit, AI evaluates your response, shows you the model answer, and gives detailed feedback on what you got right or missed.',
-    tip: 'Writing answers from scratch is the most powerful study technique — stronger than re-reading by far.'
+    cta: 'Got it →'
   },
   {
-    icon: (
-      <div className="text-5xl select-none">🧠</div>
-    ),
-    title: 'Spaced Repetition',
-    description:
-      'Neuron uses the SM-2 spaced repetition algorithm (the science behind Anki). Cards you know well are shown less frequently; cards you struggle with come back sooner. Over time, this builds deep long-term memory.',
-    tip: 'Consistency beats cramming. Even 10 minutes of daily review compounds dramatically over a semester.'
-  },
-  {
-    icon: (
-      <div className="text-5xl select-none">📊</div>
-    ),
-    title: 'Analytics',
-    description:
-      'The Analytics page tracks your study streaks, total cards mastered, review history over time, and your weakest cards. Use it to see where you\'re strong and where to focus more effort.',
-    tip: 'Your "weakest cards" list is gold — those are the ones that will show up on your exam.'
-  },
-  {
-    icon: (
-      <div className="text-5xl select-none">📅</div>
-    ),
-    title: 'Calendar & Deadlines',
-    description:
-      'Add exams, quizzes, and assignment due dates to the Calendar. Neuron displays upcoming deadlines so you can plan your study sessions and avoid last-minute cramming.',
-    tip: 'Deadlines are tied to subjects, so you always know which material is time-sensitive.'
-  },
-  {
-    icon: (
-      <div className="text-5xl select-none">⚡</div>
-    ),
+    id: 'diagnostics-intro',
+    navigateTo: 'diagnostics',
     title: 'Diagnostics',
-    description:
-      'Run a rapid multiple-choice Diagnostic test for any subject. It quickly identifies what you know cold and what still needs work — perfect for a pre-exam knowledge check.',
-    tip: 'Diagnostics generate fresh multiple-choice questions using AI each time, so they stay challenging.'
+    body: (
+      <>
+        <p>
+          <strong>Diagnostics</strong> runs a quick multiple-choice test across
+          your cards to find out which ones you already know and which are brand new
+          to you.
+        </p>
+        <p className="mt-2">
+          This is important: cards you <em>haven't</em> been diagnosed on are
+          assumed to be unknown and scheduled for immediate review. Diagnostics
+          lets you skip past cards you already know well so you're not wasting
+          time reviewing material you've mastered.
+        </p>
+      </>
+    ),
+    cta: 'Next →'
   },
   {
-    icon: (
-      <div className="text-5xl select-none">⚙️</div>
+    id: 'study-mode',
+    navigateTo: 'study',
+    title: 'Study Mode — The 3 Rating Buttons',
+    body: (
+      <>
+        <p className="mb-2">
+          After you flip a flashcard, you'll see three buttons. Be honest — the
+          algorithm only works if you rate accurately:
+        </p>
+        <ul className="space-y-2 text-sm">
+          <li>
+            <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-1.5 align-middle" />
+            <strong>Wrong</strong> — You blanked or got it wrong. Card comes back
+            tomorrow.
+          </li>
+          <li>
+            <span className="inline-block w-3 h-3 rounded-full bg-amber-400 mr-1.5 align-middle" />
+            <strong>Partially Right</strong> — You kind of knew it. Card comes back
+            in a few days.
+          </li>
+          <li>
+            <span className="inline-block w-3 h-3 rounded-full bg-emerald-500 mr-1.5 align-middle" />
+            <strong>Got It</strong> — You nailed it. Card comes back much later.
+          </li>
+        </ul>
+        <p className="mt-2 text-xs opacity-75">
+          Over time this builds a schedule where hard cards appear often and easy
+          cards only appear when you're about to forget them.
+        </p>
+      </>
     ),
-    title: 'Settings',
-    description:
-      'In Settings you can update your display name, switch between light and dark mode, and manage your Google Gemini API key (required for AI features). Your data is stored 100% locally — nothing leaves your device.',
-    tip: 'To replay this tour anytime, go to Settings → Help → Start Tour.'
+    cta: 'Next →'
   },
   {
-    icon: (
-      <div className="text-6xl select-none">🎉</div>
+    id: 'calendar',
+    navigateTo: 'calendar',
+    title: 'Calendar',
+    body: (
+      <>
+        <p>
+          The <strong>Calendar</strong> shows you how many flashcards are due on
+          every day of the month so you can plan your study time.
+        </p>
+        <p className="mt-2">
+          You can also create <strong>Events</strong> — add exam dates, quiz
+          deadlines, and assignment due dates. Neuron uses these to boost the
+          frequency of relevant cards in the days before your exam.
+        </p>
+      </>
     ),
-    title: "You're Ready to Learn!",
-    description:
-      "That's everything you need to know. Add your first subject, upload your notes, generate cards, and start studying. Neuron handles the scheduling — you just show up.",
-    tip: 'Start small: one subject, one upload. You\'ll have cards in under a minute.'
+    cta: 'Next →'
+  },
+  {
+    id: 'analytics',
+    navigateTo: 'analytics',
+    title: 'Analytics',
+    body: (
+      <p>
+        <strong>Analytics</strong> gives you the full picture of your progress:
+        study streaks, total cards mastered, your review history over time, and
+        your weakest cards. Use it to stay motivated and spot exactly where
+        to focus more effort.
+      </p>
+    ),
+    cta: 'Finish tour →'
+  },
+  {
+    id: 'complete',
+    modal: true,
+    title: "You're All Set! 🎉",
+    body: (
+      <p>
+        That's everything. Go add your first class, upload your notes, and let
+        Neuron build your study schedule. You can replay this tour anytime from{' '}
+        <strong>Settings → Help → Start Feature Tour</strong>.
+      </p>
+    ),
+    cta: "Start studying →"
   }
 ]
+
+// ─── Component ─────────────────────────────────────────────────────────────────
 
 interface DemoTourProps {
   onComplete: () => void
 }
 
 export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Element {
-  const { user } = useAppStore()
-  const [step, setStep] = useState(0)
-  const [animating, setAnimating] = useState(false)
-  const [direction, setDirection] = useState<'forward' | 'back'>('forward')
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { user, subjects } = useAppStore()
+  const [stepIdx, setStepIdx] = useState(0)
+  const [visible, setVisible] = useState(true)
+  const prevSubjectCount = useRef(subjects.length)
 
-  const goTo = useCallback(
-    (next: number, dir: 'forward' | 'back') => {
-      if (animating) return
-      setAnimating(true)
-      setDirection(dir)
-      setTimeout(() => {
-        setStep(next)
-        setAnimating(false)
-      }, 220)
+  const step = STEPS[stepIdx]
+  const isLast = stepIdx === STEPS.length - 1
+
+  // Resolve dynamic navigation target
+  const resolveRoute = useCallback(
+    (target: Step['navigateTo']): string | null => {
+      switch (target) {
+        case 'dashboard': return '/'
+        case 'subject': {
+          const id = subjects[0]?.id
+          return id ? `/subject/${id}` : '/'
+        }
+        case 'diagnostics': {
+          const id = subjects[0]?.id
+          return id ? `/diagnostics/${id}` : '/'
+        }
+        case 'study': return '/study'
+        case 'calendar': return '/calendar'
+        case 'analytics': return '/analytics'
+        default: return null
+      }
     },
-    [animating]
+    [subjects]
   )
 
-  const handleNext = useCallback(() => {
-    if (step < steps.length - 1) {
-      goTo(step + 1, 'forward')
-    } else {
-      onComplete()
+  // Navigate when step changes
+  useEffect(() => {
+    if (!step.modal && step.navigateTo) {
+      const route = resolveRoute(step.navigateTo)
+      if (route && location.pathname !== route) {
+        navigate(route)
+      }
     }
-  }, [step, goTo, onComplete])
+  }, [stepIdx]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleBack = useCallback(() => {
-    if (step > 0) goTo(step - 1, 'back')
-  }, [step, goTo])
+  // Auto-advance: subject created
+  useEffect(() => {
+    if (
+      step.autoAdvanceOn === 'subject-created' &&
+      subjects.length > prevSubjectCount.current
+    ) {
+      prevSubjectCount.current = subjects.length
+      advance()
+    }
+  }, [subjects.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keyboard navigation
+  // Auto-advance: user navigated into a subject
+  useEffect(() => {
+    if (
+      step.autoAdvanceOn === 'subject-route' &&
+      location.pathname.startsWith('/subject/')
+    ) {
+      advance()
+    }
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function advance(): void {
+    if (stepIdx >= STEPS.length - 1) {
+      onComplete()
+      return
+    }
+    setVisible(false)
+    setTimeout(() => {
+      setStepIdx((i) => i + 1)
+      setVisible(true)
+    }, 200)
+  }
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'ArrowRight' || e.key === 'Enter') handleNext()
-      if (e.key === 'ArrowLeft') handleBack()
       if (e.key === 'Escape') onComplete()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [handleNext, handleBack, onComplete])
+  }, [onComplete])
 
-  const current = steps[step]
-  const isLast = step === steps.length - 1
+  const totalSteps = STEPS.length
+  const progress = ((stepIdx + 1) / totalSteps) * 100
 
-  const slideClass = animating
-    ? direction === 'forward'
-      ? 'opacity-0 translate-x-4'
-      : 'opacity-0 -translate-x-4'
-    : 'opacity-100 translate-x-0'
+  // ── Full-screen modal (welcome / complete) ──────────────────────────────────
+  if (step.modal) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div
+          className={`w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-8 transition-all duration-200 ${
+            visible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+          }`}
+        >
+          <div className="flex flex-col items-center text-center">
+            <div className="mb-5">
+              {stepIdx === 0 ? (
+                <NeuronLogo size={64} className="drop-shadow-lg" />
+              ) : (
+                <div className="text-5xl">🎉</div>
+              )}
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-slate-50 mb-3">
+              {stepIdx === 0 && user?.name
+                ? `Welcome, ${user.name}!`
+                : step.title}
+            </h2>
+            <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6">
+              {step.body}
+            </div>
+            <button
+              onClick={isLast ? onComplete : advance}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-700 hover:to-violet-600 text-white font-semibold text-sm shadow-sm transition-all active:scale-[0.98]"
+            >
+              {step.cta}
+            </button>
+            {stepIdx === 0 && (
+              <button
+                onClick={onComplete}
+                className="mt-3 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+              >
+                Skip tour
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
+  // ── Floating hint bar (all other steps) ─────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+    <div
+      className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4 transition-all duration-200 ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+      }`}
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {/* Progress bar */}
         <div className="h-1 bg-slate-100 dark:bg-slate-800">
           <div
-            className="h-full bg-gradient-to-r from-violet-500 to-sky-500 transition-all duration-400 ease-out"
-            style={{ width: `${((step + 1) / steps.length) * 100}%` }}
+            className="h-full bg-gradient-to-r from-violet-500 to-sky-500 transition-all duration-400"
+            style={{ width: `${progress}%` }}
           />
         </div>
 
-        {/* Step counter */}
-        <div className="px-6 pt-4 flex justify-between items-center">
-          <span className="text-xs font-medium text-slate-400 dark:text-slate-500">
-            Step {step + 1} of {steps.length}
-          </span>
-          <button
-            onClick={onComplete}
-            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-          >
-            Skip tour
-          </button>
-        </div>
-
-        {/* Content */}
-        <div
-          className={`px-8 py-6 flex flex-col items-center text-center transition-all duration-220 ease-out ${slideClass}`}
-        >
-          {/* Icon */}
-          <div className="mb-5 flex items-center justify-center">
-            {current.icon}
+        <div className="px-5 py-4">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wide">
+              Step {stepIdx} of {totalSteps - 1}
+            </span>
+            <button
+              onClick={onComplete}
+              className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+            >
+              Exit tour
+            </button>
           </div>
 
-          {/* Title */}
-          <h2 className="text-xl font-bold text-slate-900 dark:text-slate-50 mb-3">
-            {step === 0 && user?.name
-              ? `Welcome, ${user.name}!`
-              : current.title}
-          </h2>
+          {/* Title + body */}
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-50 mb-1.5">
+            {step.title}
+          </h3>
+          <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
+            {step.body}
+          </div>
 
-          {/* Description */}
-          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
-            {current.description}
-          </p>
-
-          {/* Tip */}
-          {current.tip && (
-            <div className="w-full bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800/40 rounded-xl px-4 py-3 text-xs text-violet-700 dark:text-violet-300 text-left">
-              <span className="font-semibold">Tip: </span>
-              {current.tip}
-            </div>
-          )}
-        </div>
-
-        {/* Progress dots */}
-        <div className="flex justify-center gap-1.5 pb-2">
-          {steps.map((_, i) => (
-            <button
-              key={i}
-              onClick={() => goTo(i, i > step ? 'forward' : 'back')}
-              className={`rounded-full transition-all duration-200 ${
-                i === step
-                  ? 'w-5 h-2 bg-violet-500'
-                  : i < step
-                  ? 'w-2 h-2 bg-violet-300 dark:bg-violet-700'
-                  : 'w-2 h-2 bg-slate-200 dark:bg-slate-700'
-              }`}
-              aria-label={`Go to step ${i + 1}`}
-            />
-          ))}
-        </div>
-
-        {/* Navigation */}
-        <div className="px-8 pb-8 flex gap-3">
+          {/* Action button */}
           <button
-            onClick={handleBack}
-            disabled={step === 0}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            onClick={advance}
+            className="w-full py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold transition-colors active:scale-[0.98]"
           >
-            ← Back
-          </button>
-          <button
-            onClick={handleNext}
-            className="flex-[2] py-2.5 rounded-xl text-sm font-semibold bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-700 hover:to-violet-600 text-white shadow-sm transition-all active:scale-[0.98]"
-          >
-            {isLast ? "Let's Go! 🚀" : 'Next →'}
+            {step.cta}
           </button>
         </div>
       </div>

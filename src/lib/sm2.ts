@@ -57,18 +57,20 @@ export function confidenceToQuality(confidence: 'perfect' | 'hesitation' | 'almo
 }
 
 /**
- * Get default schedule for a new card
+ * Get default schedule for a new card.
+ * ease_factor starts at the minimum (1.3) so unreviewed cards are treated as
+ * unknown (section 1) until the user completes diagnostics or a study session.
+ * The ease_factor rises naturally as the user demonstrates knowledge.
  */
 export function defaultSchedule(cardId: number, userId: number): Omit<CardSchedule, 'id'> {
-  const tomorrow = new Date()
-  tomorrow.setDate(tomorrow.getDate() + 1)
+  const today = new Date().toISOString().split('T')[0]
   return {
     card_id: cardId,
     user_id: userId,
     interval: 1,
     repetitions: 0,
-    ease_factor: 2.5,
-    due_date: tomorrow.toISOString().split('T')[0],
+    ease_factor: 1.3,
+    due_date: today,
     last_reviewed_at: undefined
   }
 }
