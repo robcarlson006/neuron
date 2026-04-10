@@ -180,7 +180,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           <div className="space-y-1.5 text-sm text-slate-500 dark:text-slate-400">
             <p>
               <span className="font-medium text-slate-700 dark:text-slate-300">Neuron</span>
-              {' '}v1.4.0
+              {' '}v1.4.1
             </p>
             <p>Built with Electron, React, and Google Gemini AI</p>
             <p>Spaced repetition powered by the SM-2 algorithm</p>
