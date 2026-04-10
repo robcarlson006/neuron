@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
+import PomodoroWidget from '../components/PomodoroWidget'
 import type { Card, CardFolder, CardSchedule, Deadline } from '../types'
 
 type Tab = 'cards' | 'deadlines'
@@ -216,6 +217,7 @@ export default function SubjectDetail(): React.JSX.Element {
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
+          <PomodoroWidget />
           <button
             onClick={() => setShowTextImport(true)}
             className="btn-secondary text-sm flex items-center gap-1.5"

@@ -1,6 +1,143 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../store/appStore'
 
+// ── Pomodoro config modal ────────────────────────────────────────────────────
+function PomodoroModal({ onClose }: { onClose: () => void }): React.JSX.Element {
+  const { pomodoroEnabled, pomodoroWorkMinutes, pomodoroBreakMinutes, setPomodoroEnabled, setPomodoroSettings } = useAppStore()
+  const [enabled, setEnabled] = useState(pomodoroEnabled)
+  const [workMin, setWorkMin] = useState(pomodoroWorkMinutes)
+  const [breakMin, setBreakMin] = useState(pomodoroBreakMinutes)
+  const [saved, setSaved] = useState(false)
+
+  function handleSave(): void {
+    setPomodoroEnabled(enabled)
+    if (enabled) setPomodoroSettings(workMin, breakMin)
+    setSaved(true)
+    setTimeout(() => { setSaved(false); onClose() }, 800)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-6 w-full max-w-sm mx-4 animate-fade-in"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🍅</span>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">Pomodoro Timer</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M1 1l10 10M11 1L1 11" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Enable toggle */}
+        <div className="flex items-center justify-between mb-5 pb-5 border-b border-slate-100 dark:border-slate-700">
+          <div>
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Enable Pomodoro</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Show timer widget in the app</p>
+          </div>
+          <button
+            onClick={() => setEnabled(e => !e)}
+            className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 ${
+              enabled ? 'bg-violet-600' : 'bg-slate-200 dark:bg-slate-600'
+            }`}
+            role="switch"
+            aria-checked={enabled}
+          >
+            <span className={`inline-block w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform duration-200 ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+
+        {/* Settings — shown when enabled */}
+        <div className={`space-y-5 transition-opacity duration-200 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+          {/* Work duration */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Work Duration
+              </label>
+              <span className="text-sm font-semibold text-violet-600 dark:text-violet-400 tabular-nums">
+                {workMin} min
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={60}
+              step={1}
+              value={workMin}
+              onChange={e => setWorkMin(Number(e.target.value))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-violet-600 bg-slate-200 dark:bg-slate-700"
+            />
+            <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
+              <span>1 min</span>
+              <span>60 min</span>
+            </div>
+          </div>
+
+          {/* Break duration */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Break Duration
+              </label>
+              <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                {breakMin} min
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={15}
+              step={1}
+              value={breakMin}
+              onChange={e => setBreakMin(Number(e.target.value))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-emerald-600 bg-slate-200 dark:bg-slate-700"
+            />
+            <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
+              <span>1 min</span>
+              <span>15 min</span>
+            </div>
+          </div>
+
+          {/* Summary */}
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
+              🍅 {workMin} min work → ☕ {breakMin} min break → repeat
+            </p>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 mt-5">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            className={`flex-1 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${
+              saved ? 'bg-emerald-600' : 'bg-violet-600 hover:bg-violet-700'
+            }`}
+          >
+            {saved ? '✓ Saved' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface SettingsProps {
   onStartDemo?: () => void
 }
@@ -22,10 +159,11 @@ interface UpdateInfo {
 }
 
 export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Element {
-  const { user, setUser, theme, toggleTheme } = useAppStore()
+  const { user, setUser, theme, toggleTheme, pomodoroEnabled, pomodoroWorkMinutes, pomodoroBreakMinutes } = useAppStore()
   const [name, setName] = useState(user?.name || '')
   const [reminderTime, setReminderTime] = useState('09:00')
   const [savedName, setSavedName] = useState(false)
+  const [showPomodoroModal, setShowPomodoroModal] = useState(false)
 
   // Version / update state
   const [currentVersion, setCurrentVersion] = useState('')
@@ -243,6 +381,47 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           </div>
         </section>
 
+        {/* Add-ons section */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Add-ons</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+            Optional features you can enable to enhance your study sessions.
+          </p>
+          <div className="space-y-3">
+            {/* Pomodoro add-on */}
+            <div className="flex items-center justify-between p-4 rounded-xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40 hover:border-slate-200 dark:hover:border-slate-600 transition-colors">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0 ${
+                  pomodoroEnabled
+                    ? 'bg-violet-100 dark:bg-violet-900/40'
+                    : 'bg-slate-100 dark:bg-slate-800'
+                }`}>
+                  🍅
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Pomodoro Timer</p>
+                    {pomodoroEnabled && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 font-medium">
+                        On · {pomodoroWorkMinutes}m/{pomodoroBreakMinutes}m
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                    Visual focus timer always visible while studying
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowPomodoroModal(true)}
+                className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+              >
+                Configure
+              </button>
+            </div>
+          </div>
+        </section>
+
         {/* Data Storage section */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-2">Data Storage</h2>
@@ -429,6 +608,10 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           )}
         </section>
       </div>
+
+      {showPomodoroModal && (
+        <PomodoroModal onClose={() => setShowPomodoroModal(false)} />
+      )}
     </div>
   )
 }

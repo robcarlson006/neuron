@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore'
 import FlashCard from '../components/FlashCard'
 import ActiveRecallCard from '../components/ActiveRecallCard'
 import MultipleChoiceCard from '../components/MultipleChoiceCard'
+import PomodoroWidget from '../components/PomodoroWidget'
 import type { Card, CardSchedule, SessionSummary } from '../types'
 
 interface StudyCard extends Card {
@@ -426,6 +427,7 @@ export default function StudySession(): React.JSX.Element {
           </button>
 
           <div className="flex items-center gap-3 text-sm">
+            <PomodoroWidget />
             {isMCMode && (
               <span className="text-blue-600 dark:text-blue-400 font-medium text-xs px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 rounded-full border border-blue-200 dark:border-blue-800">
                 Multiple Choice

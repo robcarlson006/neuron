@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import SubjectCard from '../components/SubjectCard'
+import PomodoroWidget from '../components/PomodoroWidget'
 import type { SubjectWithStats, Deadline, CardSchedule } from '../types'
 
 const FLASHCARD_SECONDS = 20
@@ -172,13 +173,16 @@ export default function Dashboard(): React.JSX.Element {
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
         </div>
-        <button
-          onClick={() => setShowAddSubject(true)}
-          className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-1.5 flex-shrink-0"
-        >
-          <span className="text-base leading-none">+</span>
-          Add Subject
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <PomodoroWidget />
+          <button
+            onClick={() => setShowAddSubject(true)}
+            className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-1.5"
+          >
+            <span className="text-base leading-none">+</span>
+            Add Subject
+          </button>
+        </div>
       </div>
 
       {/* Today's Plan Banner */}

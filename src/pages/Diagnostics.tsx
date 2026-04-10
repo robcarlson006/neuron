@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import type { Card, CardSchedule, DiagnosticSummary } from '../types'
 import LatexText from '../components/LatexText'
+import PomodoroWidget from '../components/PomodoroWidget'
 
 interface DiagCard extends Card {
   interval: number
@@ -457,6 +458,7 @@ export default function Diagnostics(): React.JSX.Element {
             Exit
           </button>
           <div className="flex items-center gap-3">
+            <PomodoroWidget />
             {resumedFrom !== null && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 font-medium">
                 Resumed
