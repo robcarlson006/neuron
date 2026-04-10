@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import FlashCard from '../components/FlashCard'
 import ActiveRecallCard from '../components/ActiveRecallCard'
 import MultipleChoiceCard from '../components/MultipleChoiceCard'
+import LearnModeSession from '../components/LearnModeSession'
 import PomodoroWidget from '../components/PomodoroWidget'
 import type { Card, CardSchedule, SessionSummary } from '../types'
 
@@ -21,6 +22,7 @@ export default function StudySession(): React.JSX.Element {
   const { subjectId } = useParams<{ subjectId?: string }>()
   const [searchParams] = useSearchParams()
   const isMCMode = searchParams.get('mode') === 'mc'
+  const isLearnMode = searchParams.get('mode') === 'learn'
   const typeFilter = searchParams.get('type') as 'flashcard' | 'active_recall' | null
   const { user } = useAppStore()
   const navigate = useNavigate()
@@ -32,6 +34,10 @@ export default function StudySession(): React.JSX.Element {
   const cardStartTimeRef = useRef<number>(Date.now())
   const [loading, setLoading] = useState(true)
   const [phase, setPhase] = useState<'studying' | 'skipped' | 'done'>('studying')
+  const [learnSummary, setLearnSummary] = useState<{ cleared: number; total: number } | null>(null)
+  const [learnKey, setLearnKey] = useState(0)
+  const [learnMenuOpen, setLearnMenuOpen] = useState(false)
+  const learnMenuRef = useRef<HTMLDivElement>(null)
   const [emptyReason, setEmptyReason] = useState<EmptyReason>('no-cards')
   const [summary, setSummary] = useState<SessionSummary>({
     total: 0,
@@ -40,6 +46,26 @@ export default function StudySession(): React.JSX.Element {
     skipped: 0,
     cardsReviewed: []
   })
+
+  const learnStorageKey = `${user?.id ?? 0}-${subjectId ?? 'all'}`
+
+  const handleLearnRestart = useCallback(() => {
+    localStorage.removeItem(`learn-progress-${learnStorageKey}`)
+    setLearnMenuOpen(false)
+    setLearnKey(k => k + 1)
+  }, [learnStorageKey])
+
+  // Close learn menu on outside click
+  useEffect(() => {
+    if (!learnMenuOpen) return
+    function close(e: MouseEvent): void {
+      if (learnMenuRef.current && !learnMenuRef.current.contains(e.target as Node)) {
+        setLearnMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [learnMenuOpen])
 
   useEffect(() => {
     if (user) loadCards()
@@ -51,14 +77,13 @@ export default function StudySession(): React.JSX.Element {
     try {
       const subjectIdNum = subjectId ? Number(subjectId) : undefined
 
-      if (isMCMode) {
-        // MC mode always uses all cards as the pool
+      if (isMCMode || isLearnMode) {
+        // MC and Learn modes always use all cards as the pool
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
         if (all.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
         } else {
-          // Shuffle for MC
           const shuffled = [...all].sort(() => Math.random() - 0.5) as StudyCard[]
           setCards(shuffled)
           setAllCards(all as StudyCard[])
@@ -326,6 +351,75 @@ export default function StudySession(): React.JSX.Element {
   }
 
   if (phase === 'done') {
+    // ── Learn Mode completion screen ──────────────────────────────────────────
+    if (isLearnMode && learnSummary) {
+      const { cleared, total: lTotal } = learnSummary
+      const pct = lTotal > 0 ? Math.round((cleared / lTotal) * 100) : 0
+      return (
+        <div className="min-h-screen flex items-center justify-center p-8 bg-slate-50 dark:bg-slate-950">
+          <div className="w-full max-w-md page-enter">
+            <div className="text-center mb-8">
+              <div className="text-5xl mb-4">
+                {pct === 100 ? '🏆' : pct >= 80 ? '🎉' : pct >= 50 ? '👍' : '💪'}
+              </div>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50 mb-1">
+                Learn Session Complete!
+              </h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                You cleared {cleared} of {lTotal} card{lTotal !== 1 ? 's' : ''}
+              </p>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-6 mb-5">
+              <div className="grid grid-cols-2 gap-4 text-center mb-5">
+                <div className="space-y-1">
+                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{cleared}</div>
+                  <div className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Cleared</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-2xl font-bold text-slate-500 dark:text-slate-400">{lTotal - cleared}</div>
+                  <div className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Still Learning</div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-700">
+                <div className="flex justify-between items-center text-sm mb-2">
+                  <span className="text-slate-500 dark:text-slate-400">Mastered</span>
+                  <span className={`font-semibold ${
+                    pct === 100 ? 'text-emerald-600 dark:text-emerald-400' :
+                    pct >= 80 ? 'text-emerald-600 dark:text-emerald-400' :
+                    pct >= 50 ? 'text-amber-500' : 'text-red-500'
+                  }`}>{pct}%</span>
+                </div>
+                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
+                  <div
+                    className="h-2 rounded-full bg-emerald-500 transition-all duration-700"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-3 text-center">
+                Learn Mode results don't affect your spaced repetition schedule.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => navigate('/')} className="btn-secondary flex-1">
+                Dashboard
+              </button>
+              {subjectId && (
+                <button onClick={() => navigate(`/subject/${subjectId}`)} className="btn-primary flex-1">
+                  View Subject
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // ── Standard / MC completion screen ───────────────────────────────────────
     const reviewed = summary.correct + summary.incorrect
     const accuracy = reviewed > 0 ? Math.round((summary.correct / reviewed) * 100) : 0
 
@@ -410,7 +504,7 @@ export default function StudySession(): React.JSX.Element {
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
         <div className="h-0.5 bg-slate-100 dark:bg-slate-800">
           <div
-            className={`h-0.5 transition-all duration-300 ${isMCMode ? 'bg-blue-500' : 'bg-violet-500'}`}
+            className={`h-0.5 transition-all duration-300 ${isMCMode ? 'bg-blue-500' : isLearnMode ? 'bg-emerald-500' : 'bg-violet-500'}`}
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -433,15 +527,51 @@ export default function StudySession(): React.JSX.Element {
                 Multiple Choice
               </span>
             )}
+            {isLearnMode && (
+              <div className="relative" ref={learnMenuRef}>
+                <button
+                  onClick={() => setLearnMenuOpen(o => !o)}
+                  className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-xs px-2.5 py-1 bg-emerald-50 dark:bg-emerald-900/30 rounded-full border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+                >
+                  Learn Mode
+                  <svg width="10" height="10" viewBox="0 0 14 14" fill="none" className={`transition-transform ${learnMenuOpen ? 'rotate-180' : ''}`}>
+                    <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+
+                {learnMenuOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-52 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg py-1.5 z-50">
+                    <button
+                      onClick={handleLearnRestart}
+                      className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors flex items-center gap-2.5 text-sm text-slate-700 dark:text-slate-200"
+                    >
+                      <span className="text-base">↺</span>
+                      Restart Learn Mode
+                    </button>
+                    <button
+                      onClick={() => navigate(subjectId ? `/subject/${subjectId}` : '/')}
+                      className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors flex items-center gap-2.5 text-sm text-slate-500 dark:text-slate-400"
+                    >
+                      <span className="text-base">←</span>
+                      Return to Dashboard
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {phase === 'skipped' && (
               <span className="text-amber-500 dark:text-amber-400 font-medium text-xs px-2 py-0.5 bg-amber-50 dark:bg-amber-900/30 rounded-full">
                 Reviewing skipped
               </span>
             )}
-            <span className="text-emerald-600 dark:text-emerald-400 font-medium">{summary.correct} correct</span>
-            <span className="text-slate-300 dark:text-slate-600">·</span>
-            <span className="text-red-500 font-medium">{summary.incorrect} incorrect</span>
-            {!isMCMode && (
+            {!isLearnMode && (
+              <>
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">{summary.correct} correct</span>
+                <span className="text-slate-300 dark:text-slate-600">·</span>
+                <span className="text-red-500 font-medium">{summary.incorrect} incorrect</span>
+              </>
+            )}
+            {!isMCMode && !isLearnMode && (
               <>
                 <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">·</span>
                 <span className="text-slate-400 dark:text-slate-500 text-xs hidden sm:inline">
@@ -455,7 +585,18 @@ export default function StudySession(): React.JSX.Element {
 
       {/* Card area */}
       <div className="flex-1 flex items-center justify-center p-8">
-        {isMCMode ? (
+        {isLearnMode ? (
+          <LearnModeSession
+            key={learnKey}
+            cards={cards}
+            allCards={allCards}
+            storageKey={learnStorageKey}
+            onComplete={(cleared, total) => {
+              setLearnSummary({ cleared, total })
+              setPhase('done')
+            }}
+          />
+        ) : isMCMode ? (
           <MultipleChoiceCard
             card={currentCard}
             allCards={allCards}

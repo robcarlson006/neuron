@@ -379,6 +379,7 @@ function StudyMenu({ baseRoute }: { baseRoute: string }): React.JSX.Element {
   const options = [
     { label: 'Study Now', desc: 'Flashcards & active recall with spaced repetition', route: baseRoute, dot: 'bg-violet-500' },
     { label: 'Multiple Choice', desc: 'Practice with answer options — no schedule impact', route: `${baseRoute}?mode=mc`, dot: 'bg-blue-500' },
+    { label: 'Learn Mode', desc: 'Master cards through multiple-choice then written answers', route: `${baseRoute}?mode=learn`, dot: 'bg-emerald-500' },
   ]
 
   return (

@@ -277,6 +277,7 @@ function SubjectStudyMenu({ subjectId, cardsDue }: { subjectId: number; cardsDue
   const options = [
     { label: 'Study Now', desc: 'Flashcards & active recall with spaced repetition', route: base, dot: 'bg-violet-500' },
     { label: 'Multiple Choice', desc: 'Practice with answer options — no schedule impact', route: `${base}?mode=mc`, dot: 'bg-blue-500' },
+    { label: 'Learn Mode', desc: 'Master cards through multiple-choice then written answers', route: `${base}?mode=learn`, dot: 'bg-emerald-500' },
   ]
 
   return (

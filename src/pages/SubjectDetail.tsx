@@ -1430,6 +1430,12 @@ function SubjectDetailStudyMenu({ subjectId, disabled }: { subjectId: number; di
       route: `/study/${subjectId}?mode=mc`,
       dot: 'bg-blue-500'
     },
+    {
+      label: 'Learn Mode',
+      desc: 'Master cards through multiple-choice then written answers',
+      route: `/study/${subjectId}?mode=learn`,
+      dot: 'bg-emerald-500'
+    },
   ]
 
   return (
