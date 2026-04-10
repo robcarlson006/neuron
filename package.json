@@ -1,6 +1,6 @@
 {
   "name": "studyhelper",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "description": "Spaced repetition and active recall for smarter studying",
   "main": "out/main/index.js",
   "author": "Neuron",
