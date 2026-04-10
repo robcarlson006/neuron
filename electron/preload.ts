@@ -124,10 +124,28 @@ const electronAPI = {
   getMeta: (key: string): Promise<string | null> => ipcRenderer.invoke('db:getMeta', key),
   setMeta: (key: string, value: string): Promise<{ success: boolean }> => ipcRenderer.invoke('db:setMeta', key, value),
 
-  // Auto-updater
+  // Auto-updater (background)
   onUpdateAvailable: (cb: (version: string) => void) => ipcRenderer.on('update:available', (_e, v) => cb(v)),
   onUpdateDownloaded: (cb: (version: string) => void) => ipcRenderer.on('update:downloaded', (_e, v) => cb(v)),
-  installUpdate: () => ipcRenderer.send('update:install')
+  installUpdate: () => ipcRenderer.send('update:install'),
+
+  // Manual update checker
+  getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
+  checkGitHub: (): Promise<{
+    currentVersion: string
+    latestVersion: string
+    updateAvailable: boolean
+    downloadUrl: string | null
+    releaseUrl: string
+    releaseNotes: string
+  }> => ipcRenderer.invoke('updater:checkGitHub'),
+  downloadUpdate: (url: string, version: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>
+    ipcRenderer.invoke('updater:download', url, version),
+  installDownloadedUpdate: (filePath: string): Promise<{ success: boolean; method: string }> =>
+    ipcRenderer.invoke('updater:install', filePath),
+  openReleasePage: (url: string): Promise<void> => ipcRenderer.invoke('updater:openReleasePage', url),
+  cleanupUpdateFile: (filePath: string): Promise<void> => ipcRenderer.invoke('updater:cleanupFile', filePath),
+  onDownloadProgress: (cb: (pct: number) => void) => ipcRenderer.on('updater:download-progress', (_e, pct) => cb(pct))
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

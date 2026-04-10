@@ -7,6 +7,7 @@ import { DB_SCHEMA } from '../src/lib/db'
 import { registerDbHandlers, setDatabase } from './ipc/dbHandlers'
 import { registerFileHandlers } from './ipc/fileHandlers'
 import { registerGeminiHandlers } from './ipc/geminiHandlers'
+import { registerUpdaterHandlers } from './ipc/updaterHandlers'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -93,6 +94,7 @@ app.whenReady().then(async () => {
   registerDbHandlers()
   registerFileHandlers()
   registerGeminiHandlers()
+  registerUpdaterHandlers(() => mainWindow)
 
   createWindow()
   setupAutoUpdater()
