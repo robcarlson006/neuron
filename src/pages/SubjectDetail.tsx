@@ -346,6 +346,17 @@ export default function SubjectDetail(): React.JSX.Element {
             </div>
           )}
 
+          {/* Study this folder button — shown only when a specific folder is selected */}
+          {typeof folderFilter === 'number' && (
+            <div className="mb-3 flex justify-end">
+              <SubjectDetailStudyMenu
+                subjectId={subject.id}
+                disabled={filteredCards.length === 0}
+                folderId={folderFilter}
+              />
+            </div>
+          )}
+
           {/* Search & filter */}
           {cards.length > 0 && (
             <div className="flex gap-2 mb-4">
@@ -1402,7 +1413,7 @@ function TextImportModal({ onClose, onSave, folders }: {
   )
 }
 
-function SubjectDetailStudyMenu({ subjectId, disabled }: { subjectId: number; disabled: boolean }): React.JSX.Element {
+function SubjectDetailStudyMenu({ subjectId, disabled, folderId }: { subjectId: number; disabled: boolean; folderId?: number }): React.JSX.Element {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -1417,26 +1428,51 @@ function SubjectDetailStudyMenu({ subjectId, disabled }: { subjectId: number; di
     return () => window.removeEventListener('mousedown', closeMenu)
   }, [open, closeMenu])
 
-  const options = [
-    {
-      label: 'Study Now',
-      desc: 'Flashcards & active recall with spaced repetition',
-      route: `/study/${subjectId}`,
-      dot: 'bg-violet-500'
-    },
-    {
-      label: 'Multiple Choice',
-      desc: 'Practice with answer options — no schedule impact',
-      route: `/study/${subjectId}?mode=mc`,
-      dot: 'bg-blue-500'
-    },
-    {
-      label: 'Learn Mode',
-      desc: 'Master cards through multiple-choice then written answers',
-      route: `/study/${subjectId}?mode=learn`,
-      dot: 'bg-emerald-500'
-    },
-  ]
+  const folderSuffix = folderId != null ? `&folderId=${folderId}` : ''
+
+  const options = folderId != null
+    ? [
+        {
+          label: 'Flashcards',
+          desc: 'Flip through cards in this folder — no schedule impact',
+          route: `/study/${subjectId}?folderId=${folderId}`,
+          dot: 'bg-violet-500'
+        },
+        {
+          label: 'Multiple Choice',
+          desc: 'Practice with answer options — no schedule impact',
+          route: `/study/${subjectId}?mode=mc${folderSuffix}`,
+          dot: 'bg-blue-500'
+        },
+        {
+          label: 'Learn Mode',
+          desc: 'Multiple-choice then written answers — no schedule impact',
+          route: `/study/${subjectId}?mode=learn${folderSuffix}`,
+          dot: 'bg-emerald-500'
+        },
+      ]
+    : [
+        {
+          label: 'Study Now',
+          desc: 'Flashcards & active recall with spaced repetition',
+          route: `/study/${subjectId}`,
+          dot: 'bg-violet-500'
+        },
+        {
+          label: 'Multiple Choice',
+          desc: 'Practice with answer options — no schedule impact',
+          route: `/study/${subjectId}?mode=mc`,
+          dot: 'bg-blue-500'
+        },
+        {
+          label: 'Learn Mode',
+          desc: 'Master cards through multiple-choice then written answers',
+          route: `/study/${subjectId}?mode=learn`,
+          dot: 'bg-emerald-500'
+        },
+      ]
+
+  const buttonLabel = folderId != null ? 'Study this folder' : 'Study Now'
 
   return (
     <div className="relative" ref={ref}>
@@ -1445,7 +1481,7 @@ function SubjectDetailStudyMenu({ subjectId, disabled }: { subjectId: number; di
         onClick={() => !disabled && setOpen(o => !o)}
         className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        Study Now
+        {buttonLabel}
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
           <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>

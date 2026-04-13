@@ -24,6 +24,8 @@ export default function StudySession(): React.JSX.Element {
   const isMCMode = searchParams.get('mode') === 'mc'
   const isLearnMode = searchParams.get('mode') === 'learn'
   const typeFilter = searchParams.get('type') as 'flashcard' | 'active_recall' | null
+  const folderIdParam = searchParams.get('folderId')
+  const isFolderMode = folderIdParam != null
   const { user } = useAppStore()
   const navigate = useNavigate()
 
@@ -79,7 +81,11 @@ export default function StudySession(): React.JSX.Element {
 
       if (isMCMode || isLearnMode) {
         // MC and Learn modes always use all cards as the pool
-        const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
+        let all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
+        if (isFolderMode) {
+          const fid = Number(folderIdParam)
+          all = (all as StudyCard[]).filter(c => c.folder_id === fid)
+        }
         if (all.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
@@ -89,6 +95,24 @@ export default function StudySession(): React.JSX.Element {
           setAllCards(all as StudyCard[])
         }
         setSummary({ total: all.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
+        setSkippedCards([])
+        setCurrentIdx(0)
+        setPhase('studying')
+        return
+      }
+
+      // Folder flashcard mode — show all cards in folder, no SM-2 writes
+      if (isFolderMode) {
+        const fid = Number(folderIdParam)
+        const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
+        const folderCards = (all as StudyCard[]).filter(c => c.folder_id === fid)
+        if (folderCards.length === 0) {
+          setEmptyReason('no-cards')
+          setCards([])
+        } else {
+          setCards(folderCards)
+        }
+        setSummary({ total: folderCards.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
         setSkippedCards([])
         setCurrentIdx(0)
         setPhase('studying')
@@ -156,14 +180,17 @@ export default function StudySession(): React.JSX.Element {
       last_reviewed_at: currentCard.last_reviewed_at
     }
 
-    await window.electronAPI.processReview({
-      cardId: currentCard.id,
-      userId: user.id,
-      quality,
-      wasCorrect: quality >= 3,
-      responseTimeMs,
-      currentSchedule: schedule
-    })
+    // Skip SM-2 DB write when studying a specific folder
+    if (!isFolderMode) {
+      await window.electronAPI.processReview({
+        cardId: currentCard.id,
+        userId: user.id,
+        quality,
+        wasCorrect: quality >= 3,
+        responseTimeMs,
+        currentSchedule: schedule
+      })
+    }
 
     setSummary(prev => ({
       ...prev,
@@ -558,6 +585,11 @@ export default function StudySession(): React.JSX.Element {
                   </div>
                 )}
               </div>
+            )}
+            {isFolderMode && (
+              <span className="text-slate-500 dark:text-slate-400 font-medium text-xs px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700">
+                Folder study
+              </span>
             )}
             {phase === 'skipped' && (
               <span className="text-amber-500 dark:text-amber-400 font-medium text-xs px-2 py-0.5 bg-amber-50 dark:bg-amber-900/30 rounded-full">
