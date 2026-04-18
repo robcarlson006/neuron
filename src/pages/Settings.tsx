@@ -166,6 +166,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [showPomodoroModal, setShowPomodoroModal] = useState(false)
 
   // Version / update state
+  const [desiredRetention, setDesiredRetention] = useState(90)
+  const [interleave, setInterleave] = useState(true)
+  const [savedFSRS, setSavedFSRS] = useState(false)
   const [currentVersion, setCurrentVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle')
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
@@ -178,11 +181,25 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   useEffect(() => {
     window.electronAPI.getVersion().then(setCurrentVersion).catch(() => {})
 
+    window.electronAPI.getMeta('desired_retention').then(v => {
+      if (v) setDesiredRetention(Math.round(parseFloat(v) * 100))
+    }).catch(() => {})
+    window.electronAPI.getMeta('interleave_queue').then(v => {
+      if (v != null) setInterleave(v !== 'false')
+    }).catch(() => {})
+
     if (!progressListenerSet.current) {
       progressListenerSet.current = true
       window.electronAPI.onDownloadProgress((pct) => setDownloadProgress(pct))
     }
   }, [])
+
+  async function handleSaveFSRS(): Promise<void> {
+    await window.electronAPI.setMeta('desired_retention', (desiredRetention / 100).toString())
+    await window.electronAPI.setMeta('interleave_queue', interleave ? 'true' : 'false')
+    setSavedFSRS(true)
+    setTimeout(() => setSavedFSRS(false), 1500)
+  }
 
   async function handleCheckForUpdates(): Promise<void> {
     setUpdateStatus('checking')
@@ -360,6 +377,55 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">
             {theme === 'light' ? 'Switch right to enable dark mode' : 'Switch left to enable light mode'}
           </p>
+        </section>
+
+        {/* Study algorithm — FSRS */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Study Algorithm</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+            Neuron uses FSRS-5 with Bayesian Knowledge Tracing per concept.
+          </p>
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Target Retention</label>
+              <span className="text-sm font-semibold text-violet-600 dark:text-violet-400 tabular-nums">{desiredRetention}%</span>
+            </div>
+            <input
+              type="range"
+              min={80}
+              max={98}
+              step={1}
+              value={desiredRetention}
+              onChange={e => setDesiredRetention(Number(e.target.value))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-violet-600 bg-slate-200 dark:bg-slate-700"
+            />
+            <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
+              <span>80% (fewer reviews)</span>
+              <span>98% (fewer lapses)</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between mb-5 pt-4 border-t border-slate-100 dark:border-slate-700">
+            <div>
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Interleave Concepts</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                Round-robin across folders/concepts instead of blocked practice
+              </p>
+            </div>
+            <button
+              onClick={() => setInterleave(v => !v)}
+              className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors ${interleave ? 'bg-violet-600' : 'bg-slate-200 dark:bg-slate-600'}`}
+              role="switch"
+              aria-checked={interleave}
+            >
+              <span className={`inline-block w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform duration-200 ${interleave ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+          <button
+            onClick={handleSaveFSRS}
+            className={`w-full py-2 rounded-lg text-white text-sm font-medium transition-colors ${savedFSRS ? 'bg-emerald-600' : 'bg-violet-600 hover:bg-violet-700'}`}
+          >
+            {savedFSRS ? '✓ Saved' : 'Save Algorithm Settings'}
+          </button>
         </section>
 
         {/* Reminders section */}

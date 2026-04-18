@@ -31,6 +31,7 @@ export interface Card {
   front: string
   back: string
   is_manual: number
+  concept?: string | null
   created_at: string
 }
 
@@ -50,6 +51,21 @@ export interface CardSchedule {
   ease_factor: number
   due_date: string
   last_reviewed_at?: string
+  // FSRS-5 fields (nullable during migration from SM-2)
+  stability?: number | null
+  difficulty?: number | null
+  state?: number | null      // 0=new,1=learning,2=review,3=relearning
+  lapses?: number | null
+}
+
+export interface ConceptMastery {
+  id: number
+  user_id: number
+  subject_id: number
+  concept: string
+  mastery_prob: number
+  observations: number
+  updated_at: string
 }
 
 export interface ReviewLog {
@@ -168,6 +184,14 @@ export interface AppSettings {
   theme: Theme
   dailyReminderTime?: string
   userName?: string
+  desiredRetention?: number      // FSRS target retention, 0.80..0.98
+  interleaveQueue?: boolean      // Whether StudySession should interleave concepts
+}
+
+export interface RetentionForecastPoint {
+  date: string
+  retention: number
+  count: number
 }
 
 export interface DayStudyInfo {

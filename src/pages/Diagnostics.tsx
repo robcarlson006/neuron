@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
-import type { Card, CardSchedule, DiagnosticSummary } from '../types'
+import type { Card, CardSchedule, DiagnosticSummary, ConceptMastery } from '../types'
 import LatexText from '../components/LatexText'
 import PomodoroWidget from '../components/PomodoroWidget'
 
@@ -57,6 +57,7 @@ export default function Diagnostics(): React.JSX.Element {
   const [results, setResults] = useState<DiagResult[]>([])
   const [answer, setAnswer] = useState('')
   const [summary, setSummary] = useState<DiagnosticSummary | null>(null)
+  const [conceptMastery, setConceptMastery] = useState<ConceptMastery[]>([])
   const [error, setError] = useState('')
   const [resumedFrom, setResumedFrom] = useState<number | null>(null)
 
@@ -272,6 +273,12 @@ export default function Diagnostics(): React.JSX.Element {
     })
 
     setSummary(diagSummary)
+    try {
+      const cm = await window.electronAPI.getConceptMastery(user.id, Number(subjectId))
+      setConceptMastery(cm)
+    } catch {
+      // ignore — concept table may not exist on older DBs
+    }
     setPhase('results')
   }
 
@@ -375,9 +382,38 @@ export default function Diagnostics(): React.JSX.Element {
             />
           </div>
           <p className="text-xs text-slate-400 dark:text-slate-500 text-center mt-3">
-            SM-2 schedules have been seeded from your self-ratings.
+            FSRS-5 schedules have been seeded from your self-ratings.
           </p>
         </div>
+
+        {conceptMastery.length > 0 && (
+          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-5 mb-6">
+            <h3 className="font-semibold text-slate-800 dark:text-slate-100 mb-1">Concept Mastery (BKT)</h3>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mb-3">
+              Bayesian estimate of how well you know each concept
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {conceptMastery.map(c => {
+                const p = Math.round(c.mastery_prob * 100)
+                const hue = Math.round(c.mastery_prob * 120)
+                const band = c.mastery_prob < 0.45 ? 'Weak' : c.mastery_prob < 0.80 ? 'Moderate' : 'Strong'
+                return (
+                  <div
+                    key={c.id}
+                    className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700"
+                    style={{ background: `hsla(${hue}, 70%, 50%, 0.10)` }}
+                  >
+                    <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{c.concept}</p>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <span className="text-[10px] text-slate-400">{band}</span>
+                      <span className="text-sm font-semibold" style={{ color: `hsl(${hue}, 60%, 40%)` }}>{p}%</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-4">
           {summary.strong.length > 0 && (

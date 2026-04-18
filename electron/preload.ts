@@ -8,6 +8,8 @@ import type {
   ReviewLog,
   Deadline,
   Diagnostic,
+  ConceptMastery,
+  RetentionForecastPoint,
   SM2Result,
   GeneratedCards,
   EvaluationResult,
@@ -123,6 +125,18 @@ const electronAPI = {
   // Meta
   getMeta: (key: string): Promise<string | null> => ipcRenderer.invoke('db:getMeta', key),
   setMeta: (key: string, value: string): Promise<{ success: boolean }> => ipcRenderer.invoke('db:setMeta', key, value),
+
+  // FSRS + knowledge tracing
+  getConceptMastery: (userId: number, subjectId?: number): Promise<ConceptMastery[]> =>
+    ipcRenderer.invoke('db:getConceptMastery', userId, subjectId),
+  getRetentionForecast: (userId: number, horizonDays?: number, subjectId?: number): Promise<RetentionForecastPoint[]> =>
+    ipcRenderer.invoke('db:getRetentionForecast', userId, horizonDays, subjectId),
+  getCurrentRetentionBySubject: (userId: number): Promise<{ subject_id: number; retention: number; count: number }[]> =>
+    ipcRenderer.invoke('db:getCurrentRetentionBySubject', userId),
+  getDailyReviewStats: (userId: number, days?: number): Promise<{ date: string; reviews: number; correct: number; incorrect: number; avg_response_ms: number | null }[]> =>
+    ipcRenderer.invoke('db:getDailyReviewStats', userId, days),
+  getInterleavedDueCards: (userId: number, subjectId?: number): Promise<(Card & CardSchedule)[]> =>
+    ipcRenderer.invoke('db:getInterleavedDueCards', userId, subjectId),
 
   // Auto-updater (background)
   onUpdateAvailable: (cb: (version: string) => void) => ipcRenderer.on('update:available', (_e, v) => cb(v)),

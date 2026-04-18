@@ -76,6 +76,16 @@ function initDatabase(): void {
   } catch {
     // Column already exists — no-op
   }
+  // FSRS-5 state columns
+  for (const col of [
+    'ALTER TABLE card_schedule ADD COLUMN stability REAL',
+    'ALTER TABLE card_schedule ADD COLUMN difficulty REAL',
+    'ALTER TABLE card_schedule ADD COLUMN state INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE card_schedule ADD COLUMN lapses INTEGER NOT NULL DEFAULT 0',
+    "ALTER TABLE cards ADD COLUMN concept TEXT"
+  ]) {
+    try { db.prepare(col).run() } catch { /* already applied */ }
+  }
 
   setDatabase(db)
 }

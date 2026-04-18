@@ -130,7 +130,12 @@ export default function StudySession(): React.JSX.Element {
         return
       }
 
-      const due = await window.electronAPI.getDueCards(user.id, subjectIdNum)
+      // Use interleaved queue when enabled (round-robin across concepts/folders)
+      const interleavePref = await window.electronAPI.getMeta('interleave_queue')
+      const useInterleave = interleavePref !== 'false'  // default ON
+      const due = useInterleave
+        ? await window.electronAPI.getInterleavedDueCards(user.id, subjectIdNum)
+        : await window.electronAPI.getDueCards(user.id, subjectIdNum)
       const filteredDue = typeFilter ? (due as StudyCard[]).filter(c => c.type === typeFilter) : due as StudyCard[]
 
       if (filteredDue.length === 0) {

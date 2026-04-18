@@ -1,6 +1,18 @@
 import { ipcMain } from 'electron'
 import Database from 'better-sqlite3'
-import { sm2, defaultSchedule, boostForExam } from '../../src/lib/sm2'
+import { defaultSchedule } from '../../src/lib/sm2'
+import {
+  fsrsNext,
+  seedFromSM2,
+  qualityToRating,
+  adjustRatingByResponseTime,
+  boostForExam,
+  projectRetention,
+  retrievability,
+  DEFAULT_FSRS_PARAMS,
+  type FSRSMemory
+} from '../../src/lib/fsrs'
+import { bktUpdate } from '../../src/lib/bkt'
 import type {
   User,
   Subject,
@@ -10,6 +22,7 @@ import type {
   ReviewLog,
   Deadline,
   Diagnostic,
+  ConceptMastery,
   SM2Result
 } from '../../src/types'
 
@@ -93,12 +106,12 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:saveCard', (_event, card: Partial<Card>) => {
     if (card.id) {
       db.prepare(
-        'UPDATE cards SET front = ?, back = ?, type = ?, folder_id = ? WHERE id = ?'
-      ).run(card.front, card.back, card.type, card.folder_id ?? null, card.id)
+        'UPDATE cards SET front = ?, back = ?, type = ?, folder_id = ?, concept = ? WHERE id = ?'
+      ).run(card.front, card.back, card.type, card.folder_id ?? null, card.concept ?? null, card.id)
       return db.prepare('SELECT * FROM cards WHERE id = ?').get(card.id) as Card
     } else {
       const result = db.prepare(
-        'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, concept, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(
         card.subject_id,
         card.material_id || null,
@@ -107,6 +120,7 @@ export function registerDbHandlers(): void {
         card.back,
         card.is_manual || 0,
         card.folder_id ?? null,
+        card.concept ?? null,
         new Date().toISOString()
       )
       return db.prepare('SELECT * FROM cards WHERE id = ?').get(result.lastInsertRowid) as Card
@@ -380,7 +394,7 @@ export function registerDbHandlers(): void {
     `).all(userId, userId, limit)
   })
 
-  // SM2 update (combined: update schedule + log review)
+  // FSRS-5 review processing (combined: update schedule + log review + BKT concept update)
   ipcMain.handle('db:processReview', (_event, params: {
     cardId: number
     userId: number
@@ -392,10 +406,46 @@ export function registerDbHandlers(): void {
     currentSchedule: CardSchedule
   }) => {
     const { cardId, userId, quality, wasCorrect, userAnswer, aiFeedback, responseTimeMs, currentSchedule } = params
-    const sm2Result = sm2(quality, currentSchedule)
 
-    // Apply exam boost: if the card's subject has an upcoming study-affecting deadline, cap the interval
-    const cardRow = db.prepare('SELECT subject_id FROM cards WHERE id = ?').get(cardId) as { subject_id: number } | undefined
+    // Always re-fetch schedule from DB so we see persisted FSRS state
+    const dbSchedule = db.prepare(
+      'SELECT * FROM card_schedule WHERE card_id = ? AND user_id = ?'
+    ).get(cardId, userId) as CardSchedule | undefined
+    const sched = dbSchedule ?? currentSchedule
+
+    const mem: FSRSMemory = (sched.stability != null && sched.difficulty != null)
+      ? {
+          stability: sched.stability,
+          difficulty: sched.difficulty,
+          state: (sched.state ?? 0) as 0 | 1 | 2 | 3,
+          lapses: sched.lapses ?? 0,
+          lastReview: sched.last_reviewed_at?.split('T')[0]
+        }
+      : seedFromSM2(
+          sched.interval,
+          sched.ease_factor,
+          sched.repetitions,
+          sched.last_reviewed_at
+        )
+
+    // Base rating from grade
+    let rating = qualityToRating(quality)
+    // Response-time adjustment — use user-avg as anchor
+    const avgRow = db.prepare(
+      'SELECT AVG(response_time_ms) as avg_ms FROM review_log WHERE user_id = ? AND response_time_ms IS NOT NULL'
+    ).get(userId) as { avg_ms: number | null }
+    rating = adjustRatingByResponseTime(rating, responseTimeMs, avgRow?.avg_ms ?? null)
+
+    // Load user's desired retention, fall back to 0.9
+    const retentionMeta = db.prepare("SELECT value FROM app_meta WHERE key = 'desired_retention'").get() as { value: string } | undefined
+    const desiredRetention = retentionMeta ? Math.min(0.98, Math.max(0.80, parseFloat(retentionMeta.value))) : DEFAULT_FSRS_PARAMS.desiredRetention
+
+    const next = fsrsNext(mem, rating, { ...DEFAULT_FSRS_PARAMS, desiredRetention })
+
+    // Exam boost: cap interval near study-affecting deadlines
+    const cardRow = db.prepare('SELECT subject_id, concept, folder_id FROM cards WHERE id = ?').get(cardId) as { subject_id: number; concept: string | null; folder_id: number | null } | undefined
+    let finalInterval = next.interval
+    let finalDueDate = next.dueDate
     if (cardRow) {
       const today = new Date().toISOString().split('T')[0]
       const upcoming = db.prepare(
@@ -407,27 +457,178 @@ export function registerDbHandlers(): void {
         const daysUntil = Math.ceil(
           (new Date(upcoming.deadline_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
         )
-        const boosted = boostForExam(sm2Result.interval, daysUntil)
-        if (boosted < sm2Result.interval) {
-          sm2Result.interval = boosted
+        const boosted = boostForExam(finalInterval, daysUntil)
+        if (boosted < finalInterval) {
+          finalInterval = boosted
           const dueDate = new Date()
           dueDate.setDate(dueDate.getDate() + boosted)
-          sm2Result.due_date = dueDate.toISOString().split('T')[0]
+          finalDueDate = dueDate.toISOString().split('T')[0]
         }
       }
     }
 
-    // Update schedule
-    db.prepare(
-      'UPDATE card_schedule SET interval = ?, repetitions = ?, ease_factor = ?, due_date = ?, last_reviewed_at = ? WHERE card_id = ? AND user_id = ?'
-    ).run(sm2Result.interval, sm2Result.repetitions, sm2Result.ease_factor, sm2Result.due_date, new Date().toISOString(), cardId, userId)
+    // Legacy SM-2 view, kept for backwards compat with existing UI reads
+    const legacyReps = rating === 1 ? 0 : (sched.repetitions + 1)
+    const legacyEase = Math.min(3.0, Math.max(1.3, 2.5 - (next.difficulty - 5) * 0.08))
 
-    // Log review
+    db.prepare(
+      `UPDATE card_schedule SET
+         interval = ?, repetitions = ?, ease_factor = ?,
+         due_date = ?, last_reviewed_at = ?,
+         stability = ?, difficulty = ?, state = ?, lapses = ?
+       WHERE card_id = ? AND user_id = ?`
+    ).run(
+      finalInterval, legacyReps, legacyEase,
+      finalDueDate, new Date().toISOString(),
+      next.stability, next.difficulty, next.state, next.lapses,
+      cardId, userId
+    )
+
     db.prepare(
       'INSERT INTO review_log (card_id, user_id, reviewed_at, quality, was_correct, user_answer, ai_feedback, response_time_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(cardId, userId, new Date().toISOString(), quality, wasCorrect ? 1 : 0, userAnswer || null, aiFeedback || null, responseTimeMs ?? null)
 
-    return { sm2Result, success: true }
+    // BKT: update concept mastery posterior
+    if (cardRow) {
+      const conceptName = (cardRow.concept && cardRow.concept.trim())
+        || (cardRow.folder_id
+              ? (db.prepare('SELECT name FROM card_folders WHERE id = ?').get(cardRow.folder_id) as { name: string } | undefined)?.name
+              : null)
+        || 'General'
+      const existing = db.prepare(
+        'SELECT mastery_prob, observations FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?'
+      ).get(userId, cardRow.subject_id, conceptName) as { mastery_prob: number; observations: number } | undefined
+      const prior = existing?.mastery_prob ?? 0.3
+      const posterior = bktUpdate(prior, wasCorrect)
+      const obs = (existing?.observations ?? 0) + 1
+      db.prepare(
+        `INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, subject_id, concept) DO UPDATE SET
+           mastery_prob = excluded.mastery_prob,
+           observations = excluded.observations,
+           updated_at = excluded.updated_at`
+      ).run(userId, cardRow.subject_id, conceptName, posterior, obs, new Date().toISOString())
+    }
+
+    const sm2Result: SM2Result = {
+      interval: finalInterval,
+      repetitions: legacyReps,
+      ease_factor: legacyEase,
+      due_date: finalDueDate
+    }
+    return { sm2Result, success: true, fsrs: { stability: next.stability, difficulty: next.difficulty, state: next.state, retention: desiredRetention } }
+  })
+
+  // Concept mastery (BKT posteriors)
+  ipcMain.handle('db:getConceptMastery', (_event, userId: number, subjectId?: number) => {
+    if (subjectId) {
+      return db.prepare(
+        'SELECT * FROM concept_mastery WHERE user_id = ? AND subject_id = ? ORDER BY mastery_prob ASC'
+      ).all(userId, subjectId) as ConceptMastery[]
+    }
+    return db.prepare(
+      'SELECT * FROM concept_mastery WHERE user_id = ? ORDER BY mastery_prob ASC'
+    ).all(userId) as ConceptMastery[]
+  })
+
+  // FSRS retention forecast: aggregate predicted mean retention over horizon
+  ipcMain.handle('db:getRetentionForecast', (_event, userId: number, horizonDays: number = 30, subjectId?: number) => {
+    const rows = subjectId
+      ? db.prepare(
+          `SELECT cs.stability, cs.last_reviewed_at, cs.interval
+           FROM card_schedule cs JOIN cards c ON c.id = cs.card_id
+           WHERE cs.user_id = ? AND c.subject_id = ? AND cs.last_reviewed_at IS NOT NULL`
+        ).all(userId, subjectId) as { stability: number | null; last_reviewed_at: string; interval: number }[]
+      : db.prepare(
+          `SELECT stability, last_reviewed_at, interval FROM card_schedule
+           WHERE user_id = ? AND last_reviewed_at IS NOT NULL`
+        ).all(userId) as { stability: number | null; last_reviewed_at: string; interval: number }[]
+
+    const mems = rows.map(r => ({
+      stability: r.stability && r.stability > 0 ? r.stability : Math.max(1, r.interval),
+      lastReview: r.last_reviewed_at.split('T')[0]
+    }))
+    return projectRetention(mems, horizonDays)
+  })
+
+  // Current retention distribution (for heatmap buckets)
+  ipcMain.handle('db:getCurrentRetentionBySubject', (_event, userId: number) => {
+    const rows = db.prepare(
+      `SELECT c.subject_id, cs.stability, cs.last_reviewed_at, cs.interval
+       FROM card_schedule cs JOIN cards c ON c.id = cs.card_id
+       WHERE cs.user_id = ? AND cs.last_reviewed_at IS NOT NULL`
+    ).all(userId) as { subject_id: number; stability: number | null; last_reviewed_at: string; interval: number }[]
+    const today = new Date()
+    const bySubject = new Map<number, { sum: number; n: number }>()
+    for (const r of rows) {
+      const s = r.stability && r.stability > 0 ? r.stability : Math.max(1, r.interval)
+      const elapsed = Math.max(0, (today.getTime() - new Date(r.last_reviewed_at).getTime()) / 86400000)
+      const ret = retrievability(elapsed, s)
+      const cur = bySubject.get(r.subject_id) ?? { sum: 0, n: 0 }
+      cur.sum += ret
+      cur.n += 1
+      bySubject.set(r.subject_id, cur)
+    }
+    return Array.from(bySubject.entries()).map(([subject_id, v]) => ({
+      subject_id,
+      retention: v.n ? v.sum / v.n : 0,
+      count: v.n
+    }))
+  })
+
+  // Daily review aggregate, sourced from the review_daily SQL view
+  ipcMain.handle('db:getDailyReviewStats', (_event, userId: number, days: number = 30) => {
+    const since = new Date()
+    since.setDate(since.getDate() - days)
+    const sinceStr = since.toISOString().split('T')[0]
+    return db.prepare(
+      `SELECT date, reviews, correct, incorrect, avg_response_ms
+       FROM review_daily WHERE user_id = ? AND date >= ? ORDER BY date ASC`
+    ).all(userId, sinceStr) as { date: string; reviews: number; correct: number; incorrect: number; avg_response_ms: number | null }[]
+  })
+
+  // Interleaved due queue — round-robin across concept/folder buckets
+  ipcMain.handle('db:getInterleavedDueCards', (_event, userId: number, subjectId?: number) => {
+    const today = new Date().toISOString().split('T')[0]
+    const rows = subjectId
+      ? db.prepare(`
+          SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at,
+                 cs.stability, cs.difficulty, cs.state, cs.lapses,
+                 COALESCE(c.concept, (SELECT name FROM card_folders cf WHERE cf.id = c.folder_id), 'General') AS bucket
+          FROM cards c JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+          WHERE c.subject_id = ? AND cs.due_date <= ?
+          ORDER BY cs.due_date ASC
+        `).all(userId, subjectId, today) as (Card & CardSchedule & { bucket: string })[]
+      : db.prepare(`
+          SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at,
+                 cs.stability, cs.difficulty, cs.state, cs.lapses,
+                 COALESCE(c.concept, (SELECT name FROM card_folders cf WHERE cf.id = c.folder_id), 'General') AS bucket
+          FROM cards c JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+          WHERE cs.due_date <= ?
+          ORDER BY cs.due_date ASC
+        `).all(userId, today) as (Card & CardSchedule & { bucket: string })[]
+
+    // Round-robin: pop one card from each bucket in turn
+    const buckets = new Map<string, typeof rows>()
+    for (const r of rows) {
+      const arr = buckets.get(r.bucket) ?? []
+      arr.push(r)
+      buckets.set(r.bucket, arr)
+    }
+    const keys = Array.from(buckets.keys())
+    const out: typeof rows = []
+    let remaining = rows.length
+    while (remaining > 0) {
+      for (const k of keys) {
+        const arr = buckets.get(k)!
+        if (arr.length > 0) {
+          out.push(arr.shift()!)
+          remaining -= 1
+        }
+      }
+    }
+    return out
   })
 
   // Multiple choice review log

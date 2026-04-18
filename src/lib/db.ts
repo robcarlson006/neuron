@@ -111,6 +111,30 @@ export const DB_SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (subject_id) REFERENCES subjects(id)
   );
+
+  CREATE TABLE IF NOT EXISTS concept_mastery (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    concept TEXT NOT NULL,
+    mastery_prob REAL NOT NULL DEFAULT 0.3,
+    observations INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, subject_id, concept),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id)
+  );
+
+  CREATE VIEW IF NOT EXISTS review_daily AS
+    SELECT
+      user_id,
+      DATE(reviewed_at) AS date,
+      COUNT(*) AS reviews,
+      SUM(was_correct) AS correct,
+      COUNT(*) - SUM(was_correct) AS incorrect,
+      AVG(response_time_ms) AS avg_response_ms
+    FROM review_log
+    GROUP BY user_id, DATE(reviewed_at);
 `
 
 export const MASTERED_INTERVAL = 21

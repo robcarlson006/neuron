@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import ProgressChart from '../components/ProgressChart'
-import type { ReviewLog, Card, MCStats } from '../types'
+import type { ReviewLog, Card, MCStats, ConceptMastery, RetentionForecastPoint } from '../types'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 
 interface ReviewDataPoint {
   date: string
@@ -26,6 +27,9 @@ export default function Analytics(): React.JSX.Element {
   const [chartType, setChartType] = useState<'area' | 'bar'>('bar')
   const [mcStats, setMCStats] = useState<MCStats>({ total: 0, correct: 0 })
   const [avgResponseMs, setAvgResponseMs] = useState<number | null>(null)
+  const [forecast, setForecast] = useState<RetentionForecastPoint[]>([])
+  const [subjectRetention, setSubjectRetention] = useState<{ subject_id: number; retention: number; count: number }[]>([])
+  const [concepts, setConcepts] = useState<ConceptMastery[]>([])
 
   useEffect(() => {
     if (user) loadAnalytics()
@@ -96,6 +100,13 @@ export default function Analytics(): React.JSX.Element {
 
       const rtResult = await window.electronAPI.getAvgResponseTime(user.id)
       setAvgResponseMs(rtResult.avg_ms)
+
+      const fc = await window.electronAPI.getRetentionForecast(user.id, 30)
+      setForecast(fc)
+      const sr = await window.electronAPI.getCurrentRetentionBySubject(user.id)
+      setSubjectRetention(sr)
+      const cm = await window.electronAPI.getConceptMastery(user.id)
+      setConcepts(cm)
     } catch (err) {
       console.error('Analytics load error:', err)
     } finally {
@@ -229,6 +240,99 @@ export default function Analytics(): React.JSX.Element {
           </div>
         )}
       </div>
+
+      {/* Retention Forecast — FSRS */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6 mb-6">
+        <div className="flex items-baseline justify-between mb-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Retention Forecast</h2>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+              Predicted average recall probability over the next 30 days (FSRS-5)
+            </p>
+          </div>
+          {forecast.length > 0 && (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Today: <span className="font-semibold text-violet-600 dark:text-violet-400">
+                {Math.round((forecast[0]?.retention ?? 0) * 100)}%
+              </span>
+            </p>
+          )}
+        </div>
+        {forecast.length === 0 ? (
+          <p className="text-sm text-slate-400 dark:text-slate-500 py-10 text-center">
+            Review a few cards to unlock retention forecasting.
+          </p>
+        ) : (
+          <div style={{ width: '100%', height: 220 }}>
+            <ResponsiveContainer>
+              <LineChart data={forecast.map(p => ({ date: p.date.slice(5), retention: Math.round(p.retention * 100) }))}>
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} interval={4} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+                <Tooltip formatter={(v: number) => `${v}%`} />
+                <ReferenceLine y={90} stroke="#a78bfa" strokeDasharray="3 3" label={{ value: 'Target', fontSize: 10, fill: '#a78bfa' }} />
+                <Line type="monotone" dataKey="retention" stroke="#7c3aed" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Concept Mastery Heatmap — BKT */}
+      {concepts.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6 mb-6">
+          <div className="mb-4">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Concept Mastery</h2>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+              Bayesian estimate per concept — darker red = weaker, darker green = stronger
+            </p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {concepts.slice(0, 24).map(c => {
+              const p = Math.round(c.mastery_prob * 100)
+              const hue = Math.round(c.mastery_prob * 120)  // 0=red → 120=green
+              return (
+                <div
+                  key={c.id}
+                  className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700"
+                  style={{ background: `hsla(${hue}, 70%, 50%, 0.12)` }}
+                  title={`${c.observations} observations`}
+                >
+                  <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{c.concept}</p>
+                  <p className="text-sm font-semibold" style={{ color: `hsl(${hue}, 60%, 40%)` }}>{p}%</p>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Subject retention snapshot */}
+      {subjectRetention.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6 mb-6">
+          <div className="mb-4">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Current Retention by Subject</h2>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Predicted recall probability right now</p>
+          </div>
+          <div className="space-y-2">
+            {subjectRetention.map(sr => {
+              const sub = subjects.find(s => s.id === sr.subject_id)
+              const pct = Math.round(sr.retention * 100)
+              return (
+                <div key={sr.subject_id} className="flex items-center gap-3">
+                  <span className="text-sm text-slate-700 dark:text-slate-300 w-40 truncate">{sub?.name ?? `Subject ${sr.subject_id}`}</span>
+                  <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${pct}%`, background: `hsl(${Math.round(sr.retention * 120)}, 65%, 50%)` }}
+                    />
+                  </div>
+                  <span className="text-sm font-medium text-slate-600 dark:text-slate-300 w-12 text-right tabular-nums">{pct}%</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Multiple Choice Stats */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6 mb-6">
