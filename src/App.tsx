@@ -1,18 +1,31 @@
 import React, { useEffect, useState } from 'react'
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { useAppStore } from './store/appStore'
 import Layout from './components/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
 import DemoTour from './components/DemoTour'
+import KeyboardShortcutsModal, { useKeyboardShortcutsModal } from './components/KeyboardShortcutsModal'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
-import SubjectDetail from './pages/SubjectDetail'
+import UnifiedSubjectDetail from './pages/UnifiedSubjectDetail'
 import StudySession from './pages/StudySession'
 import Calendar from './pages/Calendar'
 import Diagnostics from './pages/Diagnostics'
 import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
+import TutorHub from './pages/tutor/TutorHub'
+import TutorSession from './pages/tutor/TutorSession'
+import GeneralChat from './pages/tutor/GeneralChat'
+import ToastContainer from './components/tutor/ToastContainer'
+import ClassCreationWizard from './pages/classes/ClassCreationWizard'
 
 const api = window.electronAPI
+
+/** Redirect /class/:id → /subject/:id */
+function ClassRedirect(): React.JSX.Element {
+  const { id } = useParams<{ id: string }>()
+  return <Navigate to={`/subject/${id}`} replace />
+}
 
 export default function App(): React.JSX.Element {
   const { user, setUser, setSubjects, theme, showDemo, setShowDemo } = useAppStore()
@@ -77,12 +90,17 @@ export default function App(): React.JSX.Element {
   async function handleStartDemo(): Promise<void> {
     // Clear the meta flag so the demo is shown again
     try {
-      await api.setMeta('demo_shown', '')
+      await api.setMeta('demo_shown', 'false')
     } catch {
       // ignore
     }
     setShowDemo(true)
   }
+
+  const [shortcutsOpen, , closeShortcuts] = useKeyboardShortcutsModal()
+
+  // ── Class Wizard ──
+  const [showClassWizard, setShowClassWizard] = useState(false)
 
   if (loading) {
     return (
@@ -143,26 +161,40 @@ export default function App(): React.JSX.Element {
         <DemoTour onComplete={handleDemoComplete} />
       )}
 
-      <Routes>
-        {!user ? (
-          <>
-            <Route path="/onboarding" element={<Onboarding onUserCreated={handleUserCreated} />} />
-            <Route path="*" element={<Navigate to="/onboarding" replace />} />
-          </>
-        ) : (
-          <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/subject/:id" element={<SubjectDetail />} />
-            <Route path="/study/:subjectId" element={<StudySession />} />
-            <Route path="/study" element={<StudySession />} />
-            <Route path="/calendar" element={<Calendar />} />
-            <Route path="/diagnostics/:subjectId" element={<Diagnostics />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/settings" element={<Settings onStartDemo={handleStartDemo} />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        )}
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          {!user ? (
+            <>
+              <Route path="/onboarding" element={<Onboarding onUserCreated={handleUserCreated} />} />
+              <Route path="*" element={<Navigate to="/onboarding" replace />} />
+            </>
+          ) : (
+            <Route element={<Layout onNewClass={() => setShowClassWizard(true)} />}>
+              <Route path="/" element={<Dashboard onNewClass={() => setShowClassWizard(true)} />} />
+              <Route path="/class/:id" element={<ClassRedirect />} />
+              <Route path="/subject/:id" element={<UnifiedSubjectDetail />} />
+              <Route path="/study/:subjectId" element={<StudySession />} />
+              <Route path="/study" element={<StudySession />} />
+              <Route path="/calendar" element={<Calendar />} />
+              <Route path="/diagnostics/:subjectId" element={<Diagnostics />} />
+              <Route path="/analytics" element={<Analytics />} />
+              <Route path="/tutor" element={<TutorHub />} />
+              <Route path="/tutor/general" element={<GeneralChat />} />
+              <Route path="/tutor/:classId" element={<TutorSession />} />
+              <Route path="/settings" element={<Settings onStartDemo={handleStartDemo} />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          )}
+        </Routes>
+      </ErrorBoundary>
+
+      {/* Class Creation Wizard Modal */}
+      {showClassWizard && user && (
+        <ClassCreationWizard onClose={() => setShowClassWizard(false)} />
+      )}
+
+      <ToastContainer />
+      <KeyboardShortcutsModal isOpen={shortcutsOpen} onClose={closeShortcuts} />
     </HashRouter>
   )
 }

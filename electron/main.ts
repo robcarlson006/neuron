@@ -3,11 +3,17 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import Database from 'better-sqlite3'
-import { DB_SCHEMA } from '../src/lib/db'
+import { DB_SCHEMA, MIGRATIONS_SQL } from '../src/lib/db'
 import { registerDbHandlers, setDatabase } from './ipc/dbHandlers'
 import { registerFileHandlers } from './ipc/fileHandlers'
-import { registerGeminiHandlers } from './ipc/geminiHandlers'
+import { registerAIHandlers } from './ipc/aiHandlers'
+import { setAIDatabase } from './ipc/aiConfigStore'
+import { registerTutorHandlers, setTutorDatabase } from './ipc/tutorHandlers'
 import { registerUpdaterHandlers } from './ipc/updaterHandlers'
+import { registerRAGHandlers, setRAGDatabase } from './ipc/ragHandlers'
+import { registerSyllabusHandlers, setSyllabusDatabase } from './ipc/syllabusHandlers'
+import { registerCardGenerationHandlers, setCardGenerationDatabase } from './ipc/cardGenHandlers'
+import { registerClassHandlers, setClassDatabase } from './ipc/classHandlers'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -44,11 +50,63 @@ function createWindow(): void {
   }
 }
 
+let db: Database.Database
+
+function migrateCardsFolderForeignKey(): void {
+  try {
+    const fkList = db.pragma('foreign_key_list(cards)') as Array<{ table: string }>
+    if (!fkList.some((fk) => fk.table === 'folders')) return
+
+    const cols = (db.pragma('table_info(cards)') as Array<{ name: string }>).map((c) => c.name)
+    const required = ['id', 'subject_id', 'material_id', 'type', 'front', 'back', 'folder_id', 'concept', 'is_manual', 'created_at']
+    if (!required.every((c) => cols.includes(c))) {
+      console.warn('Skipping cards FK migration: unexpected column set', cols.join(','))
+      return
+    }
+
+    db.exec('PRAGMA foreign_keys = OFF')
+    try {
+      db.exec(`
+        CREATE TABLE cards_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          subject_id INTEGER NOT NULL,
+          material_id INTEGER,
+          type TEXT NOT NULL CHECK (type IN ('flashcard', 'active_recall')),
+          front TEXT NOT NULL,
+          back TEXT NOT NULL,
+          folder_id INTEGER,
+          concept TEXT,
+          is_manual INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          note_id INTEGER REFERENCES card_notes(id),
+          cloze_ordinal INTEGER DEFAULT 0,
+          tags TEXT DEFAULT '',
+          image_url TEXT DEFAULT '',
+          media_json TEXT DEFAULT '{}',
+          source TEXT DEFAULT '',
+          topic_id INTEGER,
+          FOREIGN KEY (subject_id) REFERENCES subjects(id),
+          FOREIGN KEY (material_id) REFERENCES materials(id),
+          FOREIGN KEY (folder_id) REFERENCES card_folders(id)
+        );
+      `)
+      const colList = cols.join(', ')
+      db.exec(`INSERT INTO cards_new (${colList}) SELECT ${colList} FROM cards`)
+      db.exec('DROP TABLE cards')
+      db.exec('ALTER TABLE cards_new RENAME TO cards')
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON')
+    }
+  } catch (err) {
+    console.error('cards FK migration failed:', err)
+  }
+}
+
 function initDatabase(): void {
   const userDataPath = app.getPath('userData')
   const dbPath = join(userDataPath, 'studyhelper.db')
 
-  const db = new Database(dbPath)
+  db = new Database(dbPath)
 
   // Enable WAL mode for better performance
   db.pragma('journal_mode = WAL')
@@ -87,6 +145,17 @@ function initDatabase(): void {
     try { db.prepare(col).run() } catch { /* already applied */ }
   }
 
+  // V2 schema migrations (new features: cloze, image, tags, undo, etc.)
+  for (const migrationSql of MIGRATIONS_SQL) {
+    try { db.prepare(migrationSql).run() } catch { /* column may already exist */ }
+  }
+
+  // Fix a legacy FK reference: the base schema pointed cards.folder_id at a
+  // nonexistent `folders` table (the real table is `card_folders`). With
+  // foreign_keys ON this made folder assignment fail at runtime. Rebuild the
+  // cards table with the corrected reference for pre-existing databases.
+  migrateCardsFolderForeignKey()
+
   setDatabase(db)
 }
 
@@ -103,7 +172,18 @@ app.whenReady().then(async () => {
   // Register all IPC handlers
   registerDbHandlers()
   registerFileHandlers()
-  registerGeminiHandlers()
+  registerAIHandlers()
+  registerRAGHandlers()
+  setAIDatabase(db)
+  setRAGDatabase(db)
+  setTutorDatabase(db)
+  registerTutorHandlers()
+  setSyllabusDatabase(db)
+  registerSyllabusHandlers()
+  setCardGenerationDatabase(db)
+  registerCardGenerationHandlers()
+  setClassDatabase(db)
+  registerClassHandlers()
   registerUpdaterHandlers(() => mainWindow)
 
   createWindow()
@@ -123,6 +203,15 @@ app.on('window-all-closed', () => {
 // ── Auto-updater ──────────────────────────────────────────────────────────────
 function setupAutoUpdater(): void {
   if (is.dev) return  // skip in dev mode
+
+  // Allow unsigned updates on macOS (required when not code-signed)
+  if (process.platform === 'darwin') {
+    autoUpdater.allowPrerelease = false
+    autoUpdater.allowDowngrade = false
+    // Disable code signature validation for unsigned builds
+    // This is needed because electron-updater uses Squirrel.Mac which validates signatures
+    process.env['ELECTRON_UPDATER_ALLOW_UNSIGNED'] = 'true'
+  }
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true

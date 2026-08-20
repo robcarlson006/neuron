@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../store/appStore'
+import ExportModal from '../components/ExportModal'
+import { ACHIEVEMENT_DEFS } from '../lib/achievements'
 
 // ── Pomodoro config modal ────────────────────────────────────────────────────
 function PomodoroModal({ onClose }: { onClose: () => void }): React.JSX.Element {
@@ -138,6 +140,120 @@ function PomodoroModal({ onClose }: { onClose: () => void }): React.JSX.Element 
   )
 }
 
+// ── Local RAG Section ─────────────────────────────────────────────────────────
+function LocalRAGSection(): React.JSX.Element {
+  const [stats, setStats] = useState<{ totalChunks: number; indexedMaterials: number } | null>(null)
+  const [indexing, setIndexing] = useState(false)
+  const [statusMessage, setStatusMessage] = useState('')
+  const [statusType, setStatusType] = useState<'idle' | 'success' | 'error'>('idle')
+
+  const loadStats = async () => {
+    try {
+      const s = await window.electronAPI.ragGetIndexStats()
+      setStats(s)
+    } catch {
+      // RAG not available
+    }
+  }
+
+  useEffect(() => {
+    loadStats()
+  }, [])
+
+  async function handleReindexAll(): Promise<void> {
+    if (!confirm('Re-index all materials? This will regenerate embeddings for every document. This may take a while.')) return
+
+    setIndexing(true)
+    setStatusMessage('Re-indexing all materials...')
+    setStatusType('idle')
+
+    try {
+      const result = await window.electronAPI.ragReindexAll()
+      setStatusMessage(`Done! Indexed ${result.totalChunks} chunks across all materials.`)
+      setStatusType('success')
+      await loadStats()
+    } catch (err) {
+      setStatusMessage(`Error: ${(err as Error).message || 'Re-indexing failed.'}`)
+      setStatusType('error')
+    } finally {
+      setIndexing(false)
+    }
+  }
+
+  return (
+    <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Local RAG</h2>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+        Vector search across your study materials. Enables AI to retrieve relevant context from your documents.
+      </p>
+
+      {/* Stats */}
+      <div className="flex gap-4 mb-4">
+        <div className="flex-1 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 rounded-lg p-3 text-center">
+          <p className="text-2xl font-semibold text-violet-600 dark:text-violet-400 tabular-nums">
+            {stats ? stats.totalChunks : '—'}
+          </p>
+          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Chunks Indexed</p>
+        </div>
+        <div className="flex-1 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 rounded-lg p-3 text-center">
+          <p className="text-2xl font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
+            {stats ? stats.indexedMaterials : '—'}
+          </p>
+          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Materials Indexed</p>
+        </div>
+      </div>
+
+      {/* Status message */}
+      {statusType === 'success' && (
+        <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 mb-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-3 py-2">
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" className="flex-shrink-0">
+            <path d="M2.5 7.5L6 11L12.5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          {statusMessage}
+        </div>
+      )}
+      {statusType === 'error' && (
+        <div className="text-sm text-red-500 dark:text-red-400 mb-4 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">
+          {statusMessage}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-2">
+        <button
+          onClick={handleReindexAll}
+          disabled={indexing}
+          className={`flex-1 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${
+            indexing
+              ? 'bg-slate-400 cursor-not-allowed'
+              : 'bg-violet-600 hover:bg-violet-700'
+          }`}
+        >
+          {indexing ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Indexing...
+            </span>
+          ) : (
+            'Re-index All'
+          )}
+        </button>
+        <button
+          onClick={loadStats}
+          disabled={indexing}
+          className="px-3 py-2 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          Refresh
+        </button>
+      </div>
+
+      <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">
+        Chunks are created from the content_text of uploaded materials. Requires an AI provider configured above to generate embeddings.
+      </p>
+    </section>
+  )
+}
+
 interface SettingsProps {
   onStartDemo?: () => void
 }
@@ -162,13 +278,27 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const { user, setUser, theme, toggleTheme, pomodoroEnabled, pomodoroWorkMinutes, pomodoroBreakMinutes } = useAppStore()
   const [name, setName] = useState(user?.name || '')
   const [reminderTime, setReminderTime] = useState('09:00')
+  const [reminderLoaded, setReminderLoaded] = useState(false)
   const [savedName, setSavedName] = useState(false)
   const [showPomodoroModal, setShowPomodoroModal] = useState(false)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [userLevelData, setUserLevelData] = useState<{ xp: number; level: number } | null>(null)
 
   // Version / update state
   const [desiredRetention, setDesiredRetention] = useState(90)
   const [interleave, setInterleave] = useState(true)
   const [savedFSRS, setSavedFSRS] = useState(false)
+
+  // AI Provider state
+  const [aiProvider, setAiProvider] = useState('openai-compatible')
+  const [aiApiKey, setAiApiKey] = useState('')
+  const [aiBaseUrl, setAiBaseUrl] = useState('https://api.deepseek.com')
+  const [aiModel, setAiModel] = useState('deepseek-chat')
+  const [aiConfigLoaded, setAiConfigLoaded] = useState(false)
+  const [aiConnectionStatus, setAiConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle')
+  const [aiConnectionMessage, setAiConnectionMessage] = useState('')
+  const [aiConnectionLatency, setAiConnectionLatency] = useState<number | undefined>()
+  const [aiSaved, setAiSaved] = useState(false)
   const [currentVersion, setCurrentVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle')
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
@@ -177,6 +307,16 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [updateError, setUpdateError] = useState('')
   const [installMethod, setInstallMethod] = useState('')
   const progressListenerSet = useRef(false)
+
+  const loadUserLevel = async () => {
+    try {
+      const api = (window as any).electronAPI
+      if (api && user?.id) {
+        const level = await api.getUserLevel(user.id)
+        setUserLevelData(level)
+      }
+    } catch {}
+  }
 
   useEffect(() => {
     window.electronAPI.getVersion().then(setCurrentVersion).catch(() => {})
@@ -187,12 +327,35 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     window.electronAPI.getMeta('interleave_queue').then(v => {
       if (v != null) setInterleave(v !== 'false')
     }).catch(() => {})
+    window.electronAPI.getMeta('reminder_time').then(v => {
+      if (v) setReminderTime(v)
+    }).catch(() => {})
+    setReminderLoaded(true)
+
+    // Load AI config
+    window.electronAPI.getAIConfig().then(cfg => {
+      setAiProvider(cfg.provider || 'openai-compatible')
+      setAiBaseUrl(cfg.baseUrl || 'https://api.deepseek.com')
+      setAiModel(cfg.model || 'deepseek-chat')
+      setAiApiKey(cfg.apiKey || '')
+      setAiConfigLoaded(true)
+    }).catch(() => {
+      setAiConfigLoaded(true)
+    })
 
     if (!progressListenerSet.current) {
       progressListenerSet.current = true
       window.electronAPI.onDownloadProgress((pct) => setDownloadProgress(pct))
     }
+
+    loadUserLevel()
   }, [])
+
+  // Persist reminder time changes (skip initial load to avoid overwriting)
+  useEffect(() => {
+    if (!reminderLoaded) return
+    window.electronAPI.setMeta('reminder_time', reminderTime).catch(() => {})
+  }, [reminderTime, reminderLoaded])
 
   async function handleSaveFSRS(): Promise<void> {
     await window.electronAPI.setMeta('desired_retention', (desiredRetention / 100).toString())
@@ -281,32 +444,30 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     }
   }
 
-  async function handleSaveApiKey(): Promise<void> {
-    if (!apiKey.trim()) return
+  async function handleTestAIConnection(): Promise<void> {
+    setAiConnectionStatus('testing')
+    setAiConnectionMessage('')
+    setAiConnectionLatency(undefined)
     try {
-      await window.electronAPI.saveApiKey(apiKey.trim())
-      const masked = await window.electronAPI.getApiKey()
-      setApiKeyMasked(masked || '')
-      setApiKey('')
-      setEditingApiKey(false)
-      setSavedKey(true)
-      setKeyStatus('unchecked')
-      setTimeout(() => setSavedKey(false), 2000)
+      const result = await window.electronAPI.testAIConnection()
+      setAiConnectionStatus(result.success ? 'success' : 'error')
+      setAiConnectionMessage(result.message)
+      setAiConnectionLatency(result.latencyMs)
     } catch (err) {
-      console.error(err)
+      setAiConnectionStatus('error')
+      setAiConnectionMessage((err as Error).message ?? 'Connection test failed')
     }
   }
 
-  async function handleCheckApiKey(): Promise<void> {
-    setCheckingKey(true)
-    try {
-      const result = await window.electronAPI.checkApiKey()
-      setKeyStatus(result.valid ? 'valid' : 'invalid')
-    } catch {
-      setKeyStatus('invalid')
-    } finally {
-      setCheckingKey(false)
-    }
+  async function handleSaveAIConfig(): Promise<void> {
+    await window.electronAPI.saveAIConfig({
+      provider: aiProvider,
+      baseUrl: aiBaseUrl,
+      model: aiModel,
+      apiKey: aiApiKey
+    })
+    setAiSaved(true)
+    setTimeout(() => setAiSaved(false), 1500)
   }
 
   return (
@@ -345,6 +506,22 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                 {savedName ? '✓ Saved' : 'Save'}
               </button>
             </div>
+          </div>
+        </section>
+
+        {/* Data Management */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-3">Data Management</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            Export your cards, schedules, and deadlines as a JSON file, or import data from a previous export.
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowExportModal(true)}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Export / Import Data
+            </button>
           </div>
         </section>
 
@@ -488,6 +665,116 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           </div>
         </section>
 
+        {/* AI Provider section */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">AI Provider</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+            Configure your AI provider for card generation and answer evaluation. Compatible with any OpenAI API.
+          </p>
+
+          {/* Provider dropdown */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
+              Provider
+            </label>
+            <select
+              value={aiProvider}
+              onChange={e => setAiProvider(e.target.value)}
+              className="input w-full"
+            >
+              <option value="openai-compatible">OpenAI-Compatible</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </div>
+
+          {/* API key */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
+              API Key
+            </label>
+            <input
+              type="password"
+              className="input w-full"
+              value={aiApiKey}
+              onChange={e => setAiApiKey(e.target.value)}
+              placeholder={aiConfigLoaded ? 'Enter your API key' : 'Loading...'}
+            />
+          </div>
+
+          {/* Base URL */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
+              Base URL
+            </label>
+            <input
+              type="text"
+              className="input w-full font-mono text-sm"
+              value={aiBaseUrl}
+              onChange={e => setAiBaseUrl(e.target.value)}
+              placeholder="https://api.deepseek.com"
+            />
+          </div>
+
+          {/* Model */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
+              Model
+            </label>
+            <input
+              type="text"
+              className="input w-full font-mono text-sm"
+              value={aiModel}
+              onChange={e => setAiModel(e.target.value)}
+              placeholder="deepseek-chat"
+            />
+          </div>
+
+          {/* Connection test result */}
+          {aiConnectionStatus === 'testing' && (
+            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-4">
+              <span className="w-3.5 h-3.5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+              Testing connection…
+            </div>
+          )}
+          {aiConnectionStatus === 'success' && (
+            <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 mb-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-3 py-2">
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" className="flex-shrink-0">
+                <path d="M2.5 7.5L6 11L12.5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span>
+                Connected! Response: "{aiConnectionMessage}"
+                {aiConnectionLatency != null && (
+                  <span className="text-xs ml-1 opacity-75">({aiConnectionLatency}ms)</span>
+                )}
+              </span>
+            </div>
+          )}
+          {aiConnectionStatus === 'error' && (
+            <div className="text-sm text-red-500 dark:text-red-400 mb-4 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">
+              <span className="font-medium">Connection failed:</span> {aiConnectionMessage}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleTestAIConnection}
+              disabled={aiConnectionStatus === 'testing'}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Test Connection
+            </button>
+            <button
+              onClick={handleSaveAIConfig}
+              className={`flex-1 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${
+                aiSaved ? 'bg-emerald-600' : 'bg-violet-600 hover:bg-violet-700'
+              }`}
+            >
+              {aiSaved ? '✓ Saved' : 'Save'}
+            </button>
+          </div>
+        </section>
+
         {/* Data Storage section */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-2">Data Storage</h2>
@@ -504,6 +791,32 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
             <p className="text-xs font-mono text-slate-400 dark:text-slate-500">
               Windows: %APPDATA%/neuron/neuron.db
             </p>
+          </div>
+        </section>
+
+        {/* Local RAG section */}
+        <LocalRAGSection />
+
+        {/* Progress & Achievements */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-3">Progress & Achievements</h2>
+          {userLevelData ? (
+            <div className="mb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 flex items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-violet-600 text-white font-bold">
+                  {userLevelData.level}
+                </div>
+                <div>
+                  <div className="text-sm font-medium dark:text-white">Level {userLevelData.level}</div>
+                  <div className="text-xs text-gray-500">{userLevelData.xp} total XP</div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 mb-3">Loading progress...</p>
+          )}
+          <div className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+            {Object.keys(ACHIEVEMENT_DEFS).length} achievements available
           </div>
         </section>
 
@@ -536,7 +849,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                 </span>
               </p>
               <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                Built with Electron · React · SM-2 spaced repetition
+                Built with Electron · React · FSRS-5 spaced repetition
               </p>
             </div>
 
@@ -675,6 +988,13 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
       </div>
 
+      {showExportModal && user && (
+        <ExportModal
+          isOpen={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          userId={user.id}
+        />
+      )}
       {showPomodoroModal && (
         <PomodoroModal onClose={() => setShowPomodoroModal(false)} />
       )}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../store/appStore'
 import NeuronLogo from '../components/NeuronLogo'
+import type { StudyGoal } from '../types'
 
 interface OnboardingProps {
   onUserCreated?: () => void
@@ -12,6 +13,8 @@ export default function Onboarding({ onUserCreated }: OnboardingProps): React.JS
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [mounted, setMounted] = useState(false)
+  const [showGoalSelection, setShowGoalSelection] = useState(false)
+  const [selectedGoal, setSelectedGoal] = useState<string | null>(null)
 
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 50)
@@ -31,7 +34,7 @@ export default function Onboarding({ onUserCreated }: OnboardingProps): React.JS
       const subjects = await window.electronAPI.getSubjects(user.id)
       setSubjects(subjects)
       setUser(user)
-      onUserCreated?.()
+      setShowGoalSelection(true)
     } catch (err) {
       setError('Failed to save. Please try again.')
       console.error(err)
@@ -78,7 +81,8 @@ export default function Onboarding({ onUserCreated }: OnboardingProps): React.JS
             ))}
           </div>
 
-          {/* Form */}
+          {!showGoalSelection && (
+          /* Form */
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100 mb-1">
@@ -113,6 +117,62 @@ export default function Onboarding({ onUserCreated }: OnboardingProps): React.JS
               {loading ? 'Setting up your account...' : 'Get Started →'}
             </button>
           </form>
+          )}
+
+          {/* Goal Selection */}
+          {showGoalSelection && (
+            <div className="text-center">
+              <h1 className="text-3xl font-bold text-purple-600 dark:text-purple-400 mb-2">
+                What are you studying?
+              </h1>
+              <p className="text-gray-500 dark:text-gray-400 mb-8">
+                This helps us personalize your study settings.
+              </p>
+              <div className="grid gap-3 max-w-md mx-auto">
+                {([
+                  { value: 'medical' as StudyGoal, label: 'Medical / Health', icon: '\u{1F3E5}', retention: 0.92, interleave: false },
+                  { value: 'language' as StudyGoal, label: 'Language Learning', icon: '\u{1F30D}', retention: 0.85, interleave: true },
+                  { value: 'stem' as StudyGoal, label: 'STEM / Science', icon: '\u{1F52C}', retention: 0.88, interleave: false },
+                  { value: 'humanities' as StudyGoal, label: 'Humanities / History', icon: '\u{1F4DA}', retention: 0.85, interleave: true },
+                  { value: 'certification' as StudyGoal, label: 'Certification Prep', icon: '\u{1F4DC}', retention: 0.90, interleave: false },
+                  { value: 'other' as StudyGoal, label: 'Other / General', icon: '\u{1F3AF}', retention: 0.90, interleave: false },
+                ]).map((goal) => (
+                  <button
+                    key={goal.value}
+                    onClick={() => setSelectedGoal(goal.value)}
+                    className={`p-4 rounded-xl border-2 text-left flex items-center gap-4 transition-all ${
+                      selectedGoal === goal.value
+                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-purple-300'
+                    }`}
+                  >
+                    <span className="text-2xl">{goal.icon}</span>
+                    <div>
+                      <div className="font-semibold dark:text-white">{goal.label}</div>
+                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                        {goal.retention * 100}% target retention
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    const api = (window as any).electronAPI
+                    if (api) {
+                      await api.saveOnboardingData({ name: name, goal: selectedGoal, hasCompleted: true })
+                    }
+                  } catch {}
+                  onUserCreated?.()
+                }}
+                disabled={!selectedGoal}
+                className="mt-6 px-8 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-xl font-medium transition-colors"
+              >
+                Start Studying
+              </button>
+            </div>
+          )}
 
           <p className="text-center text-xs text-slate-400 dark:text-slate-500 mt-5">
             Your data is stored locally on your device.

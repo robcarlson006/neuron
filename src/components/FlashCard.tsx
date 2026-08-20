@@ -51,8 +51,9 @@ export default function FlashCard({
       else if (e.key === 's' && onSkip) { e.preventDefault(); onSkip() }
     } else if (phase === 'revealed') {
       if (e.key === '1') { e.preventDefault(); onResult(1) }
-      else if (e.key === '2') { e.preventDefault(); onResult(3) }
-      else if (e.key === '3') { e.preventDefault(); onResult(5) }
+      else if (e.key === '2') { e.preventDefault(); onResult(2) }
+      else if (e.key === '3') { e.preventDefault(); onResult(3) }
+      else if (e.key === '4') { e.preventDefault(); onResult(4) }
     }
   }, [phase, onResult, onSkip])
 

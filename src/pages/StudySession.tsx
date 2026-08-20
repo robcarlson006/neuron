@@ -7,6 +7,9 @@ import MultipleChoiceCard from '../components/MultipleChoiceCard'
 import LearnModeSession from '../components/LearnModeSession'
 import PomodoroWidget from '../components/PomodoroWidget'
 import type { Card, CardSchedule, SessionSummary } from '../types'
+import ClozeCard from '../components/ClozeCard'
+import UndoToast from '../components/UndoToast'
+import { useSwipe } from '../hooks/useSwipe'
 
 interface StudyCard extends Card {
   interval: number
@@ -49,6 +52,10 @@ export default function StudySession(): React.JSX.Element {
     cardsReviewed: []
   })
 
+  const [undoVisible, setUndoVisible] = useState(false)
+  const [lastReviewParams, setLastReviewParams] = useState<{ cardId: number; cardIndex: number } | null>(null)
+  const cardContainerRef = useRef<HTMLDivElement>(null)
+
   const learnStorageKey = `${user?.id ?? 0}-${subjectId ?? 'all'}`
 
   const handleLearnRestart = useCallback(() => {
@@ -71,30 +78,30 @@ export default function StudySession(): React.JSX.Element {
 
   useEffect(() => {
     if (user) loadCards()
-  }, [user])
+  }, [user, subjectId, isMCMode, isLearnMode, typeFilter, folderIdParam])
 
   async function loadCards(studyAll = false): Promise<void> {
     if (!user) return
     setLoading(true)
+    setSkippedCards([])
     try {
       const subjectIdNum = subjectId ? Number(subjectId) : undefined
 
       if (isMCMode || isLearnMode) {
         // MC and Learn modes always use all cards as the pool
-        let all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        if (isFolderMode) {
-          const fid = Number(folderIdParam)
-          all = (all as StudyCard[]).filter(c => c.folder_id === fid)
-        }
-        if (all.length === 0) {
+        const allCards = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum) as StudyCard[]
+        const filtered = isFolderMode
+          ? allCards.filter(c => c.folder_id === Number(folderIdParam))
+          : allCards
+        if (filtered.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
         } else {
-          const shuffled = [...all].sort(() => Math.random() - 0.5) as StudyCard[]
+          const shuffled = [...filtered].sort(() => Math.random() - 0.5)
           setCards(shuffled)
-          setAllCards(all as StudyCard[])
+          setAllCards(filtered)
         }
-        setSummary({ total: all.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
+        setSummary({ total: filtered.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
         setSkippedCards([])
         setCurrentIdx(0)
         setPhase('studying')
@@ -168,11 +175,31 @@ export default function StudySession(): React.JSX.Element {
     cardStartTimeRef.current = Date.now()
   }, [currentIdx, phase])
 
+  useSwipe(cardContainerRef, {
+    onSwipeLeft: () => processReview(1),
+    onSwipeDown: () => processReview(3),
+    onSwipeRight: () => processReview(4),
+  }, currentCard !== null)
+
   // SM2 review — only used in normal mode
   async function processReview(quality: number): Promise<void> {
     if (!currentCard || !user) return
 
     const responseTimeMs = Date.now() - cardStartTimeRef.current
+
+    // Save undo state before processing
+    try {
+      const schedule = await window.electronAPI.getSchedule(currentCard.id, user.id)
+      if (schedule) {
+        const now = Date.now()
+        window.localStorage.setItem('undo_schedule_' + currentCard.id, JSON.stringify({
+          schedule,
+          timestamp: now,
+          cardId: currentCard.id,
+        }))
+        window.localStorage.setItem('undo_last_timestamp', String(now))
+      }
+    } catch {}
 
     const schedule: CardSchedule = {
       id: 0,
@@ -207,6 +234,9 @@ export default function StudySession(): React.JSX.Element {
         wasCorrect: quality >= 3
       }]
     }))
+
+    setLastReviewParams({ cardId: currentCard.id, cardIndex: currentIdx })
+    setUndoVisible(true)
 
     advance()
   }
@@ -255,6 +285,19 @@ export default function StudySession(): React.JSX.Element {
       }
     } else {
       setCurrentIdx(nextIdx)
+    }
+  }
+
+  const handleUndo = async () => {
+    setUndoVisible(false)
+    if (!lastReviewParams || !user?.id) return
+    try {
+      const result = await window.electronAPI.undoLastReview(user.id)
+      if (result.success) {
+        loadCards()
+      }
+    } catch (err) {
+      console.error('Undo failed:', err)
     }
   }
 
@@ -642,24 +685,42 @@ export default function StudySession(): React.JSX.Element {
             cardNumber={currentIdx + 1}
             totalCards={currentCards.length}
           />
-        ) : currentCard.type === 'flashcard' ? (
-          <FlashCard
-            card={currentCard}
-            onResult={processReview}
-            onSkip={phase === 'studying' ? handleSkip : undefined}
-            cardNumber={currentIdx + 1}
-            totalCards={currentCards.length}
-          />
         ) : (
-          <ActiveRecallCard
-            card={currentCard}
-            onResult={processReview}
-            onSkip={phase === 'studying' ? handleSkip : undefined}
-            cardNumber={currentIdx + 1}
-            totalCards={currentCards.length}
-          />
+          <div ref={cardContainerRef} className="w-full max-w-2xl">
+            {currentCard.type === 'cloze' ? (
+              <ClozeCard
+                card={currentCard}
+                onResult={(quality) => processReview(quality)}
+                onSkip={phase === 'studying' ? handleSkip : undefined}
+                cardNumber={currentIdx + 1}
+                totalCards={currentCards.length}
+              />
+            ) : currentCard.type === 'active_recall' ? (
+              <ActiveRecallCard
+                card={currentCard}
+                onResult={processReview}
+                onSkip={phase === 'studying' ? handleSkip : undefined}
+                cardNumber={currentIdx + 1}
+                totalCards={currentCards.length}
+              />
+            ) : (
+              <FlashCard
+                card={currentCard}
+                onResult={processReview}
+                onSkip={phase === 'studying' ? handleSkip : undefined}
+                cardNumber={currentIdx + 1}
+                totalCards={currentCards.length}
+              />
+            )}
+          </div>
         )}
       </div>
+
+      <UndoToast
+        visible={undoVisible}
+        onUndo={handleUndo}
+        onTimeout={() => setUndoVisible(false)}
+      />
     </div>
   )
 }

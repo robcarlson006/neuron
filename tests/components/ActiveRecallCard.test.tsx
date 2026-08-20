@@ -1,8 +1,7 @@
 import React from 'react'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { render, screen, fireEvent } from '@testing-library/react'
 import ActiveRecallCard from '../../src/components/ActiveRecallCard'
-import type { Card, EvaluationResult } from '../../src/types'
+import type { Card } from '../../src/types'
 
 const mockCard: Card = {
   id: 1,
@@ -15,212 +14,100 @@ const mockCard: Card = {
   created_at: new Date().toISOString()
 }
 
-const mockEvaluation: EvaluationResult = {
-  correct: true,
-  score: 4,
-  feedback: 'Good answer! You covered the main points. Consider also mentioning the Alliance system.'
-}
-
 describe('ActiveRecallCard Component', () => {
-  const mockOnSubmit = jest.fn()
-  const mockOnConfidence = jest.fn()
+  const mockOnResult = jest.fn()
   const mockOnSkip = jest.fn()
 
   beforeEach(() => {
     jest.clearAllMocks()
-    mockOnSubmit.mockResolvedValue(mockEvaluation)
   })
 
   it('renders the question', () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
     expect(screen.getByText('What were the primary causes of World War I?')).toBeInTheDocument()
   })
 
   it('renders the answer textarea', () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
     expect(screen.getByTestId('answer-input')).toBeInTheDocument()
   })
 
-  it('submit button is disabled when answer is empty', () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
-    const submitBtn = screen.getByTestId('submit-answer')
-    expect(submitBtn).toBeDisabled()
+  it('shows the model answer after clicking "Show Answer"', () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
+
+    fireEvent.click(screen.getByTestId('show-answer'))
+
+    expect(screen.getByText(/Model Answer/i)).toBeInTheDocument()
+    expect(screen.getByText(/Nationalism, imperialism, militarism/)).toBeInTheDocument()
   })
 
-  it('submit button is enabled when answer is typed', async () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
-    const textarea = screen.getByTestId('answer-input')
-    await userEvent.type(textarea, 'Some answer')
-    expect(screen.getByTestId('submit-answer')).not.toBeDisabled()
+  it('shows self-rating buttons after revealing', () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
+
+    fireEvent.click(screen.getByTestId('show-answer'))
+
+    expect(screen.getByText(/How did you do\?/i)).toBeInTheDocument()
+    expect(screen.getByText('Wrong')).toBeInTheDocument()
+    expect(screen.getByText('Partially Right')).toBeInTheDocument()
+    expect(screen.getByText('Got It')).toBeInTheDocument()
   })
 
-  it('shows feedback after submitting', async () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
+  it('calls onResult(1) when "Wrong" is clicked', () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
 
-    const textarea = screen.getByTestId('answer-input')
-    await userEvent.type(textarea, 'Nationalism, imperialism, militarism')
-    fireEvent.click(screen.getByTestId('submit-answer'))
+    fireEvent.click(screen.getByTestId('show-answer'))
+    fireEvent.click(screen.getByText('Wrong'))
 
-    await waitFor(() => {
-      expect(screen.getByText(/Good answer!/i)).toBeInTheDocument()
-    })
+    expect(mockOnResult).toHaveBeenCalledTimes(1)
+    expect(mockOnResult).toHaveBeenCalledWith(1)
   })
 
-  it('shows model answer in feedback phase', async () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
+  it('calls onResult(3) when "Partially Right" is clicked', () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
 
-    await userEvent.type(screen.getByTestId('answer-input'), 'My answer')
-    fireEvent.click(screen.getByTestId('submit-answer'))
+    fireEvent.click(screen.getByTestId('show-answer'))
+    fireEvent.click(screen.getByText('Partially Right'))
 
-    await waitFor(() => {
-      expect(screen.getByText(/Model Answer/i)).toBeInTheDocument()
-    })
+    expect(mockOnResult).toHaveBeenCalledTimes(1)
+    expect(mockOnResult).toHaveBeenCalledWith(3)
   })
 
-  it('shows correct indicator when answer is correct', async () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
+  it('calls onResult(5) when "Got It" is clicked', () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
 
-    await userEvent.type(screen.getByTestId('answer-input'), 'Correct answer')
-    fireEvent.click(screen.getByTestId('submit-answer'))
+    fireEvent.click(screen.getByTestId('show-answer'))
+    fireEvent.click(screen.getByText('Got It'))
 
-    await waitFor(() => {
-      expect(screen.getByText(/Correct!/i)).toBeInTheDocument()
-    })
-  })
-
-  it('shows incorrect indicator when answer is wrong', async () => {
-    mockOnSubmit.mockResolvedValue({ correct: false, score: 1, feedback: 'Wrong answer' })
-
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('answer-input'), 'Wrong answer')
-    fireEvent.click(screen.getByTestId('submit-answer'))
-
-    await waitFor(() => {
-      expect(screen.getByText(/Not quite/i)).toBeInTheDocument()
-    })
-  })
-
-  it('calls onConfidence when confidence level is selected', async () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('answer-input'), 'My answer')
-    fireEvent.click(screen.getByTestId('submit-answer'))
-
-    await waitFor(() => screen.getByText(/Got it perfectly!/i))
-    fireEvent.click(screen.getByText(/Got it perfectly!/i))
-
-    expect(mockOnConfidence).toHaveBeenCalledWith(5, mockEvaluation)
+    expect(mockOnResult).toHaveBeenCalledTimes(1)
+    expect(mockOnResult).toHaveBeenCalledWith(5)
   })
 
   it('shows skip button when onSkip is provided', () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-        onSkip={mockOnSkip}
-      />
-    )
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} onSkip={mockOnSkip} />)
     expect(screen.getByText(/Skip/i)).toBeInTheDocument()
   })
 
   it('calls onSkip when skip is clicked', () => {
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-        onSkip={mockOnSkip}
-      />
-    )
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} onSkip={mockOnSkip} />)
+
     fireEvent.click(screen.getByText(/Skip/i))
     expect(mockOnSkip).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not show skip button when onSkip is omitted', () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
+    expect(screen.queryByText(/Skip/i)).not.toBeInTheDocument()
   })
 
   it('shows progress when cardNumber and totalCards provided', () => {
     render(
       <ActiveRecallCard
         card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
+        onResult={mockOnResult}
         cardNumber={2}
         totalCards={5}
       />
     )
     expect(screen.getByText('2 / 5')).toBeInTheDocument()
-  })
-
-  it('shows error when submission fails', async () => {
-    mockOnSubmit.mockRejectedValue(new Error('API error'))
-
-    render(
-      <ActiveRecallCard
-        card={mockCard}
-        onSubmit={mockOnSubmit}
-        onConfidence={mockOnConfidence}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('answer-input'), 'My answer')
-    fireEvent.click(screen.getByTestId('submit-answer'))
-
-    await waitFor(() => {
-      expect(screen.getByText(/Failed to evaluate/i)).toBeInTheDocument()
-    })
   })
 })

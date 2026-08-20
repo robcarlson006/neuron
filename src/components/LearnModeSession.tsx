@@ -37,7 +37,8 @@ interface SavedProgress {
 
 function loadProgress(
   storageKey: string,
-  cards: LCard[]
+  cards: LCard[],
+  nextUid: () => number
 ): { queue: QueueItem[]; clearedCount: number } | null {
   try {
     const raw = localStorage.getItem(`learn-progress-${storageKey}`)
@@ -77,9 +78,6 @@ function clearProgress(storageKey: string): void {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-let _uid = 0
-const nextUid = () => ++_uid
 
 function levenshtein(a: string, b: string): number {
   const m = a.length
@@ -132,15 +130,18 @@ export default function LearnModeSession({
 }: Props): React.JSX.Element {
   const total = cards.length
 
+  const uidRef = useRef(0)
+  const nextUid = () => { uidRef.current += 1; return uidRef.current }
+
   // Queue state — restored from localStorage if available
   const [queue, setQueue] = useState<QueueItem[]>(() => {
-    const saved = loadProgress(storageKey, cards)
+    const saved = loadProgress(storageKey, cards, nextUid)
     if (saved) return saved.queue
     return [...cards].sort(() => Math.random() - 0.5).map(card => ({ card, phase: 1 as const, uid: nextUid() }))
   })
   const [currentIdx, setCurrentIdx] = useState(0)
   const [clearedCount, setClearedCount] = useState<number>(() => {
-    const saved = loadProgress(storageKey, cards)
+    const saved = loadProgress(storageKey, cards, nextUid)
     return saved?.clearedCount ?? 0
   })
 

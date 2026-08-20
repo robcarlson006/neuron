@@ -15,9 +15,7 @@ const mockCard: Card = {
 }
 
 describe('FlashCard Component', () => {
-  const mockOnGotIt = jest.fn()
-  const mockOnAlmost = jest.fn()
-  const mockOnForgot = jest.fn()
+  const mockOnResult = jest.fn()
   const mockOnSkip = jest.fn()
 
   beforeEach(() => {
@@ -25,153 +23,85 @@ describe('FlashCard Component', () => {
   })
 
   it('renders the front of the card initially', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-      />
-    )
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
     expect(screen.getByText('What is the capital of France?')).toBeInTheDocument()
   })
 
-  it('shows "Term / Question" label on front', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-      />
-    )
-    expect(screen.getByText(/Term \/ Question/i)).toBeInTheDocument()
-  })
-
-  it('shows confidence buttons after flipping', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-      />
-    )
-
-    const cardEl = screen.getByTestId('flashcard')
-    fireEvent.click(cardEl)
-
-    expect(screen.getByText(/Got it!/i)).toBeInTheDocument()
-    expect(screen.getByText(/Almost/i)).toBeInTheDocument()
-    expect(screen.getByText(/Forgot it/i)).toBeInTheDocument()
-  })
-
-  it('calls onGotIt when "Got it!" is clicked', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-      />
-    )
-
-    // Flip first
-    fireEvent.click(screen.getByTestId('flashcard'))
-    fireEvent.click(screen.getByText(/Got it!/i))
-    expect(mockOnGotIt).toHaveBeenCalledTimes(1)
-  })
-
-  it('calls onAlmost when "Almost" is clicked', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-      />
-    )
+  it('reveals the answer when the card is clicked', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
 
     fireEvent.click(screen.getByTestId('flashcard'))
-    fireEvent.click(screen.getByText(/Almost/i))
-    expect(mockOnAlmost).toHaveBeenCalledTimes(1)
+
+    expect(screen.getByText('Paris')).toBeInTheDocument()
   })
 
-  it('calls onForgot when "Forgot it" is clicked', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-      />
-    )
+  it('shows self-rating buttons after revealing', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
 
     fireEvent.click(screen.getByTestId('flashcard'))
-    fireEvent.click(screen.getByText(/Forgot it/i))
-    expect(mockOnForgot).toHaveBeenCalledTimes(1)
+
+    expect(screen.getByText(/How did you do\?/i)).toBeInTheDocument()
+    expect(screen.getByText('Wrong')).toBeInTheDocument()
+    expect(screen.getByText('Partially Right')).toBeInTheDocument()
+    expect(screen.getByText('Got It')).toBeInTheDocument()
   })
 
-  it('shows skip button when onSkip is provided (before flip)', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-        onSkip={mockOnSkip}
-      />
-    )
+  it('calls onResult(1) when "Wrong" is clicked', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+
+    fireEvent.click(screen.getByTestId('flashcard'))
+    fireEvent.click(screen.getByText('Wrong'))
+
+    expect(mockOnResult).toHaveBeenCalledTimes(1)
+    expect(mockOnResult).toHaveBeenCalledWith(1)
+  })
+
+  it('calls onResult(3) when "Partially Right" is clicked', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+
+    fireEvent.click(screen.getByTestId('flashcard'))
+    fireEvent.click(screen.getByText('Partially Right'))
+
+    expect(mockOnResult).toHaveBeenCalledTimes(1)
+    expect(mockOnResult).toHaveBeenCalledWith(3)
+  })
+
+  it('calls onResult(5) when "Got It" is clicked', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+
+    fireEvent.click(screen.getByTestId('flashcard'))
+    fireEvent.click(screen.getByText('Got It'))
+
+    expect(mockOnResult).toHaveBeenCalledTimes(1)
+    expect(mockOnResult).toHaveBeenCalledWith(5)
+  })
+
+  it('shows skip button when onSkip is provided', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} onSkip={mockOnSkip} />)
     expect(screen.getByText(/Skip for now/i)).toBeInTheDocument()
   })
 
   it('calls onSkip when skip button is clicked', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-        onSkip={mockOnSkip}
-      />
-    )
+    render(<FlashCard card={mockCard} onResult={mockOnResult} onSkip={mockOnSkip} />)
 
     fireEvent.click(screen.getByText(/Skip for now/i))
     expect(mockOnSkip).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not show skip button when onSkip is omitted', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    expect(screen.queryByText(/Skip for now/i)).not.toBeInTheDocument()
   })
 
   it('shows progress bar when cardNumber and totalCards provided', () => {
     render(
       <FlashCard
         card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
+        onResult={mockOnResult}
         cardNumber={3}
         totalCards={10}
       />
     )
     expect(screen.getByText('3 / 10')).toBeInTheDocument()
-  })
-
-  it('resets to front after confidence is chosen', () => {
-    render(
-      <FlashCard
-        card={mockCard}
-        onGotIt={mockOnGotIt}
-        onAlmost={mockOnAlmost}
-        onForgot={mockOnForgot}
-      />
-    )
-
-    // Flip
-    fireEvent.click(screen.getByTestId('flashcard'))
-    expect(screen.getByText(/Got it!/i)).toBeInTheDocument()
-
-    // Choose confidence
-    fireEvent.click(screen.getByText(/Got it!/i))
-
-    // Should now show the "Reveal Answer" button (front state, button specifically)
-    expect(screen.getByRole('button', { name: /Reveal Answer/i })).toBeInTheDocument()
   })
 })

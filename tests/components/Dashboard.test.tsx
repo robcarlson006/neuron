@@ -136,11 +136,11 @@ describe('Dashboard Component', () => {
 
     await waitFor(() => {
       // 2 flashcards * 20s + 1 active recall * 60s = 100s = 2min
-      expect(screen.getByText(/min estimated/i)).toBeInTheDocument()
+      expect(screen.getByText(/~\d+ min/)).toBeInTheDocument()
     })
   })
 
-  it('shows Start Today Review when cards are due', async () => {
+  it('shows Study Now button when cards are due', async () => {
     render(
       <MemoryRouter>
         <Dashboard />
@@ -148,7 +148,7 @@ describe('Dashboard Component', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Start Today's Review/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Study Now/).length).toBeGreaterThan(0)
     })
   })
 
@@ -160,10 +160,10 @@ describe('Dashboard Component', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Active subjects/i)).toBeInTheDocument()
+      expect(screen.getByText(/Your Subjects/i)).toBeInTheDocument()
       // The number "1" appears in multiple places; check the label is present
-      const activeSubjectsLabel = screen.getByText(/Active subjects/i)
-      expect(activeSubjectsLabel).toBeInTheDocument()
+      const subjectsLabel = screen.getByText(/Your Subjects/i)
+      expect(subjectsLabel).toBeInTheDocument()
     })
   })
 })

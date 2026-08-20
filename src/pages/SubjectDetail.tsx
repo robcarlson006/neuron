@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import PomodoroWidget from '../components/PomodoroWidget'
+import CardBrowser from '../components/CardBrowser'
 import type { Card, CardFolder, CardSchedule, Deadline } from '../types'
 
 type Tab = 'cards' | 'deadlines'
@@ -37,6 +38,8 @@ export default function SubjectDetail(): React.JSX.Element {
   const [newFolderName, setNewFolderName] = useState('')
   const [selectedCardForDetail, setSelectedCardForDetail] = useState<Card | null>(null)
   const [showTextImport, setShowTextImport] = useState(false)
+  const [newCardImageUrl, setNewCardImageUrl] = useState('')
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   useEffect(() => {
     if (subject) {
@@ -103,12 +106,14 @@ export default function SubjectDetail(): React.JSX.Element {
       type: newCardType,
       front: newCardFront.trim(),
       back: newCardBack.trim(),
+      image_url: newCardImageUrl || undefined,
       folder_id: newCardFolderId,
       is_manual: 1
     }], user.id)
     await loadData()
     setNewCardFront('')
     setNewCardBack('')
+    setNewCardImageUrl('')
     setNewCardFolderId(null)
     setShowAddCard(false)
   }
@@ -137,9 +142,26 @@ export default function SubjectDetail(): React.JSX.Element {
     }
   }
 
-  async function handleDeleteCard(cardId: number): Promise<void> {
-    await window.electronAPI.deleteCard(cardId)
-    setCards(prev => prev.filter(c => c.id !== cardId))
+  const handleAnkiImport = async () => {
+    if (!user) return
+    try {
+      const api = (window as any).electronAPI
+      if (!api) return
+      const filePath = await api.openFileDialog()
+      if (!filePath) return
+      const deck = await api.parseAnkiDeck(filePath)
+      if (!deck.cards || deck.cards.length === 0) {
+        alert('No cards found in this Anki deck.')
+        return
+      }
+      const confirmMsg = `Import "${deck.name}" with ${deck.cardCount} cards?`
+      if (!confirm(confirmMsg)) return
+      const saved = await api.importAnkiDeck(deck, user.id, subjectId)
+      setToast({ message: `Imported ${saved.length} cards from Anki deck!`, type: 'success' })
+      loadData()
+    } catch (err: any) {
+      setToast({ message: `Anki import failed: ${err.message}`, type: 'error' })
+    }
   }
 
   const filteredCards = cards.filter(c => {
@@ -227,6 +249,12 @@ export default function SubjectDetail(): React.JSX.Element {
               <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
             Import
+          </button>
+          <button
+            onClick={handleAnkiImport}
+            className="px-3 py-1.5 text-xs font-medium bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors"
+          >
+            Import Anki Deck (.apkg)
           </button>
           <button
             onClick={() => navigate(`/diagnostics/${subjectId}`)}
@@ -406,53 +434,25 @@ export default function SubjectDetail(): React.JSX.Element {
               </button>
             </div>
           ) : (
-            <div className="space-y-6">
-              {flashcards.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <h3 className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                      Flashcards
-                    </h3>
-                    <span className="badge-violet">{flashcards.length}</span>
-                  </div>
-                  <div className="space-y-2">
-                    {flashcards.map(card => (
-                      <CardRow
-                        key={card.id}
-                        card={card}
-                        folders={folders}
-                        onDelete={() => handleDeleteCard(card.id)}
-                        onOpenDetail={() => setSelectedCardForDetail(card)}
-                        onMoveToFolder={(folderId) => handleMoveCard(card.id, folderId)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {activeRecalls.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <h3 className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                      Active Recall
-                    </h3>
-                    <span className="badge-blue">{activeRecalls.length}</span>
-                  </div>
-                  <div className="space-y-2">
-                    {activeRecalls.map(card => (
-                      <CardRow
-                        key={card.id}
-                        card={card}
-                        folders={folders}
-                        onDelete={() => handleDeleteCard(card.id)}
-                        onOpenDetail={() => setSelectedCardForDetail(card)}
-                        onMoveToFolder={(folderId) => handleMoveCard(card.id, folderId)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <CardBrowser
+              cards={cards}
+              folders={folders}
+              onCardClick={(card) => {
+                setSelectedCardForDetail(card)
+              }}
+              onDeleteCards={async (cardIds) => {
+                for (const id of cardIds) {
+                  await window.electronAPI.deleteCard(id)
+                }
+                loadData()
+              }}
+              onMoveCards={async (cardIds, folderId) => {
+                for (const id of cardIds) {
+                  await window.electronAPI.updateCardFolder(id, folderId)
+                }
+                loadData()
+              }}
+            />
           )}
         </div>
       )}
@@ -593,6 +593,26 @@ export default function SubjectDetail(): React.JSX.Element {
                   onChange={e => setNewCardBack(e.target.value)}
                 />
               </div>
+              <div className="mb-2">
+                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1">Image URL (optional)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newCardImageUrl}
+                    onChange={(e) => setNewCardImageUrl(e.target.value)}
+                    placeholder="https://example.com/image.jpg"
+                    className="flex-1 px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg dark:text-gray-200"
+                  />
+                </div>
+                {newCardImageUrl && (
+                  <img
+                    src={newCardImageUrl}
+                    alt="Preview"
+                    className="mt-2 max-h-32 rounded-lg object-contain"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                )}
+              </div>
               {folders.length > 0 && (
                 <div>
                   <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Folder (optional)</label>
@@ -708,110 +728,18 @@ export default function SubjectDetail(): React.JSX.Element {
           </div>
         </div>
       )}
+      {/* Toast notification */}
+      {toast && (
+        <div
+          className="fixed bottom-4 right-4 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm text-white animate-slide-up"
+          style={{ backgroundColor: toast.type === 'success' ? '#059669' : '#dc2626' }}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   )
 }
-
-
-function CardRow({
-  card,
-  folders,
-  onDelete,
-  onOpenDetail,
-  onMoveToFolder
-}: {
-  card: Card
-  folders: CardFolder[]
-  onDelete: () => void
-  onOpenDetail: () => void
-  onMoveToFolder: (folderId: number | null) => void
-}): React.JSX.Element {
-  const folder = folders.find(f => f.id === card.folder_id)
-  const [showFolderMenu, setShowFolderMenu] = useState(false)
-  const folderMenuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!showFolderMenu) return
-    function handleClick(e: MouseEvent) {
-      if (folderMenuRef.current && !folderMenuRef.current.contains(e.target as Node)) {
-        setShowFolderMenu(false)
-      }
-    }
-    window.addEventListener('mousedown', handleClick)
-    return () => window.removeEventListener('mousedown', handleClick)
-  }, [showFolderMenu])
-
-  return (
-    <div
-      className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 cursor-pointer hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
-      onClick={onOpenDetail}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3 flex-1 min-w-0">
-          <span className={`flex-shrink-0 mt-0.5 text-xs font-medium px-2 py-0.5 rounded-full ${
-            card.type === 'flashcard'
-              ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
-              : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-          }`}>
-            {card.type === 'flashcard' ? 'FC' : 'AR'}
-          </span>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
-              {card.front}
-            </p>
-            {folder && (
-              <span className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 inline-flex items-center gap-1">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 2.5C1 2 1.5 1.5 2 1.5H4L5 3H8.5C9 3 9.5 3.5 9.5 4V8C9.5 8.5 9 9 8.5 9H2C1.5 9 1 8.5 1 8V2.5Z" stroke="currentColor" strokeWidth="1" fill="none"/></svg>
-                {folder.name}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Folder assign button */}
-          <div className="relative" ref={folderMenuRef}>
-            <button
-              onClick={e => { e.stopPropagation(); setShowFolderMenu(v => !v) }}
-              className="p-1 rounded text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
-              title="Move to folder"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 2.5C1 1.9 1.4 1.5 2 1.5H4.5L5.5 3H9.5C10.1 3 10.5 3.4 10.5 4V9.5C10.5 10.1 10.1 10.5 9.5 10.5H2C1.4 10.5 1 10.1 1 9.5V2.5Z" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
-            </button>
-            {showFolderMenu && (
-              <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg py-1 z-40">
-                <button
-                  onClick={e => { e.stopPropagation(); onMoveToFolder(null); setShowFolderMenu(false) }}
-                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors ${!card.folder_id ? 'text-violet-600 dark:text-violet-400 font-medium' : 'text-slate-600 dark:text-slate-300'}`}
-                >
-                  No folder
-                </button>
-                {folders.map(f => (
-                  <button
-                    key={f.id}
-                    onClick={e => { e.stopPropagation(); onMoveToFolder(f.id); setShowFolderMenu(false) }}
-                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors ${card.folder_id === f.id ? 'text-violet-600 dark:text-violet-400 font-medium' : 'text-slate-600 dark:text-slate-300'}`}
-                  >
-                    {f.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <button
-            onClick={e => { e.stopPropagation(); onDelete() }}
-            className="text-slate-300 dark:text-slate-600 hover:text-red-400 dark:hover:text-red-400 p-1 rounded transition-colors"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M1.5 1.5L10.5 10.5M10.5 1.5L1.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Card Detail Modal ─────────────────────────────────────────────────────────
 
 function CardDetailModal({
   card,
@@ -1126,8 +1054,6 @@ function TextImportModal({ onClose, onSave, folders }: {
   const [saving, setSaving] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [detectedFormat, setDetectedFormat] = useState<string | null>(null)
-
-  const effectiveCardSep = eachLineIsCard ? '\n' : cardSep
 
   // Parse cards live
   const parsed = React.useMemo(() => {

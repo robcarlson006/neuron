@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import SubjectCard from '../components/SubjectCard'
 import PomodoroWidget from '../components/PomodoroWidget'
+import FocusModeModal from '../components/FocusModeModal'
+import GamificationPanel from '../components/GamificationPanel'
 import type { SubjectWithStats, Deadline, CardSchedule } from '../types'
 
 const FLASHCARD_SECONDS = 20
@@ -15,9 +17,8 @@ function getTimeOfDay(): string {
   return 'evening'
 }
 
-export default function Dashboard(): React.JSX.Element {
-  const { user, subjects, setSubjects, addSubject, removeSubject, updateSubject } = useAppStore()
-  const navigate = useNavigate()
+export default function Dashboard({ onNewClass }: { onNewClass?: () => void }): React.JSX.Element {
+  const { user, subjects, addSubject, removeSubject, updateSubject } = useAppStore()
   const [subjectStats, setSubjectStats] = useState<SubjectWithStats[]>([])
   const [totalDueToday, setTotalDueToday] = useState(0)
   const [flashcardsDue, setFlashcardsDue] = useState(0)
@@ -30,6 +31,8 @@ export default function Dashboard(): React.JSX.Element {
   const [newSubjectCode, setNewSubjectCode] = useState('')
   const [newSubjectStatus, setNewSubjectStatus] = useState<'active' | 'ongoing'>('active')
   const [addingSubject, setAddingSubject] = useState(false)
+  const [showFocusModal, setShowFocusModal] = useState(false)
+  const [showGamification, setShowGamification] = useState(false)
 
   useEffect(() => {
     if (user) loadDashboard()
@@ -176,12 +179,35 @@ export default function Dashboard(): React.JSX.Element {
         <div className="flex items-center gap-2 flex-shrink-0">
           <PomodoroWidget />
           <button
+            onClick={() => setShowFocusModal(true)}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium transition-colors"
+            aria-label="Start focus session"
+          >
+            🎯 Focus
+          </button>
+          <button
+            onClick={() => setShowGamification(true)}
+            className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-xl text-sm font-medium transition-colors"
+            aria-label="View achievements"
+          >
+            🏆 Progress
+          </button>
+          <button
             onClick={() => setShowAddSubject(true)}
             className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-1.5"
           >
             <span className="text-base leading-none">+</span>
             Add Subject
           </button>
+          {onNewClass && (
+            <button
+              onClick={onNewClass}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">+</span>
+              New Class
+            </button>
+          )}
         </div>
       </div>
 
@@ -357,6 +383,26 @@ export default function Dashboard(): React.JSX.Element {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Focus Mode Modal */}
+      {showFocusModal && user && (
+        <FocusModeModal
+          isOpen={showFocusModal}
+          onClose={() => setShowFocusModal(false)}
+          userId={user.id}
+          config={{ focusMinutes: 25, breakMinutes: 5 }}
+          onStartSession={() => {}}
+        />
+      )}
+
+      {/* Gamification Panel */}
+      {showGamification && user && (
+        <GamificationPanel
+          isOpen={showGamification}
+          onClose={() => setShowGamification(false)}
+          userId={user.id}
+        />
       )}
     </div>
   )

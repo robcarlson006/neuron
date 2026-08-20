@@ -232,16 +232,12 @@ export function boostForExam(interval: number, daysUntilExam: number): number {
  */
 export function projectRetention(
   memories: Array<{ stability: number; lastReview?: string }>,
-  horizonDays: number = 30,
-  nowISO: string = todayISO()
+  horizonDays: number = 30
 ): { date: string; retention: number; count: number }[] {
   const out: { date: string; retention: number; count: number }[] = []
   if (memories.length === 0) return out
   for (let d = 0; d <= horizonDays; d++) {
-    const date = addDaysISO(d - 0)  // d days from today
-    const target = new Date(nowISO)
-    target.setDate(target.getDate() + d)
-    const targetISO = target.toISOString().split('T')[0]
+    const targetISO = addDaysISO(d)
     let sum = 0
     let n = 0
     for (const m of memories) {
@@ -251,7 +247,32 @@ export function projectRetention(
       n += 1
     }
     out.push({ date: targetISO, retention: n ? sum / n : 0, count: n })
-    void date
+
   }
   return out
+}
+
+/**
+ * Personalized retention suggestion based on past probe data.
+ * Probes are { desired: number, actual: number } pairs from previous review periods.
+ */
+export function suggestRetention(
+  probes: Array<{ desired: number; actual: number }>
+): number {
+  if (probes.length === 0) return DEFAULT_FSRS_PARAMS.desiredRetention
+  const candidates = [0.80, 0.85, 0.90, 0.95]
+  let best = DEFAULT_FSRS_PARAMS.desiredRetention
+  let bestGap = Infinity
+  for (const c of candidates) {
+    const relevant = probes.filter((p) => Math.abs(p.desired - c) < 0.03)
+    if (relevant.length === 0) continue
+    const avgGap =
+      relevant.reduce((s, p) => s + Math.abs(p.desired - p.actual), 0) /
+      relevant.length
+    if (avgGap < bestGap) {
+      bestGap = avgGap
+      best = c
+    }
+  }
+  return best
 }

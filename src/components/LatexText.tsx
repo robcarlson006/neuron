@@ -60,20 +60,20 @@ interface TextPart {
   display: boolean
 }
 
+// Priority order matters — $$ must come before $ to avoid partial matches.
+// Group 1: $$...$$ → display math
+// Group 2: \[...\] → display math
+// Group 3: \(...\) → inline math
+// Group 4: $...$ → inline math (no newlines, no nested $ to avoid false positives)
+const LATEX_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^$\n]+?)\$/g
+
 function splitLatex(text: string): TextPart[] {
   const parts: TextPart[] = []
-
-  // Priority order matters — $$ must come before $ to avoid partial matches.
-  // Group 1: $$...$$ → display math
-  // Group 2: \[...\] → display math
-  // Group 3: \(...\) → inline math
-  // Group 4: $...$ → inline math (no newlines, no nested $ to avoid false positives)
-  const regex = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^$\n]+?)\$/g
 
   let lastIndex = 0
   let match: RegExpExecArray | null
 
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = LATEX_REGEX.exec(text)) !== null) {
     if (match.index > lastIndex) {
       parts.push({ type: 'text', content: text.slice(lastIndex, match.index), display: false })
     }
@@ -92,7 +92,7 @@ function splitLatex(text: string): TextPart[] {
       parts.push({ type: 'math', content: match[4], display: false })
     }
 
-    lastIndex = regex.lastIndex
+    lastIndex = LATEX_REGEX.lastIndex
   }
 
   if (lastIndex < text.length) {

@@ -20,14 +20,13 @@ interface DiagResult {
 
 type Phase = 'loading' | 'intro' | 'question' | 'revealed' | 'results' | 'error'
 
-// SM-2 quality mapping for the 5 diagnostic options
-// Anki-style: < 3 resets the card, ≥ 3 advances it
+// FSRS-5 quality mapping for the 5 diagnostic options
 const RATING_OPTIONS = [
   { label: "Don't know it", sublabel: 'Complete blank', quality: 0, color: 'red' },
   { label: 'Know a little', sublabel: 'Vague idea only', quality: 1, color: 'orange' },
   { label: "I'm okay at this", sublabel: 'Got it with effort', quality: 2, color: 'amber' },
-  { label: 'Know it well',  sublabel: 'Got it confidently', quality: 4, color: 'emerald' },
-  { label: 'Mastered',      sublabel: 'Instant recall', quality: 5, color: 'violet' },
+  { label: 'Know it well',  sublabel: 'Got it confidently', quality: 3, color: 'emerald' },
+  { label: 'Mastered',      sublabel: 'Instant recall', quality: 4, color: 'violet' },
 ] as const
 
 type RatingColor = typeof RATING_OPTIONS[number]['color']

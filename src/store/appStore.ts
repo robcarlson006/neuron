@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { User, Subject, Theme } from '../types'
+import type { User, Subject, Theme, ToastMessage } from '../types'
 
 export type PomodoroPhase = 'idle' | 'work' | 'work-done' | 'break' | 'break-done'
 
@@ -34,6 +34,11 @@ interface AppState {
   removeSubject: (subjectId: number) => void
   addSubject: (subject: Subject) => void
   setShowDemo: (show: boolean) => void
+
+  // Toast notifications
+  toasts: ToastMessage[]
+  addToast: (toast: Omit<ToastMessage, 'id'>) => void
+  removeToast: (id: string) => void
 
   // Pomodoro actions
   setPomodoroEnabled: (enabled: boolean) => void
@@ -72,6 +77,7 @@ export const useAppStore = create<AppState>((set, get) => {
     isLoading: false,
     error: null,
     showDemo: false,
+    toasts: [],
 
     // Pomodoro settings
     pomodoroEnabled: pom.enabled,
@@ -87,26 +93,13 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setUser: (user) => set({ user }),
     setSubjects: (subjects) => set({ subjects }),
-    setTheme: (theme) => {
-      set({ theme })
-      if (theme === 'dark') {
-        document.documentElement.classList.add('dark')
-      } else {
-        document.documentElement.classList.remove('dark')
-      }
-    },
+    setTheme: (theme) => set({ theme }),
     setLoading: (isLoading) => set({ isLoading }),
     setError: (error) => set({ error }),
     toggleTheme: () =>
-      set((state) => {
-        const newTheme: Theme = state.theme === 'light' ? 'dark' : 'light'
-        if (newTheme === 'dark') {
-          document.documentElement.classList.add('dark')
-        } else {
-          document.documentElement.classList.remove('dark')
-        }
-        return { theme: newTheme }
-      }),
+      set((state) => ({
+        theme: state.theme === 'light' ? 'dark' : 'light'
+      })),
     updateSubject: (subject) =>
       set((state) => ({
         subjects: state.subjects.map((s) => (s.id === subject.id ? subject : s))
@@ -120,6 +113,18 @@ export const useAppStore = create<AppState>((set, get) => {
         subjects: [subject, ...state.subjects]
       })),
     setShowDemo: (show) => set({ showDemo: show }),
+
+    // Toast notifications
+    addToast: (toast) => {
+      const id = Date.now().toString() + Math.random().toString(36).slice(2, 8)
+      set((state) => ({ toasts: [...state.toasts, { ...toast, id }] }))
+      // Auto-remove after 5 seconds
+      setTimeout(() => {
+        set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }))
+      }, 5000)
+    },
+    removeToast: (id) =>
+      set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 
     // Pomodoro actions
     setPomodoroEnabled: (enabled) => {

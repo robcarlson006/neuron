@@ -1,8 +1,9 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": ["electron/**/*", "seed/**/*"],
+  "include": ["electron/**/*", "seed/**/*", "src/lib/**/*", "src/types/**/*"],
   "compilerOptions": {
     "composite": true,
+    "noEmit": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]

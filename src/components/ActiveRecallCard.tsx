@@ -41,8 +41,9 @@ export default function ActiveRecallCard({
     if (phase === 'revealed') {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.key === '1') { e.preventDefault(); onResult(1) }
-      else if (e.key === '2') { e.preventDefault(); onResult(3) }
-      else if (e.key === '3') { e.preventDefault(); onResult(5) }
+      else if (e.key === '2') { e.preventDefault(); onResult(2) }
+      else if (e.key === '3') { e.preventDefault(); onResult(3) }
+      else if (e.key === '4') { e.preventDefault(); onResult(4) }
     }
   }, [phase, onResult])
 

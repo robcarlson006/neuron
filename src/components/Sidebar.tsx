@@ -1,5 +1,5 @@
 import React from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import NeuronLogo from './NeuronLogo'
 
@@ -10,15 +10,6 @@ function IconGrid(): React.JSX.Element {
       <rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9" />
       <rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9" />
       <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9" />
-    </svg>
-  )
-}
-
-function IconBook(): React.JSX.Element {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M2 3C2 2.44772 2.44772 2 3 2H7C7.55228 2 8 2.44772 8 3V13C8 13.5523 7.55228 14 7 14H3C2.44772 14 2 13.5523 2 13V3Z" fill="currentColor" opacity="0.6" />
-      <path d="M8 4.5C8 3.94772 8.44772 3.5 9 3.5H13C13.5523 3.5 14 3.94772 14 4.5V12.5C14 13.0523 13.5523 13.5 13 13.5H9C8.44772 13.5 8 13.0523 8 12.5V4.5Z" fill="currentColor" />
     </svg>
   )
 }
@@ -42,6 +33,15 @@ function IconChart(): React.JSX.Element {
       <rect x="2" y="9" width="3" height="5" rx="1" fill="currentColor" opacity="0.6" />
       <rect x="6.5" y="6" width="3" height="8" rx="1" fill="currentColor" opacity="0.8" />
       <rect x="11" y="3" width="3" height="11" rx="1" fill="currentColor" />
+    </svg>
+  )
+}
+
+function IconTutor(): React.JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8 1C4.134 1 1 4.134 1 8s3.134 7 7 7 7-3.134 7-7-3.134-7-7-7z" fill="currentColor" opacity="0.6" />
+      <path d="M8 4.5a2 2 0 100 4 2 2 0 000-4zM4.5 11.5c0-1.5 1.5-2.5 3.5-2.5s3.5 1 3.5 2.5" stroke="currentColor" strokeWidth="1" fill="none" />
     </svg>
   )
 }
@@ -74,6 +74,7 @@ function IconSun(): React.JSX.Element {
 
 const mainNavItems = [
   { to: '/', label: 'Dashboard', icon: <IconGrid /> },
+  { to: '/tutor', label: 'Tutor', icon: <IconTutor /> },
   { to: '/calendar', label: 'Calendar', icon: <IconCalendar /> },
 ]
 
@@ -85,9 +86,8 @@ const settingsNavItems = [
   { to: '/settings', label: 'Settings', icon: <IconCog /> },
 ]
 
-export default function Sidebar(): React.JSX.Element {
+export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): React.JSX.Element {
   const { user, subjects, toggleTheme, theme } = useAppStore()
-  const navigate = useNavigate()
 
   const initials = user?.name
     ? user.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -168,19 +168,21 @@ export default function Sidebar(): React.JSX.Element {
           </div>
         </div>
 
-        {/* Subjects */}
+        {/* All subjects — merged from Classes + Subjects */}
         <div>
           <div className="flex items-center justify-between px-2 mb-2">
             <p className="text-xs font-medium uppercase tracking-wide text-neuron-400 dark:text-neuron-500">
               Subjects
             </p>
-            <button
-              onClick={() => navigate('/')}
-              className="w-5 h-5 rounded flex items-center justify-center text-neuron-400 hover:text-neuron-600 dark:hover:text-neuron-400 hover:bg-neuron-200 dark:hover:bg-neuron-800 text-sm leading-none transition-colors"
-              title="Manage subjects"
-            >
-              +
-            </button>
+            {onNewClass && (
+              <button
+                onClick={onNewClass}
+                className="w-5 h-5 rounded flex items-center justify-center text-neuron-400 hover:text-neuron-600 dark:hover:text-neuron-400 hover:bg-neuron-200 dark:hover:bg-neuron-800 text-sm leading-none transition-colors"
+                title="New subject / class"
+              >
+                +
+              </button>
+            )}
           </div>
           <div className="space-y-0.5 max-h-44 overflow-y-auto">
             {subjects.filter(s => s.status !== 'archived').map((subject) => (
@@ -197,13 +199,9 @@ export default function Sidebar(): React.JSX.Element {
               >
                 {({ isActive }) => (
                   <>
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                      isActive
-                        ? 'bg-neuron-500'
-                        : subject.status === 'ongoing'
-                        ? 'bg-amber-400'
-                        : 'bg-emerald-400'
-                    }`} />
+                    <span className={`flex-shrink-0 ${isActive ? 'text-neuron-500' : 'text-slate-400'}`}>
+                      {subject.subject_type === 'book' ? '📖' : subject.subject_type === 'class' ? '🏫' : '•'}
+                    </span>
                     <span className="truncate">{subject.name}</span>
                   </>
                 )}

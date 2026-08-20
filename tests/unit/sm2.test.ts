@@ -1,4 +1,4 @@
-import { sm2, confidenceToQuality, isDue, isMaintenanceMode } from '../../src/lib/sm2'
+import { sm2, confidenceToQuality, isDue, isMaintenanceMode, defaultSchedule as makeDefaultSchedule, boostForExam } from '../../src/lib/sm2'
 import type { CardSchedule } from '../../src/types'
 
 const defaultSchedule = {
@@ -135,6 +135,9 @@ describe('SM-2 Algorithm', () => {
     it('maps forgot to 1', () => {
       expect(confidenceToQuality('forgot')).toBe(1)
     })
+    it('defaults unknown confidence to 1', () => {
+      expect(confidenceToQuality('bogus' as never)).toBe(1)
+    })
   })
 
   describe('isDue', () => {
@@ -180,6 +183,35 @@ describe('SM-2 Algorithm', () => {
         due_date: '2026-01-01'
       }
       expect(isMaintenanceMode(schedule)).toBe(false)
+    })
+  })
+
+  describe('defaultSchedule', () => {
+    it('creates an unreviewed schedule with minimum ease factor', () => {
+      const schedule = makeDefaultSchedule(42, 7)
+      expect(schedule.card_id).toBe(42)
+      expect(schedule.user_id).toBe(7)
+      expect(schedule.interval).toBe(1)
+      expect(schedule.repetitions).toBe(0)
+      expect(schedule.ease_factor).toBe(1.3)
+      expect(schedule.last_reviewed_at).toBeUndefined()
+      expect(schedule.due_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    })
+  })
+
+  describe('boostForExam', () => {
+    it('caps interval within 7 days of exam', () => {
+      expect(boostForExam(10, 3)).toBe(1)
+      expect(boostForExam(10, 7)).toBe(3)
+    })
+
+    it('returns interval unchanged beyond 7 days', () => {
+      expect(boostForExam(10, 8)).toBe(10)
+    })
+
+    it('returns interval unchanged for non-positive days', () => {
+      expect(boostForExam(10, 0)).toBe(10)
+      expect(boostForExam(10, -2)).toBe(10)
     })
   })
 })

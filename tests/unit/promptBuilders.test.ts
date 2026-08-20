@@ -3,9 +3,9 @@ import {
   parseEvaluationResponse,
   buildCardGenerationPrompt,
   buildEvaluationPrompt
-} from '../../src/lib/gemini'
+} from '../../src/lib/promptBuilders'
 
-describe('Gemini Parser', () => {
+describe('Prompt Builders', () => {
   describe('parseCardGenerationResponse', () => {
     it('parses valid JSON response', () => {
       const json = JSON.stringify({

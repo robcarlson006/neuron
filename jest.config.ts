@@ -10,20 +10,10 @@ const config: Config = {
   },
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
-      tsconfig: {
-        jsx: 'react-jsx',
-        esModuleInterop: true,
-        allowSyntheticDefaultImports: true,
-        types: ['jest', '@testing-library/jest-dom', 'node'],
-        include: ['src/**/*', 'tests/**/*', 'electron/**/*']
-      }
+      tsconfig: 'tsconfig.test.json'
     }]
   },
-  globals: {
-    'ts-jest': {
-      diagnostics: false
-    }
-  },
+
   testMatch: [
     '<rootDir>/tests/unit/**/*.test.ts',
     '<rootDir>/tests/unit/**/*.test.tsx',

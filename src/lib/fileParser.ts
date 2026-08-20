@@ -1,15 +1,17 @@
 /**
- * File parsing utilities for PDF, DOCX, and PPTX files
+ * File parsing utilities for PDF, DOCX, PPTX, TXT, and MD files
  * This module is used in the Electron main process only via IPC
  */
 
-export type SupportedFileType = 'pdf' | 'docx' | 'pptx'
+export type SupportedFileType = 'pdf' | 'docx' | 'pptx' | 'txt' | 'md'
 
 export function getFileType(filename: string): SupportedFileType | null {
   const ext = filename.toLowerCase().split('.').pop()
   if (ext === 'pdf') return 'pdf'
   if (ext === 'docx') return 'docx'
   if (ext === 'pptx') return 'pptx'
+  if (ext === 'txt') return 'txt'
+  if (ext === 'md') return 'md'
   return null
 }
 

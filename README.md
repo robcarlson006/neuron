@@ -1,12 +1,12 @@
-# StudyHelper
+# Neuron
 
-An AI-powered spaced repetition desktop application for smarter studying. StudyHelper uses Google Gemini to automatically generate flashcards and active recall questions from your study materials, then schedules reviews using the proven SM-2 algorithm.
+An AI-powered spaced repetition desktop application for smarter studying. Neuron uses the DeepSeek API (via an OpenAI-compatible provider layer) to automatically generate flashcards and active recall questions from your study materials, then schedules reviews using the FSRS-5 spaced repetition algorithm.
 
 ## Features
 
-- **AI Card Generation**: Upload PDF, DOCX, or PPTX files and Gemini automatically creates flashcards and active recall questions
-- **Spaced Repetition (SM-2)**: Intelligent scheduling — cards you struggle with appear more often, mastered cards are spaced further apart
-- **Active Recall with AI Grading**: Type open-ended answers, Gemini evaluates them and provides detailed feedback
+- **AI Card Generation**: Upload PDF, DOCX, or PPTX files and the AI automatically creates flashcards and active recall questions
+- **Spaced Repetition (FSRS-5)**: Intelligent scheduling — cards you struggle with appear more often, mastered cards are spaced further apart
+- **Active Recall with AI Grading**: Type open-ended answers and the AI evaluates them with detailed feedback
 - **Flashcard Mode**: Classic flip-card interface with confidence rating
 - **Diagnostics Test**: Run a rapid assessment to identify strong, moderate, and weak areas
 - **Calendar View**: See scheduled reviews and exam deadlines at a glance
@@ -60,8 +60,8 @@ npm test
 ```
 
 Tests cover:
-- SM-2 algorithm (all quality branches, edge cases)
-- Gemini response parsing (valid JSON, malformed, empty)
+- SM-2 and FSRS-5 scheduling algorithms (all branches, edge cases)
+- AI response parsing (valid JSON, malformed, empty)
 - Database schema verification
 - FlashCard component (flip interaction, confidence buttons)
 - ActiveRecallCard component (answer submission, feedback display)
@@ -165,11 +165,11 @@ The database is created automatically on first launch. If you get SQLite errors,
 
 ## Tech Stack
 
-- **Electron 29** with contextBridge/preload security model
+- **Electron 41** with contextBridge/preload security model
 - **React 18** + **TypeScript 5**
 - **Tailwind CSS 3** (light/dark mode)
 - **SQLite** via `better-sqlite3`
-- **Google Gemini** via `@google/generative-ai`
+- **DeepSeek** via the OpenAI-compatible chat completions API
 - **Zustand** for state management
 - **Recharts** for analytics charts
 - **Vite** + **electron-vite** for building
