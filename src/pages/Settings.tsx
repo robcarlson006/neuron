@@ -330,6 +330,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     window.electronAPI.getMeta('reminder_time').then(v => {
       if (v) setReminderTime(v)
     }).catch(() => {})
+    window.electronAPI.getMeta('preferred_arch').then(v => {
+      if (v) setPreferredArch(v as 'auto' | 'arm64' | 'x64')
+    }).catch(() => {})
     setReminderLoaded(true)
 
     // Load AI config
@@ -430,7 +433,14 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     setDownloadProgress(0)
   }
 
+  // Architecture selector for macOS (for users who want to override auto-detection)
+  const [preferredArch, setPreferredArch] = useState<'auto' | 'arm64' | 'x64'>('auto')
   const isMac = navigator.userAgent.includes('Macintosh')
+  const detectedArch = typeof process !== 'undefined' && process.arch ? process.arch : 'unknown'
+
+  async function handleSavePreferredArch(): Promise<void> {
+    await window.electronAPI.setMeta('preferred_arch', preferredArch)
+  }
 
   async function handleSaveName(): Promise<void> {
     if (!name.trim() || !user) return
@@ -838,6 +848,41 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         {/* About & Updates section */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-4">About & Updates</h2>
+
+          {/* Architecture selector (macOS only) */}
+          {isMac && (
+            <div className="mb-4 p-4 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Download Architecture</p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                    Auto-detected: {detectedArch === 'arm64' ? 'Apple Silicon (arm64)' : detectedArch === 'x64' ? 'Intel (x64)' : 'Unknown'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-500 dark:text-slate-400">Override:</label>
+                  <select
+                    value={preferredArch}
+                    onChange={e => setPreferredArch(e.target.value as 'auto' | 'arm64' | 'x64')}
+                    className="input text-xs px-2 py-1"
+                  >
+                    <option value="auto">Auto-detect</option>
+                    <option value="arm64">Apple Silicon (arm64)</option>
+                    <option value="x64">Intel (x64)</option>
+                  </select>
+                  <button
+                    onClick={handleSavePreferredArch}
+                    className="px-2 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-slate-400 dark:text-slate-500">
+                Change this if the auto-updater downloads the wrong architecture for your Mac.
+              </p>
+            </div>
+          )}
 
           {/* Version row */}
           <div className="flex items-center justify-between mb-4">

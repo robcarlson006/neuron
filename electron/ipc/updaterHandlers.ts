@@ -101,16 +101,42 @@ function downloadFile(url: string, destPath: string): Promise<void> {
 }
 
 /** Pick the right asset URL for the current platform/arch. */
-function pickAsset(assets: { name: string; browser_download_url: string }[]): string | null {
+async function pickAsset(assets: { name: string; browser_download_url: string }[]): Promise<string | null> {
   const platform = process.platform
   const arch     = process.arch  // 'arm64' | 'x64'
 
   if (platform === 'darwin') {
-    // Prefer arm64 DMG on Apple Silicon, x64 DMG on Intel
-    const target = arch === 'arm64'
-      ? assets.find(a => a.name.match(/arm64.*\.dmg$/i) || a.name.match(/\.dmg$/i) && a.name.includes('arm64'))
-      : assets.find(a => a.name.match(/x64.*\.dmg$/i)   || a.name.match(/\.dmg$/i) && !a.name.includes('arm64'))
+    // Read preferred architecture from user settings
+    let preferredArch: 'auto' | 'arm64' | 'x64' = 'auto'
+    try {
+      const { app } = require('electron')
+      const Database = require('better-sqlite3')
+      const path = require('path')
+      const userDataPath = app.getPath('userData')
+      const dbPath = path.join(userDataPath, 'studyhelper.db')
+      const db = new Database(dbPath)
+      const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('preferred_arch')
+      if (row && row.value) {
+        preferredArch = row.value
+      }
+      db.close()
+    } catch {
+      // Ignore errors, use default
+    }
+
+    const targetArch = preferredArch !== 'auto' ? preferredArch : arch
+
+    // Prefer DMG matching the target architecture
+    const target = targetArch === 'arm64'
+      ? assets.find(a => a.name.match(/arm64.*\.dmg$/i))
+      : assets.find(a => a.name.match(/x64.*\.dmg$/i))
+    // Fallback: any DMG that matches the architecture
+    const fallback = targetArch === 'arm64'
+      ? assets.find(a => a.name.endsWith('.dmg') && a.name.includes('arm64'))
+      : assets.find(a => a.name.endsWith('.dmg') && (a.name.includes('x64') || !a.name.includes('arm64')))
+    // Final fallback: any DMG
     return target?.browser_download_url
+      ?? fallback?.browser_download_url
       ?? assets.find(a => a.name.endsWith('.dmg'))?.browser_download_url
       ?? null
   }
@@ -182,7 +208,7 @@ export function registerUpdaterHandlers(windowGetter: () => BrowserWindow | null
       const latestVersion = latestTag.replace(/^v/, '')
       const currentVersion = app.getVersion()
       const updateAvailable = isNewer(currentVersion, latestVersion)
-      const downloadUrl    = pickAsset(data.assets)
+      const downloadUrl    = await pickAsset(data.assets)
 
       return {
         currentVersion,
