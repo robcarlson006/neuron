@@ -4,6 +4,7 @@ import Database from 'better-sqlite3'
 const DEFAULT_PROVIDER = 'openai-compatible'
 const DEFAULT_BASE_URL = 'https://api.deepseek.com'
 const DEFAULT_MODEL = 'deepseek-chat'
+const API_KEY_META_KEY = 'ai_api_key_encrypted'
 
 interface AIConfig {
   provider: string
@@ -15,6 +16,7 @@ let db: Database.Database
 
 export function setAIDatabase(database: Database.Database): void {
   db = database
+  loadApiKey()
 }
 
 // ── API Key (safeStorage) ──────────────────────────────────────────────────────
@@ -41,6 +43,29 @@ export function saveApiKey(key: string): void {
   cachedApiKey = key
   if (safeStorage.isEncryptionAvailable()) {
     encryptedApiKey = safeStorage.encryptString(key)
+    // Persist to database
+    if (db) {
+      try {
+        db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(API_KEY_META_KEY, encryptedApiKey.toString('base64'))
+      } catch {
+        // silently fail if table doesn't exist
+      }
+    }
+  }
+}
+
+function loadApiKey(): void {
+  if (!db) return
+  try {
+    const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(API_KEY_META_KEY) as
+      | { value: string }
+      | undefined
+    if (row?.value && safeStorage.isEncryptionAvailable()) {
+      encryptedApiKey = Buffer.from(row.value, 'base64')
+      cachedApiKey = null // Force re-decrypt on next getApiKey() call
+    }
+  } catch {
+    // silently fail if table doesn't exist or decryption fails
   }
 }
 
