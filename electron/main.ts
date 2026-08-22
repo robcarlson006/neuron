@@ -150,6 +150,17 @@ function initDatabase(): void {
     try { db.prepare(migrationSql).run() } catch { /* column may already exist */ }
   }
 
+  // Backfill: materials of subjects that already have a generated syllabus
+  // were folded in by the old full-regeneration flow — mark them processed so
+  // the incremental syllabus updater only considers newly added materials.
+  try {
+    db.prepare(`
+      UPDATE materials SET syllabus_processed = 1
+      WHERE syllabus_processed = 0
+        AND subject_id IN (SELECT id FROM subjects WHERE syllabus_generated = 1)
+    `).run()
+  } catch { /* column may not exist yet in a fresh DB */ }
+
   // Fix a legacy FK reference: the base schema pointed cards.folder_id at a
   // nonexistent `folders` table (the real table is `card_folders`). With
   // foreign_keys ON this made folder assignment fail at runtime. Rebuild the

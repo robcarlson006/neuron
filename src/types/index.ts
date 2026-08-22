@@ -25,6 +25,11 @@ export interface Material {
   file_type: 'pdf' | 'docx' | 'pptx'
   content_text: string
   uploaded_at: string
+  /** Set to 1 once this material's content has been folded into the syllabus
+   * (either at initial generation or by an incremental update). */
+  syllabus_processed?: number
+  /** Syllabus module this material's content was assigned to, if any. */
+  module_id?: number | null
 }
 
 export interface Card {
@@ -511,6 +516,17 @@ export interface ModuleTopic {
   mastery_target: number
   sort_order: number
   created_at: string
+}
+
+/** Result of an incremental syllabus update (syllabus:updateFromMaterials).
+ * `new_module_count`/`new_topic_count` are counts of rows ADDED by the update —
+ * existing modules and topics are never modified or deleted. */
+export interface SyllabusUpdateResult {
+  modules: SyllabusModule[]
+  new_module_count: number
+  new_topic_count: number
+  processed_material_count: number
+  needs_updates: boolean
 }
 
 // ── Tutor Session Types ───────────────────────────────────────────────────

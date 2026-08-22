@@ -362,7 +362,7 @@ const electronAPI = {
   // ── Syllabus AI Generation ──
   syllabusGenerateFromMaterials: (subjectId: number): Promise<import('../src/types').SyllabusModule[]> =>
     ipcRenderer.invoke('syllabus:generateFromMaterials', subjectId),
-  syllabusUpdateFromMaterials: (subjectId: number, materialIds: number[]): Promise<import('../src/types').SyllabusModule[]> =>
+  syllabusUpdateFromMaterials: (subjectId: number, materialIds?: number[]): Promise<import('../src/types').SyllabusUpdateResult> =>
     ipcRenderer.invoke('syllabus:updateFromMaterials', subjectId, materialIds),
   syllabusGetModule: (moduleId: number): Promise<(import('../src/types').SyllabusModule & { topics: import('../src/types').ModuleTopic[] }) | null> =>
     ipcRenderer.invoke('syllabus:getModule', moduleId),

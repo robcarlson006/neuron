@@ -423,6 +423,9 @@ export const MIGRATIONS_SQL = [
   // V3: Material-module association
   "ALTER TABLE materials ADD COLUMN module_id INTEGER REFERENCES syllabus_modules(id)",
   "ALTER TABLE cards ADD COLUMN topic_id INTEGER",
+  // V3: Incremental syllabus tracking — marks materials already folded into
+  // the syllabus so updateFromMaterials only processes newly added ones.
+  "ALTER TABLE materials ADD COLUMN syllabus_processed INTEGER NOT NULL DEFAULT 0",
 ]
 
 export const MASTERED_INTERVAL = 21

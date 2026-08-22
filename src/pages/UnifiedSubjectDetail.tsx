@@ -56,6 +56,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   // ── Materials state ──
   const [materials, setMaterials] = useState<Material[]>([])
   const [addingMaterial, setAddingMaterial] = useState(false)
+  /** Material just uploaded to a subject that already has a syllabus — shows
+   * the one-click "Update curriculum?" offer until acted on or dismissed. */
+  const [pendingUpdateMaterial, setPendingUpdateMaterial] = useState<string | null>(null)
+  const [updatingSyllabus, setUpdatingSyllabus] = useState(false)
 
   // ── Deadlines state (from SubjectDetail) ──
   const [deadlines, setDeadlines] = useState<Deadline[]>([])
@@ -274,12 +278,70 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
       if (result?.id) {
         setToast({ message: `Added "${parsed.filename}"`, type: 'success' })
+        // If this class already has a syllabus, offer a non-destructive
+        // incremental update instead of leaving the material unintegrated.
+        if (subject?.syllabus_generated || modules.length > 0) {
+          setPendingUpdateMaterial(parsed.filename)
+        }
         loadAllData()
       }
     } catch (err: any) {
       setToast({ message: `Failed to add material: ${err.message}`, type: 'error' })
     } finally {
       setAddingMaterial(false)
+    }
+  }
+
+  /** One-click incremental curriculum update from unprocessed materials.
+   * Never touches existing modules or topics — only adds. */
+  async function handleUpdateCurriculum(): Promise<void> {
+    setUpdatingSyllabus(true)
+    try {
+      const result = await window.electronAPI.syllabusUpdateFromMaterials(subjectId)
+      if (result.new_module_count > 0 || result.new_topic_count > 0) {
+        addToast({
+          type: 'success',
+          title: 'Curriculum Updated',
+          message:
+            `${result.new_module_count} new module${result.new_module_count !== 1 ? 's' : ''}` +
+            ` and ${result.new_topic_count} new topic${result.new_topic_count !== 1 ? 's' : ''} added.` +
+            (result.new_module_count === 0 && result.new_topic_count === 0
+              ? ' Your existing modules were extended with the new material.' : '')
+        })
+      } else {
+        addToast({
+          type: 'success',
+          title: 'Curriculum Updated',
+          message: 'Your existing modules already cover the new material.'
+        })
+      }
+      setPendingUpdateMaterial(null)
+      loadAllData()
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Update Failed', message: err.message || 'Could not update the curriculum.' })
+    } finally {
+      setUpdatingSyllabus(false)
+    }
+  }
+
+  /** Explicit full rebuild — destructive, so it requires confirmation. Progress
+   * on modules whose titles match after regeneration is preserved by the backend. */
+  async function handleRegenerateSyllabus(): Promise<void> {
+    const ok = confirm(
+      'Regenerate the entire syllabus from ALL materials?\n\n' +
+      'This rebuilds every module from scratch. Existing completion progress on ' +
+      'modules with matching titles will be preserved, but topics may be reordered ' +
+      'or renamed by the AI.\n\nContinue?'
+    )
+    if (!ok) return
+    try {
+      const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
+      if (result?.length) {
+        addToast({ type: 'success', title: 'Syllabus Regenerated', message: `${result.length} modules generated.` })
+        loadAllData()
+      }
+    } catch {
+      addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
     }
   }
 
@@ -689,20 +751,42 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             </div>
           )}
 
+          {pendingUpdateMaterial && modules.length > 0 && (
+            <div className="mb-4 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 flex items-start gap-3">
+              <span className="text-lg">✨</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+                  New material added — "{pendingUpdateMaterial}"
+                </p>
+                <p className="text-sm text-emerald-700 dark:text-emerald-400 mt-0.5">
+                  Update your curriculum to fold it in? Your existing modules and progress stay untouched.
+                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={handleUpdateCurriculum}
+                    disabled={updatingSyllabus}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-2"
+                  >
+                    {updatingSyllabus && (
+                      <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    )}
+                    {updatingSyllabus ? 'Updating…' : 'Update Curriculum'}
+                  </button>
+                  <button
+                    onClick={() => setPendingUpdateMaterial(null)}
+                    className="px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {modules.length > 0 && (
             <div className="mt-4 text-center">
               <button
-                onClick={async () => {
-                  try {
-                    const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
-                    if (result?.length) {
-                      addToast({ type: 'success', title: 'Syllabus Updated', message: `${result.length} modules generated.` })
-                      loadAllData()
-                    }
-                  } catch {
-                    addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
-                  }
-                }}
+                onClick={handleRegenerateSyllabus}
                 className="px-3 py-1.5 text-xs text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg transition-colors"
               >
                 Regenerate syllabus from materials

@@ -239,6 +239,34 @@ export default function ClassOverview(): React.JSX.Element {
             </div>
           </div>
         )}
+
+        {subject.syllabus_generated === 1 && (
+          <div className="mt-4 text-center">
+            <button
+              onClick={async () => {
+                const ok = confirm(
+                  'Regenerate the entire syllabus from ALL materials?\n\n' +
+                  'This rebuilds every module from scratch. Existing completion progress on ' +
+                  'modules with matching titles will be preserved, but topics may be reordered ' +
+                  'or renamed by the AI.\n\nContinue?'
+                )
+                if (!ok) return
+                try {
+                  const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
+                  if (result?.length) {
+                    addToast({ type: 'success', title: 'Syllabus Regenerated', message: `${result.length} modules generated.` })
+                    loadClassData()
+                  }
+                } catch {
+                  addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
+                }
+              }}
+              className="px-3 py-1.5 text-xs text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg transition-colors"
+            >
+              Regenerate syllabus from materials
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Materials Section */}

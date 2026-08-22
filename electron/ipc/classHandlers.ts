@@ -302,8 +302,9 @@ Rules:
 
   insertSyllabus(parsed.modules)
 
-  // Mark subject as having syllabus generated
+  // Mark subject as having syllabus generated; all its materials are now folded in
   db.prepare('UPDATE subjects SET syllabus_generated = 1 WHERE id = ?').run(subjectId)
+  db.prepare('UPDATE materials SET syllabus_processed = 1 WHERE subject_id = ?').run(subjectId)
 
   return db.prepare(`
     SELECT m.*,

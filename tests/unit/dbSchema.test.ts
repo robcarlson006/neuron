@@ -114,4 +114,25 @@ describe('Database schema (real SQLite)', () => {
     expect(row.folder_id).toBe(folderId)
     db.close()
   })
+
+  it('materials gains syllabus_processed and module_id via migrations (default unprocessed)', () => {
+    const db = createFreshDatabase()
+    const user = db.prepare('INSERT INTO users (name) VALUES (?)').run('Carol')
+    const userId = user.lastInsertRowid
+    const subject = db.prepare(
+      'INSERT INTO subjects (user_id, name, status) VALUES (?, ?, ?)'
+    ).run(userId, 'Physics', 'active')
+    const subjectId = subject.lastInsertRowid
+    db.prepare(
+      'INSERT INTO materials (subject_id, filename, file_type, content_text) VALUES (?, ?, ?, ?)'
+    ).run(subjectId, 'ch1.pdf', 'pdf', 'Newton laws...')
+
+    const mat = db.prepare(
+      'SELECT syllabus_processed, module_id FROM materials WHERE subject_id = ?'
+    ).get(subjectId) as { syllabus_processed: number; module_id: number | null }
+
+    expect(mat.syllabus_processed).toBe(0)
+    expect(mat.module_id).toBeNull()
+    db.close()
+  })
 })
