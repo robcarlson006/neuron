@@ -6,151 +6,94 @@ This document explains how to publish new versions of Neuron and how end users r
 
 ## For Maintainers: How to Cut a Release
 
-### Option 1: Version bump on `main` (Recommended)
+### Option 1: Version bump and push (Recommended)
 
 1. **Update the version** in `package.json`:
    ```bash
-   npm version patch   # 1.8.0 → 1.8.1 (bug fixes)
-   npm version minor   # 1.8.0 → 1.9.0 (new features)
-   npm version major   # 1.8.0 → 2.0.0 (breaking changes)
+   npm version patch   # e.g., 3.1.0 → 3.1.1 (bug fixes)
+   npm version minor   # e.g., 3.1.0 → 3.2.0 (new features)
+   npm version major   # e.g., 3.1.0 → 4.0.0 (breaking changes)
    ```
-   This automatically:
-   - Updates `package.json` version
-   - Creates a git commit
-   - Creates a git tag (`v1.8.1`, etc.)
+   This automatically updates `package.json` and creates a git commit & tag (`v3.1.1`).
 
 2. **Push to GitHub** (including tags):
    ```bash
    git push origin main --tags
    ```
 
-3. **CI does the rest:**
-   - GitHub Actions detects the version change
-   - Builds macOS (DMG + ZIP), Windows (NSIS .exe), Linux (AppImage)
-   - Creates a GitHub Release with all artifacts attached
-   - Publishes `latest.yml` / `latest-mac.yml` / `latest-linux.yml` for auto-updater
+3. **CI handles the rest automatically:**
+   - GitHub Actions checks if the release for the new version exists on GitHub.
+   - A dedicated GitHub Release `vX.Y.Z` is created with auto-generated release notes.
+   - Builds macOS (Apple Silicon arm64 + Intel x64 DMG & ZIP), Windows (NSIS `.exe`), and Linux (`.AppImage`).
+   - Attaches all binary installers and updater metadata directly to the release.
 
 ### Option 2: Push a tag directly
 
-If you prefer manual tags without the `npm version` workflow:
 ```bash
-git tag v1.8.1
-git push origin v1.8.1
+git tag v3.2.0
+git push origin v3.2.0
 ```
 
 ### Option 3: Manual workflow dispatch
 
-Go to GitHub Actions → "Build & Release" → "Run workflow" → choose branch.
+Go to GitHub → **Actions** → **"Build & Release"** → **"Run workflow"** → select branch.
 
 ---
 
-## For End Users: Getting Neuron
+## For End Users: How Updates Work
 
-### First-time install
-1. Go to the [latest GitHub Release](https://github.com/robcarlson006/neuron/releases/latest)
-2. Download the installer for your platform:
+### First-Time Installation
+1. Visit the [latest GitHub Release](https://github.com/robmcarlson006/neuron/releases/latest).
+2. Download the installer for the user's platform:
    - **macOS (Apple Silicon):** `Neuron-<version>-arm64.dmg`
+   - **macOS (Intel):** `Neuron-<version>-x64.dmg`
    - **Windows:** `Neuron-Setup-<version>.exe`
    - **Linux:** `Neuron-<version>.AppImage`
-3. Install normally (drag to Applications on macOS, run installer on Windows/Linux)
+3. Drag to Applications on macOS, or run the installer on Windows/Linux.
 
-### Automatic updates (after first install)
-- **No action needed.** The app checks for updates on launch and every 4 hours.
-- When a new version is available:
-  - macOS: A notification appears → click "Download & Install" → app quits, updates, and relaunches
-  - Windows: Installer opens → follow prompts → app restarts
-- Updates are **delta downloads** (small, fast) using `electron-updater` + GitHub Releases
-
----
-
-## Auto-Update Technical Details
-
-| Component | Configuration |
-|-----------|---------------|
-| **Update server** | GitHub Releases (public repo) |
-| **Check interval** | On launch + every 4 hours |
-| **Download** | Background, with progress UI in Settings |
-| **Install** | User-initiated (prompt to restart & install) |
-| **Channel** | `latest.yml` (per-platform) from GitHub Release assets |
-
-### Files published per release
-- `Neuron-<version>-arm64.dmg` — macOS installer
-- `Neuron-<version>-arm64-mac.zip` — macOS zip (for auto-updater)
-- `latest-mac.yml` — Auto-updater manifest (macOS)
-- `Neuron-Setup-<version>.exe` — Windows NSIS installer
-- `latest.yml` — Auto-updater manifest (Windows)
-- `Neuron-<version>.AppImage` — Linux
-- `latest-linux.yml` — Auto-updater manifest (Linux)
+### Automatic In-App Updates
+- **Automatic Background Checks**:
+  - The app automatically queries GitHub Releases for updates 5 seconds after startup, and every 2 hours while running.
+- **Update Notification & Progress**:
+  - When an update is detected, an in-app banner appears: **"⬆ Neuron vX.Y.Z is available"**.
+  - Clicking **"Update Now"** downloads the update in the background with a live percentage progress bar.
+  - When finished, the button changes to **"Restart & Update"**.
+- **One-Click Seamless Installation**:
+  - **macOS**: An automated background script mounts the downloaded DMG, cleanly replaces `/Applications/Neuron.app`, removes quarantine flags, unmounts the volume, cleans up the temporary installer, and relaunches the updated app.
+  - **Windows**: Opens the NSIS installer and relaunches.
+  - **Linux**: Opens the new AppImage.
+- **Manual Checks**:
+  - Users can also check for updates, view release notes, and switch architecture preferences anytime in **Settings > Updates**.
 
 ---
 
-## Code Signing & Gatekeeper / SmartScreen
+## Auto-Update Technical Summary
 
-### Current state: **Unsigned builds**
-
-| Platform | Behavior |
-|----------|----------|
-| **macOS** | ⚠️ Gatekeeper blocks first launch → User must right-click → "Open" → "Open" |
-| **Windows** | ⚠️ SmartScreen warns "Windows protected your PC" → "More info" → "Run anyway" |
-| **Linux** | Works without signing (AppImage) |
-
-### To eliminate warnings (future work)
-
-#### macOS
-1. **Apple Developer Program** ($99/year)
-2. Get "Developer ID Application" certificate
-3. Add to GitHub Secrets: `CSC_LINK` (base64 .p12), `CSC_KEY_PASSWORD`
-4. Add notarization: `APPLE_ID`, `APPLE_ID_PASSWORD` (app-specific), `APPLE_TEAM_ID`
-5. In `package.json` build config:
-   ```json
-   "mac": {
-     "identity": "Developer ID Application: Your Name (TEAM_ID)",
-     "hardenedRuntime": true,
-     "gatekeeperAssess": false,
-     "entitlements": "build/entitlements.mac.plist",
-     "entitlementsInherit": "build/entitlements.mac.plist"
-   }
-   ```
-
-#### Windows
-1. **Code Signing Certificate** (~$200-400/year from DigiCert, Sectigo, etc.)
-2. Add to GitHub Secrets: `CSC_LINK` (base64 .pfx), `CSC_KEY_PASSWORD`
-3. In `package.json`:
-   ```json
-   "win": {
-     "certificateFile": "cert.p12",
-     "certificatePassword": "from_env"
-   }
-   ```
+| Component | Description |
+|-----------|-------------|
+| **Update Source** | GitHub Releases API (`robmcarlson006/neuron`) |
+| **Check Frequency** | On launch (5s delay) + every 2 hours + manual trigger in Settings |
+| **Download Target** | User's Downloads directory (`Neuron-<version>-update.dmg`/`exe`/`AppImage`) |
+| **Installation Method** | Native platform helper (DMG mount/atomic swap on macOS, NSIS on Windows) |
+| **Unsigned Compatibility** | Fully supported without requiring Apple Developer cert or Squirrel.Mac signing locks |
 
 ---
 
 ## Quick Reference Commands
 
 ```bash
-# Bump version & tag
+# Bump version & tag & push
 npm version patch && git push origin main --tags
 
 # Build locally (macOS)
 npm run build
 
 # Install local build to /Applications
-cp -fR dist/mac-arm64/Neuron.app /Applications/Neuron.app
+npm run install-app
 
-# View current version
-cat package.json | grep version
+# Run all automated tests
+npm test
 
-# Check GitHub Release assets
-gh release view --json assets --jq '.assets[].name'
+# Run TypeScript typechecks
+npm run typecheck
 ```
-
----
-
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| "App can't be opened" (macOS) | Right-click app → Open → Open |
-| "Windows protected your PC" | More info → Run anyway |
-| Auto-updater doesn't see new release | Check `latest-mac.yml` exists in Release assets; verify version in `package.json` matches tag |
-| Build fails on CI | Check Node version (20), `npm ci` cache, native module rebuild (better-sqlite3) |

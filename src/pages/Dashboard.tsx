@@ -17,8 +17,15 @@ function getTimeOfDay(): string {
   return 'evening'
 }
 
-export default function Dashboard({ onNewClass }: { onNewClass?: () => void }): React.JSX.Element {
-  const { user, subjects, addSubject, removeSubject, updateSubject } = useAppStore()
+export default function Dashboard({
+  onNewClass,
+  onNewSubject
+}: {
+  onNewClass?: () => void
+  onNewSubject?: () => void
+}): React.JSX.Element {
+  const handleOpenSubjectWizard = onNewSubject || onNewClass
+  const { user, subjects, removeSubject, updateSubject } = useAppStore()
   const [subjectStats, setSubjectStats] = useState<SubjectWithStats[]>([])
   const [totalDueToday, setTotalDueToday] = useState(0)
   const [flashcardsDue, setFlashcardsDue] = useState(0)
@@ -26,11 +33,6 @@ export default function Dashboard({ onNewClass }: { onNewClass?: () => void }): 
   const [estimatedMinutes, setEstimatedMinutes] = useState(0)
   const [streak, setStreak] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [showAddSubject, setShowAddSubject] = useState(false)
-  const [newSubjectName, setNewSubjectName] = useState('')
-  const [newSubjectCode, setNewSubjectCode] = useState('')
-  const [newSubjectStatus, setNewSubjectStatus] = useState<'active' | 'ongoing'>('active')
-  const [addingSubject, setAddingSubject] = useState(false)
   const [showFocusModal, setShowFocusModal] = useState(false)
   const [showGamification, setShowGamification] = useState(false)
 
@@ -121,26 +123,6 @@ export default function Dashboard({ onNewClass }: { onNewClass?: () => void }): 
     }
   }
 
-  async function handleAddSubject(): Promise<void> {
-    if (!user || !newSubjectName.trim()) return
-    setAddingSubject(true)
-    try {
-      const subject = await window.electronAPI.saveSubject({
-        user_id: user.id,
-        name: newSubjectName.trim(),
-        course_code: newSubjectCode.trim() || undefined,
-        status: newSubjectStatus
-      })
-      addSubject(subject)
-      setNewSubjectName('')
-      setNewSubjectCode('')
-      setShowAddSubject(false)
-    } catch (err) {
-      console.error('Add subject error:', err)
-    } finally {
-      setAddingSubject(false)
-    }
-  }
 
   if (loading) {
     return (
@@ -193,21 +175,12 @@ export default function Dashboard({ onNewClass }: { onNewClass?: () => void }): 
             🏆 Progress
           </button>
           <button
-            onClick={() => setShowAddSubject(true)}
+            onClick={handleOpenSubjectWizard}
             className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-1.5"
           >
             <span className="text-base leading-none">+</span>
             Add Subject
           </button>
-          {onNewClass && (
-            <button
-              onClick={onNewClass}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-1.5"
-            >
-              <span className="text-base leading-none">+</span>
-              New Class
-            </button>
-          )}
         </div>
       </div>
 
@@ -299,7 +272,7 @@ export default function Dashboard({ onNewClass }: { onNewClass?: () => void }): 
               Add a subject and upload study materials to get started
             </p>
             <button
-              onClick={() => setShowAddSubject(true)}
+              onClick={handleOpenSubjectWizard}
               className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors"
             >
               Add Your First Subject
@@ -313,77 +286,6 @@ export default function Dashboard({ onNewClass }: { onNewClass?: () => void }): 
           </div>
         )}
       </div>
-
-      {/* Add Subject Modal */}
-      {showAddSubject && (
-        <div className="fixed inset-0 bg-black/40 dark:bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl w-full max-w-md p-6 animate-slide-up">
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-1">Add New Subject</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">Create a subject to organize your study cards.</p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
-                  Subject Name *
-                </label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="e.g. World History"
-                  value={newSubjectName}
-                  onChange={e => setNewSubjectName(e.target.value)}
-                  autoFocus
-                  data-testid="subject-name-input"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
-                  Course Code (optional)
-                </label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="e.g. HIS-101"
-                  value={newSubjectCode}
-                  onChange={e => setNewSubjectCode(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
-                  Status
-                </label>
-                <select
-                  className="input"
-                  value={newSubjectStatus}
-                  onChange={e => setNewSubjectStatus(e.target.value as 'active' | 'ongoing')}
-                >
-                  <option value="active">Active — currently studying</option>
-                  <option value="ongoing">Ongoing — long-term retention</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowAddSubject(false)}
-                className="btn-secondary flex-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddSubject}
-                disabled={!newSubjectName.trim() || addingSubject}
-                className="btn-primary flex-1"
-                data-testid="save-subject"
-              >
-                {addingSubject ? 'Adding...' : 'Add Subject'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Focus Mode Modal */}
       {showFocusModal && user && (
@@ -434,7 +336,7 @@ function StudyMenu({ baseRoute }: { baseRoute: string }): React.JSX.Element {
         onClick={() => setOpen(o => !o)}
         className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-lg font-medium text-sm transition-colors flex items-center gap-2"
       >
-        Study Now
+        Study Flashcards
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
           <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>

@@ -4,7 +4,7 @@ import { useAppStore } from '../../store/appStore'
 import ChatMessage from '../../components/tutor/ChatMessage'
 import ChatInput from '../../components/tutor/ChatInput'
 import TutorCardReviewModal from '../../components/tutor/TutorCardReviewModal'
-import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus } from '../../types'
+import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
 type PageState = 'loading' | 'streaming' | 'awaiting_input' | 'phase_transition' | 'session_complete' | 'error'
@@ -26,6 +26,7 @@ export default function TutorSession(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [showCardReview, setShowCardReview] = useState(false)
   const [sessionEnded, setSessionEnded] = useState(false)
+  const [sessionEvaluation, setSessionEvaluation] = useState<TutorSessionEvaluation | null>(null)
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [focusKey, setFocusKey] = useState(0)
 
@@ -152,16 +153,37 @@ export default function TutorSession(): React.JSX.Element {
       // Send a "ready to learn" system message to start the session
       const difficultyMap = ['', 'Beginner', 'Intermediate', 'Proficient', 'Expert', 'Professor']
       const difficultyLabel = difficultyMap[config.depth_level] || 'Proficient'
-      const topic = inProgressMod?.title || subject?.name || 'this subject'
-      const initialMsg = `Greet me and ask your first question in this exact format:
-"Welcome! Let's dive into [topic]. [Specific question about the topic]?"
+      const topic = config.target_topic || (config.material_name ? `${config.material_name} (Material)` : (inProgressMod?.title || subject?.name || 'this subject'))
 
-For example: "Welcome! Let's explore the Prologue of The Alchemist. What lesson does the narrator draw from the myth of Narcissus and the lake?"
+      let initialMsg = ''
+      if (config.is_fill_gaps) {
+        const gapSummary = config.gap_topics?.length ? config.gap_topics.join(', ') : 'identified gap concepts'
+        initialMsg = `Greet me and ask your first question in this exact format:
+"Welcome! Today we're filling in knowledge gaps in ${subject?.name || 'this subject'}. We'll focus on ${gapSummary}. [Specific question addressing the first gap topic]?"
+
+Mode: FILL IN GAPS (Target: ${gapSummary})
+Subject: ${subject?.name || 'this subject'}
+Difficulty: ${difficultyLabel}
+${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
+${config.never_studied ? 'The student has never studied this material before. Start from absolute basics.' : ''}`
+      } else if (config.material_name) {
+        initialMsg = `Greet me and ask your first question in this exact format:
+"Welcome! Let's dive into ${config.material_name}. [Specific question about this material]?"
+
+Topic: ${config.material_name}
+Specific Material Focus: "${config.material_name}"
+Difficulty: ${difficultyLabel}
+${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
+${config.never_studied ? 'The student has never studied this material before. Start from absolute basics.' : ''}`
+      } else {
+        initialMsg = `Greet me and ask your first question in this exact format:
+"Welcome! Let's dive into ${topic}. [Specific question about ${topic}]?"
 
 Topic: ${topic}
 Difficulty: ${difficultyLabel}
 ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
 ${config.never_studied ? 'The student has never studied this before. Start from absolute basics.' : ''}`
+      }
 
       // Save the initial user message
       await window.electronAPI.tutorSaveMessage({
@@ -236,6 +258,10 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         durationMinutes: runtime.config.duration_minutes,
         depthLevel: runtime.config.depth_level,
         neverStudied: runtime.config.never_studied,
+        materialId: sessionConfig?.material_id || runtime.config.material_id,
+        targetTopic: sessionConfig?.target_topic || runtime.config.target_topic,
+        isFillGaps: sessionConfig?.is_fill_gaps || runtime.config.is_fill_gaps,
+        gapTopics: sessionConfig?.gap_topics || runtime.config.gap_topics,
         timeElapsedSeconds: runtime.time_elapsed_seconds,
         timeRemainingSeconds: runtime.time_remaining_seconds,
         pacingStatus: calcPacingStatus(runtime),
@@ -519,7 +545,10 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
       .join('\n\n')
 
-    await window.electronAPI.tutorEndSession(sessionId!, sessionContent.substring(0, 5000))
+    const res = await window.electronAPI.tutorEndSession(sessionId!, sessionContent.substring(0, 5000))
+    if (res && (res as { evaluation?: TutorSessionEvaluation }).evaluation) {
+      setSessionEvaluation((res as { evaluation: TutorSessionEvaluation }).evaluation)
+    }
 
     // Mark current module as completed
     if (currentModule && currentModule.status !== 'completed') {
@@ -623,7 +652,13 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           <div className="flex flex-col items-center gap-4">
             <span className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-sm text-slate-400 dark:text-slate-500">Starting your tutor session...</p>
-            {currentModule && (
+            {sessionConfig?.is_fill_gaps ? (
+              <p className="text-xs text-violet-600 dark:text-violet-400 font-semibold">⚡ Mode: Fill in Knowledge Gaps</p>
+            ) : sessionConfig?.target_topic ? (
+              <p className="text-xs text-slate-400 dark:text-slate-500">Topic: {sessionConfig.target_topic}</p>
+            ) : sessionConfig?.material_name ? (
+              <p className="text-xs text-slate-400 dark:text-slate-500">Material: 📄 {sessionConfig.material_name}</p>
+            ) : currentModule && (
               <p className="text-xs text-slate-400 dark:text-slate-500">Module: {currentModule.title}</p>
             )}
           </div>
@@ -635,17 +670,69 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   // ── Session Complete ──
   if (sessionEnded && !showCardReview) {
     return (
-      <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
-        <div className="flex items-center justify-center flex-1">
-          <div className="text-center max-w-md px-6">
-            <div className="text-5xl mb-4">🎯</div>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-50 mb-2">Session Complete!</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
-              Great work! You've completed this tutor session. Keep up the daily SM-2 practice to lock it in.
-            </p>
-            <div className="flex gap-3 justify-center">
-              <button onClick={() => navigate('/tutor')} className="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors">Back to Tutor</button>
-              <button onClick={() => navigate(`/subject/${subjectId}`)} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors">View Class</button>
+      <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 p-6 overflow-y-auto">
+        <div className="flex items-center justify-center min-h-[80vh]">
+          <div className="text-center max-w-lg w-full px-6 py-8 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl space-y-5">
+            <div className="text-5xl mb-2">🎯</div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-50 mb-1">Session Complete!</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Neuron recorded your learning progress for future gap analysis and adaptive tutoring.
+              </p>
+            </div>
+
+            {/* Evaluation Insights Card */}
+            {sessionEvaluation && (sessionEvaluation.strengths?.length > 0 || sessionEvaluation.struggles?.length > 0) && (
+              <div className="text-left p-4 rounded-xl bg-slate-50 dark:bg-slate-700/40 border border-slate-200 dark:border-slate-600 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+                  <span>🧠</span> Learning Memory Snapshot
+                </div>
+
+                {sessionEvaluation.strengths && sessionEvaluation.strengths.length > 0 && (
+                  <div>
+                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block mb-1">
+                      🌟 What you understood well
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {sessionEvaluation.strengths.map((str, i) => (
+                        <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-100/80 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/60 font-medium">
+                          ✓ {str}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {sessionEvaluation.struggles && sessionEvaluation.struggles.length > 0 && (
+                  <div>
+                    <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block mb-1">
+                      💡 Areas saved for future gap review
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {sessionEvaluation.struggles.map((stg, i) => (
+                        <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60 font-medium">
+                          • {stg}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {sessionEvaluation.summary && (
+                  <p className="text-xs text-slate-600 dark:text-slate-300 italic pt-1 border-t border-slate-200 dark:border-slate-600">
+                    "{sessionEvaluation.summary}"
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-center pt-2">
+              <button onClick={() => navigate('/tutor')} className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors">
+                Back to Tutor Hub
+              </button>
+              <button onClick={() => navigate(`/subject/${subjectId}`)} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md">
+                View Class
+              </button>
             </div>
           </div>
         </div>
@@ -683,7 +770,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             </h1>
             <p className="text-xs text-slate-400 dark:text-slate-500">
               {sessionPhase === 'complete' ? 'Session ended' : phaseLabels[sessionPhase]}
-              {currentModule && ` · ${currentModule.title}`}
+              {sessionConfig?.material_name ? ` · 📄 ${sessionConfig.material_name}` : (currentModule && ` · ${currentModule.title}`)}
             </p>
           </div>
         </div>

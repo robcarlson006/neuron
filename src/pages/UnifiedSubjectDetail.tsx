@@ -23,7 +23,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     subject?.subject_type === 'class' || subject?.subject_type === 'book' ? 'curriculum' : 'cards'
   )
   const [showEditSubject, setShowEditSubject] = useState(false)
-  const [showConfigModal, setShowConfigModal] = useState<{ subjectId: number; subjectName: string } | null>(null)
+  const [showConfigModal, setShowConfigModal] = useState<{ subjectId: number; subjectName: string; materialId?: number; materialName?: string } | null>(null)
   const [editName, setEditName] = useState(subject?.name || '')
   const [editCode, setEditCode] = useState(subject?.course_code || '')
   const [editStatus, setEditStatus] = useState(subject?.status || 'active')
@@ -709,45 +709,36 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           ) : (
             <div className="text-center py-14 bg-white dark:bg-slate-800 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
               <p className="text-sm text-slate-400 dark:text-slate-500 mb-1">No curriculum modules yet.</p>
-              <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">Upload materials first, then generate a syllabus.</p>
-            </div>
-          )}
-
-          {!subject.syllabus_generated && materials.length > 0 && (
-            <div className="mt-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-              <div className="flex items-start gap-3">
-                <span className="text-lg">💡</span>
-                <div>
-                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">No syllabus yet</p>
-                  <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
-                    Generate a syllabus from your uploaded materials.
-                  </p>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
-                        if (result?.length) {
-                          addToast({ type: 'success', title: 'Syllabus Generated', message: `${result.length} modules created.` })
-                          loadAllData()
-                        }
-                      } catch {
-                        addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
-                      }
-                    }}
-                    className="mt-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium rounded-lg transition-colors"
-                  >
-                    Generate Syllabus from Materials
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {!subject.syllabus_generated && materials.length === 0 && (
-            <div className="mt-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Upload materials in the <button onClick={() => setActiveTab('materials')} className="text-violet-600 dark:text-violet-400 hover:underline font-medium">Materials</button> tab, then generate a syllabus here.
+              <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
+                {materials.length > 0
+                  ? 'Generate a syllabus from your uploaded materials.'
+                  : 'Upload materials first, then generate a syllabus.'}
               </p>
+              {materials.length > 0 ? (
+                <button
+                  onClick={async () => {
+                    try {
+                      const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
+                      if (result?.length) {
+                        addToast({ type: 'success', title: 'Syllabus Generated', message: `${result.length} modules created.` })
+                        loadAllData()
+                      }
+                    } catch {
+                      addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium rounded-lg transition-colors inline-block"
+                >
+                  Generate Syllabus from Materials
+                </button>
+              ) : (
+                <button
+                  onClick={() => setActiveTab('materials')}
+                  className="text-violet-600 dark:text-violet-400 hover:underline text-xs font-medium"
+                >
+                  Go to Materials tab
+                </button>
+              )}
             </div>
           )}
 
@@ -833,6 +824,21 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                   <span className="text-xs text-slate-400 dark:text-slate-500">
                     {new Date(mat.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </span>
+                  <button
+                    onClick={() => setShowConfigModal({
+                      subjectId: subject.id,
+                      subjectName: subject.name,
+                      materialId: mat.id,
+                      materialName: mat.filename
+                    })}
+                    className="px-2 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors flex items-center gap-1 text-xs font-medium"
+                    title={`Study ${mat.filename} with AI Tutor`}
+                  >
+                    <span className="hidden sm:inline">Study</span>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                      <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
                   <button
                     onClick={() => handleDeleteMaterial(mat.id, mat.filename)}
                     className="p-1 rounded text-slate-300 dark:text-slate-600 hover:text-red-400 dark:hover:text-red-400 transition-colors"
@@ -1073,6 +1079,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         <SessionConfigModal
           subjectId={showConfigModal.subjectId}
           subjectName={showConfigModal.subjectName}
+          materialId={showConfigModal.materialId}
+          materialName={showConfigModal.materialName}
           onClose={() => setShowConfigModal(null)}
         />
       )}
@@ -1371,6 +1379,8 @@ function SubjectDetailStudyMenu({ subjectId, disabled, folderId }: { subjectId: 
         { label: 'Learn Mode', desc: 'Master cards through multiple-choice then written answers', route: `/study/${subjectId}?mode=learn`, dot: 'bg-emerald-500' },
       ]
 
+  const buttonLabel = folderId != null ? 'Study this folder' : 'Study Flashcards'
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -1378,7 +1388,7 @@ function SubjectDetailStudyMenu({ subjectId, disabled, folderId }: { subjectId: 
         onClick={() => !disabled && setOpen(o => !o)}
         className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        Study Now
+        {buttonLabel}
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
           <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>

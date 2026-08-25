@@ -25,15 +25,20 @@ const api = window.electronAPI
 function ClassRedirect(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
   return <Navigate to={`/subject/${id}`} replace />
-}
-
-export default function App(): React.JSX.Element {
+}export default function App(): React.JSX.Element {
   const { user, setUser, setSubjects, theme, showDemo, setShowDemo } = useAppStore()
   const [loading, setLoading] = useState(true)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
   const [updateVersion, setUpdateVersion] = useState('')
+  const [updateDownloadUrl, setUpdateDownloadUrl] = useState<string | null>(null)
+  const [updateReleaseUrl, setUpdateReleaseUrl] = useState('')
+  const [downloading, setDownloading] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [downloadedPath, setDownloadedPath] = useState('')
   const [dismissed, setDismissed] = useState(false)
   const [updateFailed, setUpdateFailed] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
     async function init(): Promise<void> {
@@ -68,14 +73,84 @@ export default function App(): React.JSX.Element {
 
   // Listen for auto-update events from main process
   useEffect(() => {
+    api.onUpdaterAvailable((info) => {
+      setUpdateVersion(info.latestVersion)
+      setUpdateDownloadUrl(info.downloadUrl)
+      setUpdateReleaseUrl(info.releaseUrl)
+      setUpdateAvailable(true)
+      setDismissed(false)
+    })
+    api.onUpdateAvailable((version) => {
+      setUpdateVersion(version)
+      setUpdateAvailable(true)
+      setDismissed(false)
+    })
+    api.onUpdaterDownloaded((data) => {
+      setDownloadedPath(data.filePath)
+      setUpdateVersion(data.version)
+      setDownloading(false)
+      setUpdateReady(true)
+      setDismissed(false)
+    })
     api.onUpdateDownloaded((version) => {
       setUpdateVersion(version)
+      setDownloading(false)
       setUpdateReady(true)
+      setDismissed(false)
     })
-    api.onUpdateError(() => {
+    api.onDownloadProgress((pct) => {
+      setDownloadProgress(pct)
+    })
+    api.onUpdaterError((msg) => {
+      setErrorMessage(msg)
       setUpdateFailed(true)
+      setDownloading(false)
+    })
+    api.onUpdateError((msg) => {
+      setErrorMessage(msg)
+      setUpdateFailed(true)
+      setDownloading(false)
     })
   }, [])
+
+  async function handleStartDownload(): Promise<void> {
+    if (!updateDownloadUrl) {
+      api.openReleasePage(updateReleaseUrl || 'https://github.com/robmcarlson006/neuron/releases/latest')
+      return
+    }
+    setDownloading(true)
+    setDownloadProgress(0)
+    setUpdateFailed(false)
+    try {
+      const res = await api.downloadUpdate(updateDownloadUrl, updateVersion)
+      if (res.success && res.filePath) {
+        setDownloadedPath(res.filePath)
+        setUpdateReady(true)
+      } else {
+        setUpdateFailed(true)
+        setErrorMessage(res.error || 'Download failed.')
+      }
+    } catch (err) {
+      setUpdateFailed(true)
+      setErrorMessage((err as Error).message || 'Download error')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  async function handleInstall(): Promise<void> {
+    setUpdateFailed(false)
+    try {
+      if (downloadedPath) {
+        await api.installDownloadedUpdate(downloadedPath)
+      } else {
+        await api.installUpdate()
+      }
+    } catch (err) {
+      setUpdateFailed(true)
+      setErrorMessage((err as Error).message || 'Install failed')
+    }
+  }
 
   async function handleDemoComplete(): Promise<void> {
     setShowDemo(false)
@@ -122,33 +197,63 @@ export default function App(): React.JSX.Element {
 
   return (
     <HashRouter>
-      {/* Update banner — shown after update is downloaded and ready to install */}
-      {updateReady && !dismissed && (
-        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg text-sm">
+      {/* Update banner — shown when update is available, downloading, or ready to install */}
+      {(updateAvailable || updateReady || updateFailed) && !dismissed && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-slate-900/95 text-white dark:bg-slate-800/95 border border-slate-700/80 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md text-sm animate-in fade-in slide-in-from-bottom-3 duration-300">
           {updateFailed ? (
             <>
-              <span>Update install failed. Please install manually.</span>
+              <div className="flex items-center gap-2">
+                <span className="text-rose-400 text-base">⚠️</span>
+                <span>{errorMessage || 'Update failed. Please download manually.'}</span>
+              </div>
               <button
-                onClick={() => api.openReleasePage('https://github.com/robcarlson006/neuron/releases/latest')}
-                className="bg-white text-emerald-700 font-semibold px-3 py-1 rounded-lg hover:bg-emerald-50 transition-colors"
+                onClick={() => api.openReleasePage(updateReleaseUrl || 'https://github.com/robmcarlson006/neuron/releases/latest')}
+                className="bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 font-medium px-3 py-1 rounded-lg transition-colors text-xs"
               >
-                Download
+                Download Page ↗
               </button>
             </>
-          ) : (
+          ) : updateReady ? (
             <>
-              <span>⬆ Neuron {updateVersion} is ready to install</span>
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-400 text-base">✓</span>
+                <span>Neuron {updateVersion ? `v${updateVersion}` : ''} ready to install</span>
+              </div>
               <button
-                onClick={() => { setUpdateFailed(false); api.installUpdate() }}
-                className="bg-white text-emerald-700 font-semibold px-3 py-1 rounded-lg hover:bg-emerald-50 transition-colors"
+                onClick={handleInstall}
+                className="bg-emerald-500 text-white hover:bg-emerald-600 font-semibold px-3 py-1 rounded-lg shadow transition-colors text-xs"
               >
                 Restart & Update
+              </button>
+            </>
+          ) : downloading ? (
+            <div className="flex items-center gap-3">
+              <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+              <span>Downloading v{updateVersion}… {downloadProgress}%</span>
+              <div className="w-24 bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-emerald-400 h-full transition-all duration-200"
+                  style={{ width: `${downloadProgress}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-amber-400 text-base">⬆</span>
+                <span>Neuron {updateVersion ? `v${updateVersion}` : ''} is available</span>
+              </div>
+              <button
+                onClick={handleStartDownload}
+                className="bg-emerald-500 text-white hover:bg-emerald-600 font-semibold px-3 py-1 rounded-lg shadow transition-colors text-xs"
+              >
+                Update Now
               </button>
             </>
           )}
           <button
             onClick={() => setDismissed(true)}
-            className="opacity-70 hover:opacity-100 transition-opacity ml-1"
+            className="text-slate-400 hover:text-slate-200 transition-colors ml-1 p-1"
             aria-label="Dismiss"
           >
             ✕
@@ -170,7 +275,7 @@ export default function App(): React.JSX.Element {
             </>
           ) : (
             <Route element={<Layout onNewClass={() => setShowClassWizard(true)} />}>
-              <Route path="/" element={<Dashboard onNewClass={() => setShowClassWizard(true)} />} />
+              <Route path="/" element={<Dashboard onNewSubject={() => setShowClassWizard(true)} onNewClass={() => setShowClassWizard(true)} />} />
               <Route path="/class/:id" element={<ClassRedirect />} />
               <Route path="/subject/:id" element={<UnifiedSubjectDetail />} />
               <Route path="/study/:subjectId" element={<StudySession />} />

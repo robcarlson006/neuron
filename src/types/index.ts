@@ -542,6 +542,55 @@ export interface TutorSession {
   cards_generated: number
   started_at: string
   ended_at?: string
+  duration_minutes?: number
+  depth_level?: number
+  never_studied?: number
+}
+
+export interface TutorTopicMemory {
+  id: number
+  user_id: number
+  subject_id: number
+  topic: string
+  mastery_level: 'struggling' | 'developing' | 'good' | 'mastered'
+  strengths?: string
+  struggles?: string
+  session_id?: number
+  last_studied_at: string
+}
+
+export interface TutorSessionEvaluation {
+  id: number
+  session_id: number
+  user_id: number
+  subject_id: number
+  strengths: string[]
+  struggles: string[]
+  topics_covered: string[]
+  summary?: string
+  created_at: string
+}
+
+export interface GapAnalysisItem {
+  type: 'struggled' | 'uncovered'
+  topic: string
+  details?: string
+  moduleId?: number
+  moduleTitle?: string
+  materialId?: number
+  materialName?: string
+  priority: 1 | 2 | 3
+}
+
+export interface GapAnalysisResult {
+  struggledTopics: GapAnalysisItem[]
+  uncoveredTopics: GapAnalysisItem[]
+  recommendedFocus: string
+  recommendedTopics: string[]
+  recommendedModuleId?: number
+  recommendedMaterialId?: number
+  totalGapsCount: number
+  hasHistory: boolean
 }
 
 export interface TutorStreamParams {
@@ -568,12 +617,24 @@ export interface TutorStreamParams {
   questionsAsked?: string[]
   topicsMastered?: string[]
   weakTopicsConcerns?: string[]
+  materialId?: number
+  materialContent?: string
+  targetTopic?: string
+  isFillGaps?: boolean
+  gapTopics?: string[]
 }
 
 export interface TutorSessionConfig {
   duration_minutes: number | null
   depth_level: 1 | 2 | 3 | 4 | 5
   never_studied: boolean
+  material_id?: number
+  material_name?: string
+  module_id?: number
+  module_name?: string
+  target_topic?: string
+  is_fill_gaps?: boolean
+  gap_topics?: string[]
 }
 
 export interface TutorSessionRuntime {
@@ -682,6 +743,13 @@ export interface ParsedRecallQuestion {
 }
 
 export type ParsedCard = ParsedFlashcard | ParsedRecallQuestion
+
+export interface DuplicateCheckResult {
+  isDuplicate: boolean
+  reason?: string
+  matchedFront?: string
+  similarity?: number
+}
 
 // ── Toast / Notifications ──────────────────────────────────────────────────
 

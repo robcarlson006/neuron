@@ -6,7 +6,16 @@ import fs from 'fs'
 import { streamAI, callAIMessages } from './aiHandlers'
 import { getApiKey, getAIConfig } from './aiConfigStore'
 import { bktUpdate } from '../../src/lib/bkt'
-import type { TutorSession, TutorStreamParams, PacingStatus } from '../../src/types'
+import { findCardDuplicates } from '../../src/lib/cardDeduplication'
+import type {
+  TutorSession,
+  TutorStreamParams,
+  PacingStatus,
+  TutorTopicMemory,
+  TutorSessionEvaluation,
+  GapAnalysisResult,
+  GapAnalysisItem
+} from '../../src/types'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 
 let db: Database.Database
@@ -192,6 +201,395 @@ function buildMemoryBlock(params: {
   ].join('\n')
 }
 
+// ── Historical Memory builder ──────────────────────────────────────────
+
+export function buildHistoricalMemoryBlock(database: Database.Database | undefined, subjectId: number, userId?: number): string {
+  if (!database || !subjectId || !userId) return ''
+  try {
+    const memories = database.prepare(`
+      SELECT topic, mastery_level, strengths, struggles
+      FROM tutor_topic_memories
+      WHERE subject_id = ? AND user_id = ?
+      ORDER BY last_studied_at DESC
+      LIMIT 20
+    `).all(subjectId, userId) as { topic: string; mastery_level: string; strengths: string | null; struggles: string | null }[]
+
+    if (!memories.length) return ''
+
+    const mastered = memories.filter(m => m.mastery_level === 'mastered' || m.mastery_level === 'good')
+    const struggling = memories.filter(m => m.mastery_level === 'struggling' || m.mastery_level === 'developing')
+
+    const lines: string[] = ['', 'HISTORICAL LEARNING MEMORY (FROM PREVIOUS SESSIONS):']
+    if (mastered.length > 0) {
+      lines.push(`- Concepts student has strong command of: ${mastered.map(m => m.topic + (m.strengths ? ` (${m.strengths})` : '')).slice(0, 10).join('; ')}`)
+    }
+    if (struggling.length > 0) {
+      lines.push(`- Concepts student has struggled with: ${struggling.map(m => m.topic + (m.struggles ? ` (${m.struggles})` : '')).slice(0, 10).join('; ')}`)
+      lines.push(`- Pedagogical Note: Prioritize reinforcing these struggled areas with intuitive examples before advancing.`)
+    }
+    lines.push('')
+    return lines.join('\n')
+  } catch (err) {
+    console.error('Failed to build historical memory block:', err)
+    return ''
+  }
+}
+
+// ── Topic Focus & Gap Filling directive builder ────────────────────────
+
+export function buildTopicFocusBlock(params: {
+  targetTopic?: string
+  isFillGaps?: boolean
+  gapTopics?: string[]
+}): string {
+  if (params.isFillGaps || params.gapTopics?.length) {
+    const focusList = params.gapTopics?.length ? params.gapTopics.join(', ') : 'identified gaps and unstudied areas'
+    return [
+      '',
+      'TARGETED GAP-FILLING FOCUS:',
+      `The student specifically requested to FILL GAPS in their knowledge.`,
+      `Identified gap topics: ${focusList}`,
+      '1. Begin by addressing misconceptions or difficult aspects of these topics.',
+      '2. Connect previous knowledge to newly introduced concepts with clear analogies.',
+      '3. Ask targeted questions to verify the gap is closed before moving forward.',
+      ''
+    ].join('\n')
+  }
+  if (params.targetTopic) {
+    return [
+      '',
+      'TARGET TOPIC FOCUS:',
+      `The student explicitly chose to study: "${params.targetTopic}".`,
+      `Focus the discussion, explanations, and questions squarely on this topic.`,
+      ''
+    ].join('\n')
+  }
+  return ''
+}
+
+// ── Gap Analysis Computation ───────────────────────────────────────────
+
+export function computeGapAnalysis(
+  database: Database.Database,
+  subjectId: number,
+  userId: number
+): GapAnalysisResult {
+  // 1. Fetch syllabus modules & topics
+  const modules = database.prepare(`
+    SELECT id, title, description, status, sort_order FROM syllabus_modules
+    WHERE subject_id = ? ORDER BY sort_order ASC
+  `).all(subjectId) as (SyllabusModule & { status: string })[]
+
+  const moduleIds = modules.map(m => m.id)
+  const topics: ModuleTopic[] = moduleIds.length > 0
+    ? database.prepare(`
+        SELECT id, module_id, title, description, sort_order FROM module_topics
+        WHERE module_id IN (${moduleIds.map(() => '?').join(',')})
+        ORDER BY sort_order ASC
+      `).all(...moduleIds) as ModuleTopic[]
+    : []
+
+  // 2. Fetch past memories & mastery
+  const memories = database.prepare(`
+    SELECT topic, mastery_level, strengths, struggles, last_studied_at
+    FROM tutor_topic_memories
+    WHERE subject_id = ? AND user_id = ?
+  `).all(subjectId, userId) as { topic: string; mastery_level: string; strengths: string | null; struggles: string | null; last_studied_at: string }[]
+
+  const conceptMastery = database.prepare(`
+    SELECT concept, mastery_prob FROM concept_mastery
+    WHERE subject_id = ? AND user_id = ?
+  `).all(subjectId, userId) as { concept: string; mastery_prob: number }[]
+
+  const studiedTopics = database.prepare(`
+    SELECT topic_id FROM module_topic_study_log
+    WHERE user_id = ?
+  `).all(userId) as { topic_id: number }[]
+  const studiedTopicIds = new Set(studiedTopics.map(s => s.topic_id))
+
+  // Build struggles list (Priority 1)
+  const struggledItems: GapAnalysisItem[] = []
+  const strugglingMemories = memories.filter(m => m.mastery_level === 'struggling' || m.mastery_level === 'developing')
+  for (const m of strugglingMemories) {
+    struggledItems.push({
+      type: 'struggled',
+      topic: m.topic,
+      details: m.struggles || 'Struggled with this concept in a previous session',
+      priority: 1
+    })
+  }
+  for (const cm of conceptMastery) {
+    if (cm.mastery_prob < 0.5 && !struggledItems.some(i => i.topic.toLowerCase() === cm.concept.toLowerCase())) {
+      struggledItems.push({
+        type: 'struggled',
+        topic: cm.concept,
+        details: `Low mastery level (${Math.round(cm.mastery_prob * 100)}%)`,
+        priority: 1
+      })
+    }
+  }
+
+  // Build uncovered list (Priority 2)
+  const uncoveredItems: GapAnalysisItem[] = []
+  const memoryTopicsLower = new Set(memories.map(m => m.topic.toLowerCase()))
+
+  // Check module topics
+  for (const t of topics) {
+    const mod = modules.find(m => m.id === t.module_id)
+    const isStudied = studiedTopicIds.has(t.id) || memoryTopicsLower.has(t.title.toLowerCase())
+    if (!isStudied) {
+      uncoveredItems.push({
+        type: 'uncovered',
+        topic: t.title,
+        moduleId: t.module_id,
+        moduleTitle: mod?.title,
+        details: mod ? `From module: ${mod.title}` : undefined,
+        priority: 2
+      })
+    }
+  }
+
+  // Check unstudied modules (if no module_topics exist or if module is pending)
+  if (topics.length === 0) {
+    for (const mod of modules) {
+      if (mod.status === 'pending' || !memoryTopicsLower.has(mod.title.toLowerCase())) {
+        uncoveredItems.push({
+          type: 'uncovered',
+          topic: mod.title,
+          moduleId: mod.id,
+          moduleTitle: mod.title,
+          details: 'Syllabus module not yet covered in tutor',
+          priority: 2
+        })
+      }
+    }
+  }
+
+  // Determine recommendation
+  const recommendedTopics: string[] = []
+  let recommendedFocus = ''
+  let recommendedModuleId: number | undefined
+  let recommendedMaterialId: number | undefined
+
+  if (struggledItems.length > 0 && uncoveredItems.length > 0) {
+    const sTop = struggledItems.slice(0, 2).map(i => i.topic)
+    const uTop = uncoveredItems.slice(0, 1).map(i => i.topic)
+    recommendedTopics.push(...sTop, ...uTop)
+    recommendedModuleId = uncoveredItems[0]?.moduleId
+    recommendedFocus = `Review ${sTop.join(' & ')} (struggled previously) and introduce ${uTop.join(', ')}.`
+  } else if (struggledItems.length > 0) {
+    const sTop = struggledItems.slice(0, 3).map(i => i.topic)
+    recommendedTopics.push(...sTop)
+    recommendedFocus = `Reinforce key struggled areas: ${sTop.join(', ')}.`
+  } else if (uncoveredItems.length > 0) {
+    const uTop = uncoveredItems.slice(0, 3).map(i => i.topic)
+    recommendedTopics.push(...uTop)
+    recommendedModuleId = uncoveredItems[0]?.moduleId
+    recommendedFocus = `Cover upcoming unstudied material: ${uTop.join(', ')}.`
+  } else {
+    // Everything covered and strong!
+    const subject = database.prepare('SELECT name FROM subjects WHERE id = ?').get(subjectId) as { name: string } | undefined
+    recommendedFocus = `Comprehensive review across all covered concepts in ${subject?.name || 'this class'}.`
+    if (modules.length > 0) {
+      recommendedTopics.push(modules[0].title)
+      recommendedModuleId = modules[0].id
+    }
+  }
+
+  const totalGapsCount = struggledItems.length + uncoveredItems.length
+  const hasHistory = memories.length > 0 || conceptMastery.length > 0
+
+  return {
+    struggledTopics: struggledItems,
+    uncoveredTopics: uncoveredItems,
+    recommendedFocus,
+    recommendedTopics,
+    recommendedModuleId,
+    recommendedMaterialId,
+    totalGapsCount,
+    hasHistory
+  }
+}
+
+// ── Session End Analysis & Memory Persistence ──────────────────────────
+
+export async function evaluateAndSaveSessionMemory(
+  database: Database.Database,
+  sessionId: number,
+  summaryText?: string
+): Promise<{ strengths: string[]; struggles: string[]; topics_covered: string[]; summary: string } | null> {
+  const session = database.prepare('SELECT * FROM tutor_sessions WHERE id = ?').get(sessionId) as TutorSession | undefined
+  if (!session || !session.subject_id || !session.user_id) return null
+
+  const subject = database.prepare('SELECT name FROM subjects WHERE id = ?').get(session.subject_id) as { name: string } | undefined
+  const className = subject?.name || 'the subject'
+
+  const messages = database.prepare(`
+    SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC
+  `).all(sessionId) as { role: string; content: string }[]
+
+  if (messages.length < 2) return null
+
+  const transcript = messages
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
+    .join('\n\n')
+    .substring(0, 8000)
+
+  const evaluation = {
+    strengths: [] as string[],
+    struggles: [] as string[],
+    topics_covered: [] as string[],
+    summary: summaryText || ''
+  }
+
+  try {
+    const apiKey = getApiKey()
+    const config = getAIConfig()
+
+    if (apiKey) {
+      const prompt = `You are an educational analytics AI. Analyze this tutoring session dialogue between Tutor and Student for class "${className}".
+
+DIALOGUE:
+${transcript}
+
+Extract:
+1. "strengths": Array of 1-4 specific concepts, topics, or skills the student demonstrated good understanding of or answered correctly.
+2. "struggles": Array of 1-4 specific concepts, topics, or misconceptions the student struggled with, answered incorrectly, or needed hints for.
+3. "topics_covered": Array of 1-5 syllabus/subject topics covered during this session.
+4. "summary": A 1-2 sentence summary of what was accomplished and areas to focus on next.
+
+Return STRICT JSON ONLY, no extra text, in this format:
+{
+  "strengths": ["string"],
+  "struggles": ["string"],
+  "topics_covered": ["string"],
+  "summary": "string"
+}`
+      const response = await callAIMessages(
+        [{ role: 'user', content: prompt }],
+        { ...config, apiKey }
+      )
+
+      const jsonMatch = response.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        if (Array.isArray(parsed.strengths)) evaluation.strengths = parsed.strengths.filter((s: unknown) => typeof s === 'string' && s.trim())
+        if (Array.isArray(parsed.struggles)) evaluation.struggles = parsed.struggles.filter((s: unknown) => typeof s === 'string' && s.trim())
+        if (Array.isArray(parsed.topics_covered)) evaluation.topics_covered = parsed.topics_covered.filter((s: unknown) => typeof s === 'string' && s.trim())
+        if (typeof parsed.summary === 'string' && parsed.summary.trim()) evaluation.summary = parsed.summary.trim()
+      }
+    }
+  } catch (err) {
+    console.warn('AI evaluation extraction failed, using fallback heuristic:', err)
+  }
+
+  // Fallback heuristic if empty
+  if (evaluation.topics_covered.length === 0) {
+    const topicRegex = /\[TOPIC:\s*([^\]]+)\]/g
+    let match
+    while ((match = topicRegex.exec(transcript)) !== null) {
+      if (!evaluation.topics_covered.includes(match[1].trim())) {
+        evaluation.topics_covered.push(match[1].trim())
+      }
+    }
+    if (evaluation.topics_covered.length === 0 && session.module_id) {
+      const mod = database.prepare('SELECT title FROM syllabus_modules WHERE id = ?').get(session.module_id) as { title: string } | undefined
+      if (mod) evaluation.topics_covered.push(mod.title)
+    }
+  }
+
+  const now = new Date().toISOString()
+
+  // Save session evaluation
+  database.prepare(`
+    INSERT OR REPLACE INTO tutor_session_evaluations (session_id, user_id, subject_id, strengths_json, struggles_json, topics_covered_json, summary, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    sessionId,
+    session.user_id,
+    session.subject_id,
+    JSON.stringify(evaluation.strengths),
+    JSON.stringify(evaluation.struggles),
+    JSON.stringify(evaluation.topics_covered),
+    evaluation.summary,
+    now
+  )
+
+  // Update topic memories for strengths
+  for (const str of evaluation.strengths) {
+    const cleanTopic = str.trim()
+    if (!cleanTopic) continue
+    database.prepare(`
+      INSERT INTO tutor_topic_memories (user_id, subject_id, topic, mastery_level, strengths, struggles, session_id, last_studied_at)
+      VALUES (?, ?, ?, 'good', ?, NULL, ?, ?)
+      ON CONFLICT(user_id, subject_id, topic) DO UPDATE SET
+        mastery_level = CASE WHEN mastery_level = 'good' THEN 'mastered' ELSE 'good' END,
+        strengths = excluded.strengths,
+        session_id = excluded.session_id,
+        last_studied_at = excluded.last_studied_at
+    `).run(session.user_id, session.subject_id, cleanTopic, cleanTopic, sessionId, now)
+
+    // Update BKT concept mastery
+    try {
+      const existing = database.prepare('SELECT mastery_prob FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?').get(session.user_id, session.subject_id, cleanTopic) as { mastery_prob: number } | undefined
+      const prior = existing?.mastery_prob ?? 0.3
+      const newProb = bktUpdate(prior, true)
+      if (existing) {
+        database.prepare('UPDATE concept_mastery SET mastery_prob = ?, observations = observations + 1, updated_at = ? WHERE user_id = ? AND subject_id = ? AND concept = ?').run(newProb, now, session.user_id, session.subject_id, cleanTopic)
+      } else {
+        database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(session.user_id, session.subject_id, cleanTopic, newProb, now)
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Update topic memories for struggles
+  for (const stg of evaluation.struggles) {
+    const cleanTopic = stg.trim()
+    if (!cleanTopic) continue
+    database.prepare(`
+      INSERT INTO tutor_topic_memories (user_id, subject_id, topic, mastery_level, strengths, struggles, session_id, last_studied_at)
+      VALUES (?, ?, ?, 'struggling', NULL, ?, ?, ?)
+      ON CONFLICT(user_id, subject_id, topic) DO UPDATE SET
+        mastery_level = 'struggling',
+        struggles = excluded.struggles,
+        session_id = excluded.session_id,
+        last_studied_at = excluded.last_studied_at
+    `).run(session.user_id, session.subject_id, cleanTopic, cleanTopic, sessionId, now)
+
+    // Update BKT concept mastery
+    try {
+      const existing = database.prepare('SELECT mastery_prob FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?').get(session.user_id, session.subject_id, cleanTopic) as { mastery_prob: number } | undefined
+      const prior = existing?.mastery_prob ?? 0.3
+      const newProb = bktUpdate(prior, false)
+      if (existing) {
+        database.prepare('UPDATE concept_mastery SET mastery_prob = ?, observations = observations + 1, updated_at = ? WHERE user_id = ? AND subject_id = ? AND concept = ?').run(newProb, now, session.user_id, session.subject_id, cleanTopic)
+      } else {
+        database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(session.user_id, session.subject_id, cleanTopic, newProb, now)
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Also log covered topics in module_topic_study_log
+  for (const top of evaluation.topics_covered) {
+    try {
+      const modTopic = database.prepare(`
+        SELECT mt.id FROM module_topics mt
+        JOIN syllabus_modules sm ON sm.id = mt.module_id
+        WHERE sm.subject_id = ? AND LOWER(mt.title) = LOWER(?)
+      `).get(session.subject_id, top) as { id: number } | undefined
+      if (modTopic) {
+        database.prepare(`
+          INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
+          VALUES (?, ?, ?)
+        `).run(modTopic.id, session.user_id, now)
+      }
+    } catch { /* ignore */ }
+  }
+
+  return evaluation
+}
+
 // ── Response post-processing (fix garbled text) ──────────────────────────
 
 function cleanupAIResponse(text: string): string {
@@ -281,12 +679,58 @@ export function registerTutorHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('tutor:endSession', (_event, sessionId: number, summary?: string) => {
+  ipcMain.handle('tutor:endSession', async (_event, sessionId: number, summary?: string) => {
     const now = new Date().toISOString()
     db.prepare(`
       UPDATE tutor_sessions SET phase = 'complete', summary = ?, ended_at = ? WHERE id = ?
     `).run(summary || null, now, sessionId)
-    return { success: true }
+
+    const evaluation = await evaluateAndSaveSessionMemory(db, sessionId, summary)
+    return { success: true, evaluation }
+  })
+
+  ipcMain.handle('tutor:getGapAnalysis', (_event, subjectId: number, userId: number) => {
+    return computeGapAnalysis(db, subjectId, userId)
+  })
+
+  ipcMain.handle('tutor:getTopicMemories', (_event, subjectId: number, userId: number) => {
+    return db.prepare(`
+      SELECT * FROM tutor_topic_memories
+      WHERE subject_id = ? AND user_id = ?
+      ORDER BY last_studied_at DESC
+    `).all(subjectId, userId) as TutorTopicMemory[]
+  })
+
+  ipcMain.handle('tutor:getSessionEvaluation', (_event, sessionId: number) => {
+    const row = db.prepare('SELECT * FROM tutor_session_evaluations WHERE session_id = ?').get(sessionId) as {
+      id: number
+      session_id: number
+      user_id: number
+      subject_id: number
+      strengths_json: string
+      struggles_json: string
+      topics_covered_json: string
+      summary: string | null
+      created_at: string
+    } | undefined
+
+    if (!row) return null
+
+    try {
+      return {
+        id: row.id,
+        session_id: row.session_id,
+        user_id: row.user_id,
+        subject_id: row.subject_id,
+        strengths: JSON.parse(row.strengths_json || '[]'),
+        struggles: JSON.parse(row.struggles_json || '[]'),
+        topics_covered: JSON.parse(row.topics_covered_json || '[]'),
+        summary: row.summary || undefined,
+        created_at: row.created_at
+      } as TutorSessionEvaluation
+    } catch {
+      return null
+    }
   })
 
   ipcMain.handle('tutor:deleteSession', (_event, sessionId: number) => {
@@ -359,7 +803,7 @@ export function registerTutorHandlers(): void {
     ).all(subjectId) as { front: string; back: string }[]
 
     const existingCardHints = existingCards.length > 0
-      ? `\nExisting cards you MUST NOT duplicate (avoid similar front/back):\n${existingCards.slice(0, 20).map(c => `- "${c.front}" -> "${c.back.substring(0, 60)}"`).join('\n')}`
+      ? `\n\nCRITICAL ANTI-DUPLICATION LIST: Existing cards in this deck that you MUST NOT duplicate (avoid similar questions, terms, or answers):\n${existingCards.slice(0, 80).map(c => `- "${c.front}" -> "${c.back.substring(0, 80)}"`).join('\n')}\nEvery generated card MUST introduce a novel concept or a distinctly fresh perspective not covered above.`
       : ''
 
     const prompt = `You are an expert educator creating study cards from a tutoring session about "${subjectName}".${moduleContext}
@@ -383,6 +827,7 @@ Rules:
 - For mathematical expressions, wrap in $$...$$
 - For mathematical expressions, use proper LaTeX in $...$ or $$...$$ format (e.g. $E = mc^2$, not E = mc^2)
 - Prioritize conceptual understanding over trivia
+- STRICT ANTI-DUPLICATION: Do NOT recreate or re-test any of the existing cards listed above. Focus on new angles or uncovered concepts from the session.
 - Return ONLY the card list. No introduction, commentary, or closing.`
 
     const config = getAIConfig()
@@ -405,12 +850,11 @@ Rules:
   // ═══════════════════════════════════════════════════════════════════════════
 
   ipcMain.handle('tutor:checkDuplicates', (_event, subjectId: number, cards: { front: string; back: string }[]) => {
-    return cards.map(card => {
-      const existing = db.prepare(
-        'SELECT id FROM cards WHERE subject_id = ? AND (front = ? OR back = ?) LIMIT 1'
-      ).get(subjectId, card.front, card.back) as { id: number } | undefined
-      return { isDuplicate: !!existing }
-    })
+    const existingCards = db.prepare(
+      'SELECT front, back FROM cards WHERE subject_id = ?'
+    ).all(subjectId) as { front: string; back: string }[]
+
+    return findCardDuplicates(cards, existingCards)
   })
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -496,8 +940,57 @@ Rules:
       weakTopicsConcerns: params.weakTopicsConcerns
     }) : ''
 
+    // Retrieve userId for historical memory lookup
+    let userId: number | undefined
+    try {
+      const sessRow = db.prepare('SELECT user_id FROM tutor_sessions WHERE id = ?').get(params.sessionId) as { user_id: number | null } | undefined
+      if (sessRow?.user_id) userId = sessRow.user_id
+    } catch { /* ignore */ }
+
+    // Build historical cross-session learning memory block
+    const historicalMemoryBlock = buildHistoricalMemoryBlock(db, params.subjectId, userId)
+
+    // Build target topic & gap filling focus directive
+    const topicFocusBlock = buildTopicFocusBlock({
+      targetTopic: params.targetTopic,
+      isFillGaps: params.isFillGaps,
+      gapTopics: params.gapTopics
+    })
+
+    // Build material context (if studying a specific material)
+    let materialContextBlock = ''
+    if (params.materialId) {
+      try {
+        const mat = db.prepare('SELECT filename, content_text FROM materials WHERE id = ?').get(params.materialId) as { filename: string; content_text: string } | undefined
+        if (mat && mat.content_text) {
+          materialContextBlock = [
+            '',
+            `SPECIFIC MATERIAL STUDY FOCUS:`,
+            `The student is studying ONLY the specific material: "${mat.filename}".`,
+            `Base all questions, explanations, active recall challenges, and feedback STRICTLY on the contents of this material below:`,
+            `--- MATERIAL CONTENT START ---`,
+            mat.content_text.substring(0, 16000),
+            `--- MATERIAL CONTENT END ---`,
+            ''
+          ].join('\n')
+        }
+      } catch (err) {
+        console.error('Failed to load specific material for tutor session:', err)
+      }
+    } else if (params.materialContent) {
+      materialContextBlock = [
+        '',
+        `SPECIFIC MATERIAL STUDY FOCUS:`,
+        `Base all questions, explanations, and feedback STRICTLY on the content provided below:`,
+        `--- MATERIAL CONTENT START ---`,
+        params.materialContent.substring(0, 16000),
+        `--- MATERIAL CONTENT END ---`,
+        ''
+      ].join('\n')
+    }
+
     // Append all context blocks to syllabusContext
-    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + memoryBlock
+    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + materialContextBlock
 
     // Save session config to database if provided
     if (params.durationMinutes !== undefined || params.depthLevel !== undefined || params.neverStudied !== undefined) {
@@ -686,9 +1179,9 @@ PEDAGOGICAL METHOD — Session Summary Phase:
 
       const parts = [`- ${subject.name}${subject.course_code ? ` (${subject.course_code})` : ''}`]
       if (currentModule) {
-        parts.push(`  Currently working on: ${currentModule.title} (Week ${currentModule.week_number || '?'})`)
+        parts.push(`  Currently working on: ${currentModule.chapter_number ? `Ch. ${currentModule.chapter_number}: ` : ''}${currentModule.title}`)
       } else if (nextModule) {
-        parts.push(`  Next up: ${nextModule.title} (Week ${nextModule.week_number || '?'})`)
+        parts.push(`  Next up: ${nextModule.chapter_number ? `Ch. ${nextModule.chapter_number}: ` : ''}${nextModule.title}`)
       }
       parts.push(`  ${modules.filter(m => m.status === 'completed').length}/${modules.length} modules completed`)
       parts.push(`  ${dueCards.count} cards due for review today`)

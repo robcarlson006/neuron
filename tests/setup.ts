@@ -26,6 +26,7 @@ const mockElectronAPI = {
   getDiagnostics: jest.fn().mockResolvedValue([]),
   saveDiagnostics: jest.fn().mockResolvedValue({ id: 1 }),
   getMaterials: jest.fn().mockResolvedValue([]),
+  getMaterial: jest.fn().mockResolvedValue(null),
   saveMaterial: jest.fn().mockResolvedValue({ id: 1 }),
   openFileDialog: jest.fn().mockResolvedValue(null),
   parseFile: jest.fn().mockResolvedValue({ filename: 'test.pdf', fileType: 'pdf', contentText: '', originalLength: 0 }),

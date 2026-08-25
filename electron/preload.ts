@@ -7,7 +7,7 @@ import type {
   FocusModeSettings, PublishedDeck, StudyGroup, StudyGroupMember,
   AnkiConnectNote, PluginEndpoint, AccessibilitySettings, OnboardingData,
   ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult,
-  TutorSession, TutorStreamParams, DailyPlan, Message
+  TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult
 } from '../src/types'
 
 const electronAPI = {
@@ -66,6 +66,7 @@ const electronAPI = {
 
   // Materials
   getMaterials: (subjectId: number): Promise<unknown[]> => ipcRenderer.invoke('db:getMaterials', subjectId),
+  getMaterial: (materialId: number): Promise<unknown> => ipcRenderer.invoke('db:getMaterial', materialId),
   saveMaterial: (material: { subject_id: number; filename: string; file_type: string; content_text: string }): Promise<{ id: number }> =>
     ipcRenderer.invoke('db:saveMaterial', material),
   deleteMaterial: (materialId: number): Promise<{ success: boolean }> =>
@@ -137,10 +138,25 @@ const electronAPI = {
   getInterleavedDueCards: (userId: number, subjectId?: number): Promise<(Card & CardSchedule)[]> =>
     ipcRenderer.invoke('db:getInterleavedDueCards', userId, subjectId),
 
-  // Auto-updater (background)
+  // Auto-updater (background & manual)
   onUpdateAvailable: (cb: (version: string) => void) => ipcRenderer.on('update:available', (_e, v) => cb(v)),
+  onUpdaterAvailable: (cb: (info: {
+    currentVersion: string
+    latestVersion: string
+    updateAvailable: boolean
+    downloadUrl: string | null
+    releaseUrl: string
+    releaseNotes: string
+  }) => void) => ipcRenderer.on('updater:available', (_e, info) => cb(info)),
   onUpdateDownloaded: (cb: (version: string) => void) => ipcRenderer.on('update:downloaded', (_e, v) => cb(v)),
-  installUpdate: () => ipcRenderer.send('update:install'),
+  onUpdaterDownloaded: (cb: (data: { filePath: string; version: string }) => void) =>
+    ipcRenderer.on('updater:downloaded', (_e, d) => cb(d)),
+  installUpdate: (filePath?: string): Promise<{ success: boolean; method?: string; error?: string }> => {
+    if (filePath) {
+      return ipcRenderer.invoke('updater:install', filePath)
+    }
+    return Promise.resolve({ success: false, error: 'No file path provided' })
+  },
 
   // Manual update checker
   getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
@@ -160,6 +176,7 @@ const electronAPI = {
   cleanupUpdateFile: (filePath: string): Promise<void> => ipcRenderer.invoke('updater:cleanupFile', filePath),
   onDownloadProgress: (cb: (pct: number) => void) => ipcRenderer.on('updater:download-progress', (_e, pct) => cb(pct)),
   onUpdateError: (cb: (message: string) => void) => ipcRenderer.on('update:error', (_e, msg) => cb(msg)),
+  onUpdaterError: (cb: (message: string) => void) => ipcRenderer.on('updater:error', (_e, msg) => cb(msg)),
 
   // ── Cloze / Card Notes ──
   getCardsByNoteId: (noteId: number): Promise<Card[]> =>
@@ -298,8 +315,14 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:listSessions', subjectId, limit),
   tutorUpdateSessionPhase: (sessionId: number, phase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:updateSessionPhase', sessionId, phase),
-  tutorEndSession: (sessionId: number, summary?: string): Promise<{ success: boolean }> =>
+  tutorEndSession: (sessionId: number, summary?: string): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
     ipcRenderer.invoke('tutor:endSession', sessionId, summary),
+  tutorGetGapAnalysis: (subjectId: number, userId: number): Promise<import('../src/types').GapAnalysisResult> =>
+    ipcRenderer.invoke('tutor:getGapAnalysis', subjectId, userId),
+  tutorGetTopicMemories: (subjectId: number, userId: number): Promise<import('../src/types').TutorTopicMemory[]> =>
+    ipcRenderer.invoke('tutor:getTopicMemories', subjectId, userId),
+  tutorGetSessionEvaluation: (sessionId: number): Promise<import('../src/types').TutorSessionEvaluation | null> =>
+    ipcRenderer.invoke('tutor:getSessionEvaluation', sessionId),
   tutorDeleteSession: (sessionId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:deleteSession', sessionId),
   tutorSaveMessage: (params: { session_id: number; role: string; content: string; content_type?: string }): Promise<Message> =>
@@ -308,7 +331,7 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getMessageHistory', sessionId, limit),
   tutorGenerateCards: (sessionId: number, subjectId: number, sessionContent: string): Promise<string> =>
     ipcRenderer.invoke('tutor:generateCards', sessionId, subjectId, sessionContent),
-  tutorCheckDuplicates: (subjectId: number, cards: { front: string; back: string }[]): Promise<{ isDuplicate: boolean }[]> =>
+  tutorCheckDuplicates: (subjectId: number, cards: { front: string; back: string }[]): Promise<DuplicateCheckResult[]> =>
     ipcRenderer.invoke('tutor:checkDuplicates', subjectId, cards),
   tutorUpdateMastery: (userId: number, subjectId: number, topic: string, score: number): Promise<{ mastery_prob: number }> =>
     ipcRenderer.invoke('tutor:updateMastery', userId, subjectId, topic, score),

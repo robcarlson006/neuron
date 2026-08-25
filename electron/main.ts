@@ -1,7 +1,6 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { autoUpdater } from 'electron-updater'
 import Database from 'better-sqlite3'
 import { DB_SCHEMA, MIGRATIONS_SQL } from '../src/lib/db'
 import { registerDbHandlers, setDatabase } from './ipc/dbHandlers'
@@ -196,9 +195,7 @@ app.whenReady().then(async () => {
   setClassDatabase(db)
   registerClassHandlers()
   registerUpdaterHandlers(() => mainWindow)
-
   createWindow()
-  setupAutoUpdater()
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -211,45 +208,3 @@ app.on('window-all-closed', () => {
   }
 })
 
-// ── Auto-updater ──────────────────────────────────────────────────────────────
-function setupAutoUpdater(): void {
-  if (is.dev) return  // skip in dev mode
-
-  // Allow unsigned updates on macOS (required when not code-signed)
-  if (process.platform === 'darwin') {
-    autoUpdater.allowPrerelease = false
-    autoUpdater.allowDowngrade = false
-    // Disable code signature validation for unsigned builds
-    // This is needed because electron-updater uses Squirrel.Mac which validates signatures
-    process.env['ELECTRON_UPDATER_ALLOW_UNSIGNED'] = 'true'
-  }
-
-  autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
-
-  autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('update:available', info.version)
-  })
-
-  autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('update:downloaded', info.version)
-  })
-
-  autoUpdater.on('error', (err) => {
-    console.error('Auto-updater error:', err.message)
-    mainWindow?.webContents.send('update:error', err.message)
-  })
-
-  // Check on launch, then every 4 hours
-  autoUpdater.checkForUpdates().catch(() => {})
-  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000)
-}
-
-// Renderer can trigger "install now"
-ipcMain.on('update:install', () => {
-  try {
-    autoUpdater.quitAndInstall()
-  } catch (err) {
-    mainWindow?.webContents.send('update:error', (err as Error).message)
-  }
-})

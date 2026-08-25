@@ -26,17 +26,49 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if release already exists on GitHub
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/v${VERSION}")
+
+          if [ "$HTTP_STATUS" = "404" ]; then
+            echo "Release v$VERSION does not exist yet. Triggering release build."
             echo "changed=true" >> $GITHUB_OUTPUT
           elif git diff HEAD~1 HEAD -- package.json 2>/dev/null | grep -q '"version":'; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
+            echo "Release v$VERSION already exists and no version bump detected."
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-release:
+    name: Create GitHub Release
+    needs: check-version
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: Neuron v${{ needs.check-version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-mac:
     name: Build macOS
-    needs: check-version
+    needs: [check-version, create-release]
     if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || needs.check-version.outputs.changed == 'true'
     runs-on: macos-latest
     steps:
@@ -53,6 +85,7 @@ jobs:
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload Mac artifacts
         uses: softprops/action-gh-release@v2
@@ -64,10 +97,12 @@ jobs:
           tag_name: v${{ needs.check-version.outputs.version }}
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-windows:
     name: Build Windows
-    needs: check-version
+    needs: [check-version, create-release]
     if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || needs.check-version.outputs.changed == 'true'
     runs-on: windows-latest
     steps:
@@ -94,10 +129,12 @@ jobs:
           tag_name: v${{ needs.check-version.outputs.version }}
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-linux:
     name: Build Linux
-    needs: check-version
+    needs: [check-version, create-release]
     if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -120,8 +157,10 @@ jobs:
         with:
           files: |
             dist/*.AppImage
-            dist/*.snap
             dist/latest-linux.yml
           tag_name: v${{ needs.check-version.outputs.version }}
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

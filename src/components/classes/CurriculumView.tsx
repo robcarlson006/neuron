@@ -74,7 +74,6 @@ export default function CurriculumView({
                     ${isPending ? 'text-slate-600 dark:text-slate-400' : ''}
                   `}>
                     {mod.chapter_number ? `Ch. ${mod.chapter_number}: ` : ''}
-                    {mod.week_number ? `Week ${mod.week_number}: ` : ''}
                     {mod.title}
                   </span>
                   {mod.hours_estimated && (

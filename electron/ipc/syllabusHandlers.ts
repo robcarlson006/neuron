@@ -84,37 +84,38 @@ Rules:
 - Estimate reasonable page ranges based on total pages and chapters
 - Return ONLY valid JSON. No markdown. No commentary.`
     } else {
-      prompt = `You are an expert curriculum designer. Create a detailed syllabus for a class called "${subject.name}" based on the following source materials.
+      prompt = `You are an expert curriculum designer. Create a detailed syllabus for "${subject.name}" based on the following source materials.
 
 The student can commit approximately ${hoursPerWeek} hour(s) per week to this class.
 
 SOURCE MATERIALS:
 ${materialSummaries}
 
-Based on these materials, generate a syllabus broken into modules and topics. Each module represents one week of study. Each topic within a module is a specific concept or skill to master.
+Based on these materials, organize the content into major topics and subtopics. Each module represents one key subject topic. Each topic within a module is a specific subtopic, concept, or skill to master.
 
 Respond in JSON format:
 {
   "modules": [
     {
-      "title": "Module title",
-      "description": "Brief description of what this module covers",
-      "week_number": 1,
+      "title": "Topic Name",
+      "description": "Brief description of what this topic covers",
       "hours_estimated": ${hoursPerWeek},
       "prerequisites": "Start here — no prerequisites",
       "topics": [
-        { "title": "Topic title", "description": "What this topic covers" }
+        { "title": "Subtopic title", "description": "What this subtopic covers" }
       ]
     }
   ]
 }
 
 Rules:
-- Create 4-12 modules depending on the material volume
-- Each module should have 2-5 topics
-- Modules should progress logically (foundations first, then advanced)
-- Topics should be specific, teachable concepts
-- Each module needs prerequisites field (e.g., "Complete Module 1 first")
+- Organize and sort materials logically by topic
+- The title of each module must be the descriptive topic name (do NOT use "Week 1", "Week 2", "Module 1", etc.)
+- Create 4-12 topic modules depending on the material volume
+- Each module should have 2-5 subtopics
+- Topics should progress logically (foundations first, then advanced)
+- Subtopics should be specific, teachable concepts
+- Each module needs prerequisites field (e.g., "Complete [Previous Topic] first")
 - Return ONLY valid JSON. No markdown. No commentary.`
     }
 
@@ -170,7 +171,7 @@ Rules:
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           subjectId, mod.title, mod.description || null,
-          isBook ? null : (mod.week_number || i + 1),
+          null,
           previousStatus,
           mod.hours_estimated || hoursPerWeek, i,
           isBook ? (mod.chapter_number || i + 1) : null,
@@ -306,7 +307,7 @@ export function registerSyllabusHandlers(): void {
     const prompt = `A student is studying "${subject.name}" and has changed their deadline to ${newDeadline}.
 
 Current syllabus modules:
-${modules.map(m => `Week ${m.week_number || '?'}: ${m.title} (${m.hours_estimated}h)`).join('\n')}
+${modules.map(m => `${m.chapter_number ? `Ch. ${m.chapter_number}: ` : ''}${m.title} (${m.hours_estimated}h)`).join('\n')}
 
 Existing deadlines:
 ${existingDeadlines.map(d => `- ${d.label}: ${d.deadline_date}`).join('\n') || 'None'}
@@ -450,7 +451,7 @@ async function updateFromMaterials(
     `[File: ${m.filename}]\n${m.content_text.substring(0, 3000)}`
   ).join('\n\n---\n\n')
 
-  const prompt = `You are an expert curriculum designer. A student is studying "${subject.name}" and has added NEW study materials to their class.
+  const prompt = `You are an expert curriculum designer. A student is studying "${subject.name}" and has added NEW study materials to their ${isBook ? 'book' : 'subject'}.
 
 EXISTING SYLLABUS — these modules already exist and MUST NOT be replaced or restructured:
 ${existingContext}
@@ -469,13 +470,13 @@ Respond in JSON:
   "needs_updates": true,
   "new_modules": [
     {
-      "title": "New module title",
+      "title": "${isBook ? 'Chapter Title' : 'Descriptive Topic Name'}",
       "description": "Description",
-      "${isBook ? 'chapter_number' : 'week_number'}": ${isBook ? '5' : '9'},
+      ${isBook ? '"chapter_number": 5,\n      "page_start": 120,\n      "page_end": 150,' : ''}
       "hours_estimated": 2,
-      ${isBook ? '"page_start": 120,\n      "page_end": 150,' : '"prerequisites": "Complete Week 8 first",'}
+      "prerequisites": "Start here or reference prior topics",
       "topics": [
-        { "title": "Topic title", "description": "What this topic covers" }
+        { "title": "Subtopic title", "description": "What this subtopic covers" }
       ]
     }
   ],
@@ -494,6 +495,7 @@ Respond in JSON:
 
 Rules:
 - Use empty arrays when nothing is needed; set needs_updates accordingly.
+- ${isBook ? 'New modules represent chapters' : 'New modules represent major topics (do NOT use "Week 1", "Week 2", etc. - use the descriptive topic name)'}
 - Each appended topic must be genuinely NEW relative to the module's listed topics — never duplicate them.
 - New modules must have 2-5 topics each.
 - Every new material filename should appear in existing_module_assignments unless it spans several modules.
@@ -524,13 +526,12 @@ Rules:
     let newModuleCount = 0
     let newTopicCount = 0
 
-    // Continue the sort_order / week / chapter sequences after the current tail.
+    // Continue the sort_order / chapter sequences after the current tail.
     const tail = db.prepare(
       `SELECT COALESCE(MAX(sort_order), -1) AS sort_next,
-              COALESCE(MAX(week_number), 0) AS week_next,
               COALESCE(MAX(chapter_number), 0) AS chapter_next
        FROM syllabus_modules WHERE subject_id = ?`
-    ).get(subjectId) as { sort_next: number; week_next: number; chapter_next: number }
+    ).get(subjectId) as { sort_next: number; chapter_next: number }
 
     for (let i = 0; i < newModules.length; i++) {
       const mod = newModules[i]
@@ -542,10 +543,10 @@ Rules:
         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
       `).run(
         subjectId, mod.title, mod.description || null,
-        mod.week_number ?? (isBook ? null : tail.week_next + i + 1),
-        mod.hours_estimated || 1, tail.sort_next + i,
+        null,
+        mod.hours_estimated || 1, tail.sort_next + i + 1,
         mod.chapter_number ?? (isBook ? tail.chapter_next + i + 1 : null),
-        mod.chapter_title ?? null,
+        isBook ? mod.title : null,
         mod.page_start ?? null, mod.page_end ?? null,
         mod.prerequisites ?? null
       )

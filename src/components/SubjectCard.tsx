@@ -219,7 +219,7 @@ export default function SubjectCard({ data, onDelete, onStatusChange }: SubjectC
           )}
         </div>
 
-        {/* Study Now button */}
+        {/* Study Flashcards button */}
         {totalCards > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
             <SubjectStudyMenu subjectId={subject.id} cardsDue={cardsDue} />
@@ -286,7 +286,7 @@ function SubjectStudyMenu({ subjectId, cardsDue }: { subjectId: number; cardsDue
         onClick={(e) => { e.stopPropagation(); setOpen(o => !o) }}
         className="w-full bg-violet-600 hover:bg-violet-700 text-white py-2 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
       >
-        Study Now{cardsDue > 0 ? ` · ${cardsDue} due` : ''}
+        Study Flashcards{cardsDue > 0 ? ` · ${cardsDue} due` : ''}
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
           <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>

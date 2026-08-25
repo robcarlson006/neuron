@@ -208,37 +208,7 @@ export default function ClassOverview(): React.JSX.Element {
           loadingCards={loadingCards}
         />
 
-        {!subject.syllabus_generated && (
-          <div className="mt-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-            <div className="flex items-start gap-3">
-              <span className="text-lg">💡</span>
-              <div>
-                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                  No syllabus yet
-                </p>
-                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
-                  Upload study materials and generate a syllabus to create a structured curriculum.
-                </p>
-                <button
-                  onClick={async () => {
-                    try {
-                      const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
-                      if (result?.length) {
-                        addToast({ type: 'success', title: 'Syllabus Generated', message: `${result.length} modules created.` })
-                        loadClassData()
-                      }
-                    } catch (err) {
-                      addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
-                    }
-                  }}
-                  className="mt-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium rounded-lg transition-colors"
-                >
-                  Generate Syllabus from Materials
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {subject.syllabus_generated === 1 && (
           <div className="mt-4 text-center">

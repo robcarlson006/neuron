@@ -1398,7 +1398,7 @@ function SubjectDetailStudyMenu({ subjectId, disabled, folderId }: { subjectId: 
         },
       ]
 
-  const buttonLabel = folderId != null ? 'Study this folder' : 'Study Now'
+  const buttonLabel = folderId != null ? 'Study this folder' : 'Study Flashcards'
 
   return (
     <div className="relative" ref={ref}>

@@ -334,6 +334,10 @@ export function registerDbHandlers(): void {
     return db.prepare('SELECT * FROM materials WHERE subject_id = ? ORDER BY uploaded_at DESC').all(subjectId)
   })
 
+  ipcMain.handle('db:getMaterial', (_event, materialId: number) => {
+    return db.prepare('SELECT * FROM materials WHERE id = ?').get(materialId) || null
+  })
+
   ipcMain.handle('db:saveMaterial', (_event, material: { subject_id: number; filename: string; file_type: string; content_text: string }) => {
     const result = db.prepare(
       'INSERT INTO materials (subject_id, filename, file_type, content_text, uploaded_at) VALUES (?, ?, ?, ?, ?)'

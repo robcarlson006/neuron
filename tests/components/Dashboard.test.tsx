@@ -115,7 +115,23 @@ describe('Dashboard Component', () => {
     })
   })
 
-  it('shows Add Subject button', async () => {
+  it('shows Add Subject button and triggers onNewSubject when clicked', async () => {
+    const handleNewSubject = jest.fn()
+    render(
+      <MemoryRouter>
+        <Dashboard onNewSubject={handleNewSubject} />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      const addSubjectBtn = screen.getByRole('button', { name: /\+ Add Subject/i })
+      expect(addSubjectBtn).toBeInTheDocument()
+      addSubjectBtn.click()
+      expect(handleNewSubject).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('does not render a separate New Class button', async () => {
     render(
       <MemoryRouter>
         <Dashboard />
@@ -123,7 +139,8 @@ describe('Dashboard Component', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Add Subject/i)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /\+ New Class/i })).not.toBeInTheDocument()
+      expect(screen.queryByText('New Class')).not.toBeInTheDocument()
     })
   })
 
@@ -140,7 +157,7 @@ describe('Dashboard Component', () => {
     })
   })
 
-  it('shows Study Now button when cards are due', async () => {
+  it('shows Study Flashcards button when cards are due', async () => {
     render(
       <MemoryRouter>
         <Dashboard />
@@ -148,7 +165,7 @@ describe('Dashboard Component', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getAllByText(/Study Now/).length).toBeGreaterThan(0)
+      expect(screen.getAllByText(/Study Flashcards/).length).toBeGreaterThan(0)
     })
   })
 

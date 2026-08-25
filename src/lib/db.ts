@@ -390,6 +390,37 @@ export const DB_SCHEMA = `
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS tutor_topic_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    mastery_level TEXT NOT NULL DEFAULT 'developing' CHECK(mastery_level IN ('struggling', 'developing', 'good', 'mastered')),
+    strengths TEXT,
+    struggles TEXT,
+    session_id INTEGER,
+    last_studied_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, subject_id, topic),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS tutor_session_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    strengths_json TEXT NOT NULL DEFAULT '[]',
+    struggles_json TEXT NOT NULL DEFAULT '[]',
+    topics_covered_json TEXT NOT NULL DEFAULT '[]',
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
 `
 
 export const MIGRATIONS_SQL = [
@@ -426,6 +457,36 @@ export const MIGRATIONS_SQL = [
   // V3: Incremental syllabus tracking — marks materials already folded into
   // the syllabus so updateFromMaterials only processes newly added ones.
   "ALTER TABLE materials ADD COLUMN syllabus_processed INTEGER NOT NULL DEFAULT 0",
+  // V3.2: AI Tutor memory tables
+  `CREATE TABLE IF NOT EXISTS tutor_topic_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    mastery_level TEXT NOT NULL DEFAULT 'developing' CHECK(mastery_level IN ('struggling', 'developing', 'good', 'mastered')),
+    strengths TEXT,
+    struggles TEXT,
+    session_id INTEGER,
+    last_studied_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, subject_id, topic),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS tutor_session_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    strengths_json TEXT NOT NULL DEFAULT '[]',
+    struggles_json TEXT NOT NULL DEFAULT '[]',
+    topics_covered_json TEXT NOT NULL DEFAULT '[]',
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
 ]
 
 export const MASTERED_INTERVAL = 21

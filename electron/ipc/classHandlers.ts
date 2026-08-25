@@ -211,35 +211,36 @@ Rules:
 - Each module should have 2-5 topics
 - Return ONLY valid JSON. No markdown. No commentary.`
   } else {
-    prompt = `You are an expert curriculum designer. Create a detailed syllabus for a class called "${subject.name}" based on the following source materials.
+    prompt = `You are an expert curriculum designer. Create a detailed syllabus for "${subject.name}" based on the following source materials.
 
 The student can commit approximately ${hoursPerWeek} hour(s) per week.
 
 SOURCE MATERIALS:
 ${materialSummaries}
 
-Based on these materials, generate a syllabus broken into modules and topics. Each module represents one week of study. Each topic is a specific concept or skill to master.
+Based on these materials, organize the content into major topics and subtopics. Each module represents one key subject topic (e.g. "Cell Structure & Function", "Linear Equations", etc.). Each topic within a module is a specific subtopic or concept to master.
 
 Respond in JSON format:
 {
   "modules": [
     {
-      "title": "Module title",
-      "description": "Brief description",
-      "week_number": 1,
+      "title": "Topic Name",
+      "description": "Brief description of what this topic covers",
       "hours_estimated": ${hoursPerWeek},
       "prerequisites": "Start here — no prerequisites",
       "topics": [
-        { "title": "Topic title", "description": "What this topic covers" }
+        { "title": "Subtopic title", "description": "What this subtopic covers" }
       ]
     }
   ]
 }
 
 Rules:
-- Create 4-12 modules depending on material volume
-- Each module should have 2-5 topics
-- Modules should progress logically
+- Organize and sort materials logically by topic
+- The title of each module must be the descriptive topic name (do NOT use "Week 1", "Week 2", "Module 1", etc.)
+- Create 4-12 topic modules depending on material volume
+- Each module should have 2-5 subtopics
+- Topics should progress logically (foundational concepts first, then advanced concepts)
 - Each module needs prerequisites field
 - Return ONLY valid JSON. No markdown. No commentary.`
   }
@@ -278,7 +279,7 @@ Rules:
         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
       `).run(
         subjectId, mod.title, mod.description || null,
-        isBook ? null : (mod.week_number || i + 1),
+        null,
         mod.hours_estimated || hoursPerWeek, i,
         isBook ? (mod.chapter_number || i + 1) : null,
         isBook ? mod.title : null,

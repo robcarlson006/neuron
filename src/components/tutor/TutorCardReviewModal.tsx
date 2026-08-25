@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { parseCardsFromText } from '../../lib/cardParser'
-import type { ParsedCard } from '../../types'
+import type { ParsedCard, DuplicateCheckResult } from '../../types'
 
 interface TutorCardReviewModalProps {
   sessionId: number
@@ -22,7 +22,7 @@ export default function TutorCardReviewModal({
   const [generating, setGenerating] = useState(true)
   const [parsedCards, setParsedCards] = useState<ParsedCard[]>([])
   const [selectedCards, setSelectedCards] = useState<Set<number>>(new Set())
-  const [duplicateFlags, setDuplicateFlags] = useState<boolean[]>([])
+  const [duplicateResults, setDuplicateResults] = useState<DuplicateCheckResult[]>([])
   const [saving, setSaving] = useState(false)
 
   // Generate cards on mount
@@ -36,17 +36,27 @@ export default function TutorCardReviewModal({
       const result = await window.electronAPI.tutorGenerateCards(sessionId, subjectId, sessionContent) as string
       const parsed = parseCardsFromText(result)
       setParsedCards(parsed)
-      // Select all by default
-      setSelectedCards(new Set(parsed.map((_, i) => i)))
 
       // Check duplicates
+      let dupes: DuplicateCheckResult[] = []
       if (parsed.length > 0) {
-        const dupes = await window.electronAPI.tutorCheckDuplicates(
+        dupes = await window.electronAPI.tutorCheckDuplicates(
           subjectId,
           parsed.map(c => ({ front: c.front, back: c.back }))
-        ) as { isDuplicate: boolean }[]
-        setDuplicateFlags(dupes.map(d => d.isDuplicate))
+        )
+        setDuplicateResults(dupes)
+      } else {
+        setDuplicateResults([])
       }
+
+      // Auto-select ONLY non-duplicate cards by default
+      const nonDupeIndices = new Set<number>()
+      parsed.forEach((_, i) => {
+        if (!dupes[i]?.isDuplicate) {
+          nonDupeIndices.add(i)
+        }
+      })
+      setSelectedCards(nonDupeIndices)
     } catch (err) {
       console.error('Card generation error:', err)
       addToast({ type: 'error', title: 'Card Generation Failed', message: 'Could not generate cards from this session.' })
@@ -64,11 +74,21 @@ export default function TutorCardReviewModal({
     })
   }
 
-  function toggleAll(): void {
-    if (selectedCards.size === parsedCards.length) {
-      setSelectedCards(new Set())
-    } else {
+  function toggleSelectMode(): void {
+    const nonDupeCount = parsedCards.filter((_, i) => !duplicateResults[i]?.isDuplicate).length
+    // If not all non-duplicates are selected, select all non-duplicates
+    if (selectedCards.size < nonDupeCount) {
+      const nonDupes = new Set<number>()
+      parsedCards.forEach((_, i) => {
+        if (!duplicateResults[i]?.isDuplicate) nonDupes.add(i)
+      })
+      setSelectedCards(nonDupes)
+    } else if (selectedCards.size === nonDupeCount && nonDupeCount < parsedCards.length) {
+      // If all non-dupes selected, select ALL cards (including dupes)
       setSelectedCards(new Set(parsedCards.map((_, i) => i)))
+    } else {
+      // Otherwise deselect all
+      setSelectedCards(new Set())
     }
   }
 
@@ -105,6 +125,7 @@ export default function TutorCardReviewModal({
 
   const flashcardCount = parsedCards.filter(c => c.type === 'flashcard').length
   const recallCount = parsedCards.filter(c => c.type === 'active_recall').length
+  const duplicateCount = duplicateResults.filter(d => d.isDuplicate).length
 
   // Loading state
   if (generating) {
@@ -113,7 +134,7 @@ export default function TutorCardReviewModal({
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl w-full max-w-lg p-8 text-center" onClick={e => e.stopPropagation()}>
           <span className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin inline-block mb-4" />
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">Generating study cards from your session...</p>
-          <p className="text-xs text-slate-400 dark:text-slate-500">The AI is creating flashcards and active recall questions.</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">The AI is creating fresh flashcards and active recall questions.</p>
         </div>
       </div>
     )
@@ -149,19 +170,33 @@ export default function TutorCardReviewModal({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2L14 14M14 2L2 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
           </div>
-          <div className="flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
-            <span>{parsedCards.length} cards generated</span>
-            {flashcardCount > 0 && <span>{flashcardCount} flashcards</span>}
-            {recallCount > 0 && <span>{recallCount} active recall</span>}
+          <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500 flex-wrap">
+            <span>{parsedCards.length} generated</span>
+            {duplicateCount > 0 && (
+              <span className="text-amber-600 dark:text-amber-400 font-medium">
+                · {duplicateCount} duplicate{duplicateCount !== 1 ? 's' : ''} excluded
+              </span>
+            )}
+            {flashcardCount > 0 && <span>· {flashcardCount} flashcards</span>}
+            {recallCount > 0 && <span>· {recallCount} active recall</span>}
             <span className="text-slate-300 dark:text-slate-600">·</span>
-            <span>{selectedCards.size} selected</span>
+            <span className="font-semibold text-violet-600 dark:text-violet-400">{selectedCards.size} selected to save</span>
           </div>
         </div>
+
+        {/* Duplicate Banner if all are duplicates */}
+        {duplicateCount === parsedCards.length && parsedCards.length > 0 && (
+          <div className="mx-4 mt-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+            <span className="text-sm">⚠️</span>
+            <span>All generated cards match concepts already in your deck. You can regenerate or manually select cards below to save them anyway.</span>
+          </div>
+        )}
 
         {/* Card list */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {parsedCards.map((card, index) => {
-            const isDuplicate = duplicateFlags[index]
+            const dupeInfo = duplicateResults[index]
+            const isDuplicate = dupeInfo?.isDuplicate
             const isSelected = selectedCards.has(index)
 
             return (
@@ -171,7 +206,7 @@ export default function TutorCardReviewModal({
                   isSelected
                     ? 'border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-900/20'
                     : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800'
-                } ${isDuplicate ? 'opacity-60' : ''}`}
+                } ${isDuplicate && !isSelected ? 'opacity-70' : ''}`}
               >
                 <div className="p-3">
                   <div className="flex items-start gap-3">
@@ -191,7 +226,7 @@ export default function TutorCardReviewModal({
 
                     {/* Card content */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
                           card.type === 'flashcard'
                             ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
@@ -200,7 +235,12 @@ export default function TutorCardReviewModal({
                           {card.type === 'flashcard' ? 'FC' : 'AR'}
                         </span>
                         {isDuplicate && (
-                          <span className="text-[10px] text-amber-500 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 rounded-full">Possible duplicate</span>
+                          <span
+                            className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1 font-medium"
+                            title={dupeInfo?.reason || 'Duplicate card'}
+                          >
+                            ⚠️ {dupeInfo?.reason || 'Duplicate card'}
+                          </span>
                         )}
                       </div>
                       <div className="flex items-start gap-2">
@@ -224,10 +264,16 @@ export default function TutorCardReviewModal({
         {/* Footer */}
         <div className="p-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between gap-3 flex-shrink-0">
           <button
-            onClick={toggleAll}
+            onClick={toggleSelectMode}
             className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
           >
-            {selectedCards.size === parsedCards.length ? 'Deselect All' : 'Select All'}
+            {selectedCards.size === 0
+              ? (duplicateCount > 0 ? 'Select New Cards' : 'Select All')
+              : selectedCards.size === parsedCards.length
+              ? 'Deselect All'
+              : duplicateCount > 0 && selectedCards.size === (parsedCards.length - duplicateCount)
+              ? 'Select All (Include Duplicates)'
+              : 'Select All'}
           </button>
           <div className="flex items-center gap-2">
             <button
