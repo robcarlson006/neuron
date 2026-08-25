@@ -1,6 +1,6 @@
 {
   "name": "studyhelper",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Spaced repetition and active recall for smarter studying",
   "main": "out/main/index.js",
   "author": "Neuron",
@@ -81,11 +81,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64", "x64"]
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["arm64", "x64"]
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ]
     },
