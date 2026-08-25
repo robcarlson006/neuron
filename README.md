@@ -16,30 +16,61 @@ An AI-powered spaced repetition desktop application for smarter studying. Neuron
 - **Local Data**: All study data stored in SQLite — no account required
 - **Seed Data**: Ships with 25+ World History cards for immediate exploration
 
-## Prerequisites
+## 📥 Download Neuron
 
-- **Node.js 18+** — [Download](https://nodejs.org)
+You can download the latest pre-built installers for macOS, Windows, and Linux directly from [GitHub Releases](https://github.com/robcarlson006/neuron/releases/latest):
+
+| Platform | Architecture | Download |
+| :--- | :--- | :--- |
+| 🍏 **macOS** | **Apple Silicon (M1 / M2 / M3 / M4)** | [**Neuron-3.1.0-arm64.dmg**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron-3.1.0-arm64.dmg) |
+| 🍏 **macOS** | **Intel (x64)** | [**Neuron-3.1.0.dmg**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron-3.1.0.dmg) |
+| 🪟 **Windows** | **64-bit** | [**Neuron.Setup.3.1.0.exe**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron.Setup.3.1.0.exe) |
+| 🐧 **Linux** | **x64** | [**Neuron-3.1.0.AppImage**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron-3.1.0.AppImage) |
+
+---
+
+### 🍎 macOS Installation Note (Gatekeeper / "Damaged" message)
+
+Because Neuron is open-source and not yet signed with a paid Apple Developer certificate, macOS Gatekeeper may show a message like *"Neuron is damaged and can't be opened"* or *"Apple cannot check it for malicious software"*.
+
+**To open Neuron on macOS:**
+1. Open the downloaded `.dmg` and drag **Neuron** to your `/Applications` folder.
+2. Open **Terminal** and run this single command to remove the quarantine flag:
+   ```bash
+   xattr -cr /Applications/Neuron.app
+   ```
+3. Launch **Neuron** from Applications or Spotlight!
+
+*(Alternatively: Right-click `Neuron.app` in `/Applications` → click **Open** → click **Open**, or go to **System Settings → Privacy & Security** and click **Open Anyway**).*
+
+---
+
+### 🪟 Windows Installation Note
+
+If Microsoft Defender SmartScreen displays *"Windows protected your PC"*:
+1. Click **More info**.
+2. Click **Run anyway**.
+
+---
+
+## 🛠️ Development & Building from Source
+
+### Prerequisites
+
+- **Node.js 20+** — [Download](https://nodejs.org)
 - **npm 9+** (included with Node.js)
-## Setup
 
-### 1. Install dependencies
+### Setup
 
 ```bash
-cd studyhelper
+# Clone the repository
+git clone https://github.com/robcarlson006/neuron.git
+cd neuron
+
+# Install dependencies
 npm install
-```
 
-### 2. Run the app
-
-```bash
-npm run dev
-```
-
-## Development
-
-### Start in development mode
-
-```bash
+# Run the app in development mode
 npm run dev
 ```
 
@@ -88,7 +119,7 @@ npm run lint
 
 ## Database Location
 
-StudyHelper stores your data in a local SQLite database:
+Neuron stores your study data in a local SQLite database:
 
 | OS      | Path |
 |---------|------|
@@ -98,7 +129,7 @@ StudyHelper stores your data in a local SQLite database:
 
 ## How It Works
 
-### Spaced Repetition (SM-2)
+### Spaced Repetition (SM-2 / FSRS-5)
 
 After each card review, you rate your confidence:
 - **Got it perfectly** → quality 5
@@ -106,7 +137,7 @@ After each card review, you rate your confidence:
 - **Almost** → quality 3
 - **Forgot / got it wrong** → quality 1
 
-The SM-2 algorithm adjusts the next review interval based on your rating. Cards you know well are scheduled further out (weeks/months); cards you struggle with come back the next day.
+The spaced repetition algorithm adjusts the next review interval based on your rating. Cards you know well are scheduled further out (weeks/months); cards you struggle with come back sooner.
 
 **Mastery threshold**: A card is considered "mastered" when its interval reaches 21+ days.
 
@@ -116,12 +147,12 @@ Mark a subject as "Ongoing" for long-term retention. When a card's interval reac
 
 ### Exam Boost
 
-Add exam deadlines to a subject. If an exam is within 7 days, the SM-2 scheduler caps review intervals to ensure you see each card before the exam.
+Add exam deadlines to a subject. If an exam is within 7 days, the scheduler caps review intervals to ensure you see each card before the exam.
 
 ## Project Structure
 
 ```
-studyhelper/
+neuron/
 ├── electron/           # Main process (Node.js/Electron)
 │   ├── main.ts         # App entry, window creation, DB init
 │   ├── preload.ts      # contextBridge API exposure

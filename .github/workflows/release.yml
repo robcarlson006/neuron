@@ -24,10 +24,12 @@ jobs:
           fetch-depth: 2
       - id: check
         run: |
-          if git diff HEAD~1 HEAD -- package.json | grep -q '"version":'; then
-            VERSION=$(node -p "require('./package.json').version")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.ref_type }}" = "tag" ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          elif git diff HEAD~1 HEAD -- package.json 2>/dev/null | grep -q '"version":'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
