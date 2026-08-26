@@ -403,12 +403,32 @@ const electronAPI = {
     ipcRenderer.invoke('cards:batchGenerate', subjectId, materialIds),
   cardsGenerateStatus: (subjectId: number): Promise<{ totalFiles: number; filesWithCards: number; pending: number }> =>
     ipcRenderer.invoke('cards:generateStatus', subjectId),
-  cardsGenerateFromModule: (subjectId: number, moduleId: number): Promise<{ success: boolean; count: number; module_name?: string; error?: string }> =>
-    ipcRenderer.invoke('cards:generateFromModule', subjectId, moduleId),
-  cardsGenerateFlashcardsFromModule: (subjectId: number, moduleId: number, userId?: number): Promise<{ success: boolean; count: number; module_name?: string; error?: string }> =>
-    ipcRenderer.invoke('cards:generateFlashcardsFromModule', subjectId, moduleId, userId),
-  cardsGenerateActiveRecallFromModule: (subjectId: number, moduleId: number, userId?: number): Promise<{ success: boolean; count: number; module_name?: string; error?: string }> =>
-    ipcRenderer.invoke('cards:generateActiveRecallFromModule', subjectId, moduleId, userId),
+  cardsGenerateFromModule: (
+    subjectId: number,
+    moduleId: number,
+    options?: import('../src/types').ModuleCardGenOptions
+  ): Promise<{ success: boolean; count: number; module_name?: string; error?: string; duplicates_filtered?: number }> =>
+    ipcRenderer.invoke('cards:generateFromModule', subjectId, moduleId, options),
+  cardsGenerateFlashcardsFromModule: (
+    subjectId: number,
+    moduleId: number,
+    count?: number,
+    userId?: number
+  ): Promise<{ success: boolean; count: number; module_name?: string; error?: string; duplicates_filtered?: number }> =>
+    ipcRenderer.invoke('cards:generateFlashcardsFromModule', subjectId, moduleId, count, userId),
+  cardsGenerateActiveRecallFromModule: (
+    subjectId: number,
+    moduleId: number,
+    count?: number,
+    userId?: number
+  ): Promise<{ success: boolean; count: number; module_name?: string; error?: string; duplicates_filtered?: number }> =>
+    ipcRenderer.invoke('cards:generateActiveRecallFromModule', subjectId, moduleId, count, userId),
+  cardsGenerateFromText: (
+    subjectId: number,
+    text: string,
+    options?: import('../src/types').ModuleCardGenOptions & { folderId?: number | null }
+  ): Promise<{ success: boolean; count: number; error?: string; duplicates_filtered?: number }> =>
+    ipcRenderer.invoke('cards:generateFromText', subjectId, text, options),
 
   // ── Class operations ──
   classCreate: (userId: number, data: import('../src/types').ClassCreationData): Promise<{ success: boolean; subject: import('../src/types').Subject; materials: { id: number; filename: string; fileType: string }[]; deadlines: { id: number; label: string }[]; syllabusModules: import('../src/types').SyllabusModule[]; syllabusGenerated: boolean }> =>

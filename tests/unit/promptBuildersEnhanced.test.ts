@@ -107,25 +107,42 @@ describe('enhanced prompt builders', () => {
     expect(prompt).toContain('Biology')
     expect(prompt).toContain('Module 1')
     expect(prompt).toContain('Cells')
-    expect(prompt).toContain('DO NOT duplicate')
+    expect(prompt).toContain('DEDUPLICATION REQUIREMENT')
     expect(prompt).toContain('Existing card')
     expect(prompt).toContain('8')
+    expect(prompt).toContain('Minimum Information Principle')
   })
 
   it('buildAutoCardGenerationPrompt omits dedup section without existing cards', () => {
     const prompt = buildAutoCardGenerationPrompt('source text', undefined, undefined, undefined, [], 8, 4)
-    expect(prompt).not.toContain('DO NOT duplicate')
+    expect(prompt).not.toContain('DEDUPLICATION REQUIREMENT')
   })
 
-  it('buildFlashcardOnlyPrompt requests flashcards only', () => {
-    const prompt = buildFlashcardOnlyPrompt('source', 'Subject', 'Module', 10)
+  it('buildFlashcardOnlyPrompt requests flashcards only with custom count', () => {
+    const prompt = buildFlashcardOnlyPrompt('source', 'Subject', 'Module', 25)
     expect(prompt).toContain('NO active recall')
-    expect(prompt).toContain('10')
+    expect(prompt).toContain('25')
+    expect(prompt).toContain('Minimum Information Principle')
   })
 
-  it('buildActiveRecallOnlyPrompt requests active recall only', () => {
-    const prompt = buildActiveRecallOnlyPrompt('source', 'Subject', 'Module', 6)
+  it('buildFlashcardOnlyPrompt includes deduplication section when existing cards are provided', () => {
+    const prompt = buildFlashcardOnlyPrompt('source', 'Subject', 'Module', 15, [{ front: 'Mitochondria function' }])
+    expect(prompt).toContain('DEDUPLICATION REQUIREMENT')
+    expect(prompt).toContain('Mitochondria function')
+    expect(prompt).toContain('15')
+  })
+
+  it('buildActiveRecallOnlyPrompt requests active recall only with custom count', () => {
+    const prompt = buildActiveRecallOnlyPrompt('source', 'Subject', 'Module', 30)
     expect(prompt).toContain('NO flashcards')
-    expect(prompt).toContain('6')
+    expect(prompt).toContain('30')
+    expect(prompt).toContain('Elaborative Interrogation')
+  })
+
+  it('buildActiveRecallOnlyPrompt includes deduplication section when existing cards are provided', () => {
+    const prompt = buildActiveRecallOnlyPrompt('source', 'Subject', 'Module', 10, [{ front: 'Explain ATP synthesis' }])
+    expect(prompt).toContain('DEDUPLICATION REQUIREMENT')
+    expect(prompt).toContain('Explain ATP synthesis')
+    expect(prompt).toContain('10')
   })
 })

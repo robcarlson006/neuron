@@ -1,24 +1,28 @@
-import React from 'react'
-import type { SyllabusModule, ModuleTopic } from '../../types'
+import React, { useState } from 'react'
+import type { SyllabusModule, ModuleTopic, ModuleCardGenOptions } from '../../types'
+import GenerateCardsModal from './GenerateCardsModal'
 
 interface CurriculumViewProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
+  subjectName?: string
   onStartTutor: (moduleId: number) => void
-  onGenerateCards: (moduleId: number) => void
+  onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
   onToggleTopic: (topicId: number, studied: boolean) => void
   loadingCards?: Record<number, boolean>
 }
 
 export default function CurriculumView({
   modules,
+  subjectName,
   onStartTutor,
   onGenerateCards,
   onToggleTopic,
   loadingCards
 }: CurriculumViewProps): React.JSX.Element {
-  const [expandedModule, setExpandedModule] = React.useState<number | null>(
+  const [expandedModule, setExpandedModule] = useState<number | null>(
     modules.find(m => m.status === 'in_progress')?.id ?? null
   )
+  const [modalModule, setModalModule] = useState<(SyllabusModule & { topics?: ModuleTopic[] }) | null>(null)
 
   function toggleModule(id: number): void {
     setExpandedModule(prev => prev === id ? null : id)
@@ -148,9 +152,9 @@ export default function CurriculumView({
                     🎓 Start Tutor
                   </button>
                   <button
-                    onClick={() => onGenerateCards(mod.id)}
+                    onClick={() => setModalModule(mod)}
                     disabled={loadingCards?.[mod.id]}
-                    className="flex-1 px-3 py-2 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors"
+                    className="flex-1 px-3 py-2 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors cursor-pointer"
                   >
                     {loadingCards?.[mod.id] ? '⏳ Generating...' : '🃏 Generate Cards'}
                   </button>
@@ -160,6 +164,22 @@ export default function CurriculumView({
           </div>
         )
       })}
+
+      {/* Card Generation Modal */}
+      {modalModule && (
+        <GenerateCardsModal
+          isOpen={!!modalModule}
+          module={modalModule}
+          subjectName={subjectName}
+          isGenerating={!!loadingCards?.[modalModule.id]}
+          onClose={() => setModalModule(null)}
+          onGenerate={async (options) => {
+            const modId = modalModule.id
+            await onGenerateCards(modId, options)
+            setModalModule(null)
+          }}
+        />
+      )}
     </div>
   )
 }

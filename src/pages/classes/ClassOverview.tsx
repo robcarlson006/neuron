@@ -81,12 +81,18 @@ export default function ClassOverview(): React.JSX.Element {
     if (subject) setShowConfigModal({ subjectId, subjectName: subject.name })
   }
 
-  async function handleGenerateCards(moduleId: number): Promise<void> {
+  async function handleGenerateCards(moduleId: number, options?: import('../../types').ModuleCardGenOptions): Promise<void> {
     setLoadingCards(prev => ({ ...prev, [moduleId]: true }))
     try {
-      const result = await window.electronAPI.cardsGenerateFromModule(subjectId, moduleId)
+      const result = await window.electronAPI.cardsGenerateFromModule(subjectId, moduleId, options)
       if (result.success) {
-        addToast({ type: 'success', title: 'Cards Generated', message: `${result.count} cards created from ${result.module_name || 'module'}.` })
+        const typeStr = options?.type === 'flashcard' ? 'flashcards' : options?.type === 'active_recall' ? 'active recall questions' : 'cards'
+        const dupNote = result.duplicates_filtered && result.duplicates_filtered > 0 ? ` (${result.duplicates_filtered} duplicates skipped)` : ''
+        addToast({
+          type: 'success',
+          title: 'Cards Generated',
+          message: `${result.count} ${typeStr} created from ${result.module_name || 'module'}${dupNote}.`
+        })
       } else {
         addToast({ type: 'error', title: 'Generation Failed', message: result.error || 'Unknown error' })
       }
@@ -202,6 +208,7 @@ export default function ClassOverview(): React.JSX.Element {
 
         <CurriculumView
           modules={modules}
+          subjectName={subject.name}
           onStartTutor={handleStartTutor}
           onGenerateCards={handleGenerateCards}
           onToggleTopic={handleToggleTopic}

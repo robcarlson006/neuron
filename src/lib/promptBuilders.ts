@@ -136,7 +136,7 @@ export function buildAutoCardGenerationPrompt(
   subjectName?: string,
   moduleTitle?: string,
   topicTitle?: string,
-  existingCards?: { front: string; back: string }[],
+  existingCards?: { front: string; back?: string }[],
   minCards: number = 8,
   minQuestions: number = 4
 ): string {
@@ -147,10 +147,14 @@ export function buildAutoCardGenerationPrompt(
 
   let dedupSection = ''
   if (existingCards && existingCards.length > 0) {
-    dedupSection = `\n\nDO NOT duplicate these existing cards:\n${existingCards.slice(0, 25).map(c => `- "${c.front}"`).join('\n')}`
+    dedupSection = `\n\n## ⚠️ DEDUPLICATION REQUIREMENT (CRITICAL)
+Do NOT duplicate or re-test any concepts, questions, or terms already covered in the existing deck:
+${existingCards.slice(0, 40).map(c => `- "${c.front}"`).join('\n')}
+If a topic is already covered above, find fresh angles, deeper mechanisms, distinct applications, or unaddressed subtopics.`
   }
 
-  return `You are an expert educator and cognitive scientist creating high-quality study materials using evidence-based principles.
+  return `You are a world-class cognitive scientist, learning engineer, and educational prompt designer.
+Your mission is to generate high-yield, durable study materials optimized for spaced repetition and deep semantic retention.
 
 CONTEXT:${contextSection}
 
@@ -163,52 +167,55 @@ Return valid JSON with this exact structure:
 {
   "flashcards": [
     {
-      "front": "Question/prompt",
-      "back": "Answer/explanation",
+      "front": "Atomic prompt or cloze deletion (e.g. '[Concept] is the mechanism where ___')",
+      "back": "Concise, precise explanation (1-2 sentences)",
       "card_subtype": "definition | mechanism | application | discrimination",
-      "concrete_example": "A real-world example of this concept",
-      "common_mistake": "A common misconception about this concept",
-      "mnemonic": "Optional memory aid or mnemonic"
+      "concrete_example": "A concrete real-world scenario or analogy illustrating this concept",
+      "common_mistake": "A frequent student misconception or trap to avoid",
+      "mnemonic": "An intuitive memory hook, acronym, or vivid mental visual"
     }
   ],
   "active_recall": [
     {
-      "question": "Open-ended question requiring understanding",
-      "model_answer": "Complete correct answer",
+      "question": "Deep conceptual inquiry starting with Why/How/Explain the mechanism of... or scenario analysis",
+      "model_answer": "Complete, structured explanation with key conceptual checkpoints for mastery",
       "card_subtype": "definition | mechanism | application | discrimination",
-      "concrete_example": "A real-world example",
-      "common_mistake": "A common misconception",
-      "mnemonic": "Optional memory aid"
+      "concrete_example": "A real-world application or case study",
+      "common_mistake": "A common reasoning flaw or incorrect assumption",
+      "mnemonic": "Optional memory aid or mental framework"
     }
   ]
 }
 
-## CARD DESIGN RULES (MUST FOLLOW)
+## COGNITIVE SCIENCE CARD DESIGN RULES (MUST FOLLOW)
 
-1. **Minimum Information Principle** — Each card tests EXACTLY ONE concept. Never combine "What are the 3 types of X?" into one card. Make 3 separate cards.
+1. **Minimum Information Principle (MIP / Atomicity)**:
+   - Each flashcard MUST test EXACTLY ONE atomic fact or relationship.
+   - NEVER create compound cards or lists (e.g. "What are the 4 stages of X?"). Split multi-part ideas into separate single-concept cards.
 
-2. **Cloze Deletion for definitions** — Use fill-in-the-blank style for definitions: "[KEY TERM] is the process by which ___" forces precise recall.
+2. **Retrieval Strength & Anti-Pattern Matching**:
+   - Prompts must force active semantic retrieval, not superficial keyword recognition or guessing.
+   - Make prompts self-contained: NEVER use vague pronouns ("this method", "as discussed above", "the latter").
 
-3. **Elaborative Interrogation** — Every concept needs a "Why does this happen?" or "How does this work?" card in addition to the definition card. These go in active_recall.
+3. **Cloze Deletions & Targeted Direct Questions for Flashcards**:
+   - For terminology and definitions, use precise cloze deletion: "[TERM] is the biological process by which ___".
+   - For functional relationships: "What is the primary physiological role of [Concept] in [Context]?"
 
-4. **Concrete Examples** — Every card MUST include at least one real-world example in the "concrete_example" field.
+4. **Elaborative Interrogation for Active Recall**:
+   - Every active recall question MUST require causal reasoning, mechanism tracing ("Why does X lead to Y?"), or structural explanation ("How does [A] compensate when [B] fails?").
 
-5. **Discrimination Training** — For related/confusable concepts, create cards that explicitly test the distinction: "How does X differ from Y?"
+5. **Concept Discrimination & Boundary Testing**:
+   - For easily confused terms or related concepts, construct explicit discrimination cards: "What is the critical functional difference between [X] and [Y]?"
 
-6. **Self-Containment** — Never reference external context. Each Q&A must be independently understandable.
+6. **Dual-Coding & Misconception Inoculation**:
+   - Every item MUST include a tangible real-world example in "concrete_example".
+   - Include the most frequent student misconception in "common_mistake".
 
-7. **Card Variety** — For each concept, generate:
-   - 1 definition/recall card (flashcard)
-   - 1 mechanism/explanation card (active_recall)
-   - 1 discrimination card if related concepts exist (active_recall)
-   - 1 application card (active_recall)
+## GENERATION TARGETS
+- Generate at least ${minCards} flashcards and ${minQuestions} active recall questions.
+- Distribute evenly across all major concepts in the source material.${dedupSection}
 
-## GENERATION REQUIREMENTS
-- Generate at least ${minCards} flashcards and ${minQuestions} active recall questions
-- Cover ALL major topics in the material evenly
-- Every card must earn its place — prioritize depth over quantity${dedupSection}
-
-Return ONLY valid JSON. No markdown. No commentary.`
+Return ONLY valid JSON. No markdown fences. No preamble.`
 }
 
 /**
@@ -218,13 +225,23 @@ export function buildFlashcardOnlyPrompt(
   extractedText: string,
   subjectName?: string,
   moduleTitle?: string,
-  minCards: number = 10
+  minCards: number = 10,
+  existingCards?: { front: string; back?: string }[]
 ): string {
   let contextSection = ''
   if (subjectName) contextSection += `\nSUBJECT: ${subjectName}`
   if (moduleTitle) contextSection += `\nMODULE: ${moduleTitle}`
 
-  return `You are an expert educator and cognitive scientist creating high-quality flashcards using evidence-based principles.
+  let dedupSection = ''
+  if (existingCards && existingCards.length > 0) {
+    dedupSection = `\n\n## ⚠️ DEDUPLICATION REQUIREMENT (CRITICAL)
+Do NOT duplicate or re-test any concepts, questions, or terms already covered in the existing deck:
+${existingCards.slice(0, 40).map(c => `- "${c.front}"`).join('\n')}
+Generate cards strictly for new, unaddressed terms and subconcepts.`
+  }
+
+  return `You are a world-class cognitive scientist, learning engineer, and educational prompt designer.
+Your mission is to generate high-yield, durable flashcards engineered for spaced repetition and rapid semantic retrieval.
 
 CONTEXT:${contextSection}
 
@@ -237,31 +254,37 @@ Return valid JSON with this exact structure:
 {
   "flashcards": [
     {
-      "front": "Question/prompt (use cloze deletion ___ for definitions)",
-      "back": "Answer/explanation",
+      "front": "Question, prompt, or cloze deletion (e.g. '[TERM] is the process by which ___')",
+      "back": "Precise, concise answer/explanation (1-2 sentences)",
       "card_subtype": "definition | mechanism | application | discrimination",
-      "concrete_example": "A real-world example",
-      "common_mistake": "A common misconception",
-      "mnemonic": "Optional memory aid"
+      "concrete_example": "A concrete real-world scenario or analogy illustrating this concept",
+      "common_mistake": "A frequent student misconception or trap to avoid",
+      "mnemonic": "An intuitive memory hook, acronym, or vivid mental visual"
     }
   ]
 }
 
-## CARD DESIGN RULES (MUST FOLLOW)
+## FLASHCARD DESIGN RULES (MUST FOLLOW)
 
-1. **Minimum Information Principle** — Each card tests EXACTLY ONE concept.
+1. **Minimum Information Principle (Atomicity)**:
+   - Each card tests EXACTLY ONE relationship, term, or concept.
+   - Absolutely NO compound lists or multi-part enumerations on the back.
 
-2. **Cloze Deletion for definitions** — Use fill-in-the-blank: "[TERM] is the process by which ___"
+2. **Cloze Deletion & Targeted Questioning**:
+   - Use fill-in-the-blank style for core definitions: "[TERM] is the process by which ___".
+   - Use direct questions for key properties: "What triggers the activation of [Concept] in [Context]?"
 
-3. **Concrete Examples** — Every card MUST include at least one real-world example.
+3. **Self-Containment & Unambiguous Retrieval**:
+   - Prompts must stand completely on their own without external context or vague pronouns ("as mentioned above", "this process").
 
-4. **Self-Containment** — Never reference external context. Each Q&A must stand alone.
+4. **Rich Semantic Hooks**:
+   - Provide high-value "concrete_example", "common_mistake", and "mnemonic" fields for every card to facilitate multi-modal encoding.
 
-5. **Generate at least ${minCards} flashcards** — Cover ALL major topics in the material.
+5. **Generate at least ${minCards} flashcards** — Cover all distinct concepts, definitions, and mechanisms evenly.
 
-6. **NO active recall questions.** Flashcards only.
+6. **NO active recall questions.** Flashcards only.${dedupSection}
 
-Return ONLY valid JSON. No markdown. No commentary.`
+Return ONLY valid JSON. No markdown fences. No commentary.`
 }
 
 /**
@@ -271,13 +294,23 @@ export function buildActiveRecallOnlyPrompt(
   extractedText: string,
   subjectName?: string,
   moduleTitle?: string,
-  minQuestions: number = 6
+  minQuestions: number = 6,
+  existingCards?: { front: string; back?: string }[]
 ): string {
   let contextSection = ''
   if (subjectName) contextSection += `\nSUBJECT: ${subjectName}`
   if (moduleTitle) contextSection += `\nMODULE: ${moduleTitle}`
 
-  return `You are an expert educator and cognitive scientist creating high-quality active recall questions using evidence-based principles.
+  let dedupSection = ''
+  if (existingCards && existingCards.length > 0) {
+    dedupSection = `\n\n## ⚠️ DEDUPLICATION REQUIREMENT (CRITICAL)
+Do NOT duplicate or re-test any questions or scenarios already present in the existing deck:
+${existingCards.slice(0, 40).map(c => `- "${c.front}"`).join('\n')}
+Generate novel questions exploring unaddressed mechanisms, deeper edge cases, or distinct applications.`
+  }
+
+  return `You are a world-class cognitive scientist, learning engineer, and educational prompt designer.
+Your mission is to generate high-yield active recall questions designed for elaborative interrogation, causal reasoning, and deep conceptual mastery.
 
 CONTEXT:${contextSection}
 
@@ -290,33 +323,39 @@ Return valid JSON with this exact structure:
 {
   "active_recall": [
     {
-      "question": "Open-ended question requiring understanding (why/how/explain)",
-      "model_answer": "Complete correct answer",
+      "question": "Open-ended inquiry requiring deep conceptual understanding (Why/How/Explain/Compare/Analyze)",
+      "model_answer": "Complete, rigorous model answer highlighting the core conceptual criteria",
       "card_subtype": "definition | mechanism | application | discrimination",
-      "concrete_example": "A real-world example",
-      "common_mistake": "A common misconception",
-      "mnemonic": "Optional memory aid"
+      "concrete_example": "A real-world application, case study, or problem scenario",
+      "common_mistake": "A common logical flaw, incomplete explanation, or misconception",
+      "mnemonic": "Optional mental framework or memory aid"
     }
   ]
 }
 
-## QUESTION DESIGN RULES (MUST FOLLOW)
+## ACTIVE RECALL QUESTION DESIGN RULES (MUST FOLLOW)
 
-1. **Elaborative Interrogation** — Every question must ask "Why does this happen?" or "How does this work?"
+1. **Elaborative Interrogation & Causal Reasoning**:
+   - Questions must demand deep causal explanation ("Why does [X] occur when [Y] happens?", "How does [Mechanism A] achieve [Outcome B]?").
+   - Avoid shallow factual lookups or simple single-word answers.
 
-2. **Open-Ended** — Questions must require multi-sentence answers that demonstrate true understanding.
+2. **Scenario Application & Problem Solving**:
+   - Include scenario-based questions: "If a system encounters [Condition X], what occurs at [Level Y] and why?"
 
-3. **Concrete Examples** — Every question MUST reference a real-world scenario.
+3. **Concept Discrimination (Interference Reduction)**:
+   - For confusable concepts, ask boundary-testing comparison questions: "How does [Concept A] differ from [Concept B] in terms of [Specific Function]?"
 
-4. **Discrimination Training** — Create questions that test the distinction between confusable concepts.
+4. **Rigorous Model Answers**:
+   - Provide clear, comprehensive model answers with the key checkpoints needed for self-grading or AI evaluation.
 
-5. **Self-Containment** — Never reference external context. Each Q&A must stand alone.
+5. **Self-Containment**:
+   - Every question must be fully understandable without external pointers or vague references.
 
-6. **Generate at least ${minQuestions} active recall questions** — Cover ALL major topics.
+6. **Generate at least ${minQuestions} active recall questions** — Covering all major topics in depth.
 
-7. **NO flashcards.** Active recall questions only.
+7. **NO flashcards.** Active recall questions only.${dedupSection}
 
-Return ONLY valid JSON. No markdown. No commentary.`
+Return ONLY valid JSON. No markdown fences. No commentary.`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

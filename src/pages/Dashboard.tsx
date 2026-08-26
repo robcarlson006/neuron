@@ -5,6 +5,7 @@ import SubjectCard from '../components/SubjectCard'
 import PomodoroWidget from '../components/PomodoroWidget'
 import FocusModeModal from '../components/FocusModeModal'
 import GamificationPanel from '../components/GamificationPanel'
+import CardImportModal from '../components/CardImportModal'
 import type { SubjectWithStats, Deadline, CardSchedule } from '../types'
 
 const FLASHCARD_SECONDS = 20
@@ -35,6 +36,7 @@ export default function Dashboard({
   const [loading, setLoading] = useState(true)
   const [showFocusModal, setShowFocusModal] = useState(false)
   const [showGamification, setShowGamification] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
 
   useEffect(() => {
     if (user) loadDashboard()
@@ -174,6 +176,19 @@ export default function Dashboard({
           >
             🏆 Progress
           </button>
+          {subjects.length > 0 && (
+            <button
+              onClick={() => setShowImportModal(true)}
+              className="px-3.5 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5"
+              aria-label="Import or generate cards"
+            >
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <span>Import / Generate</span>
+            </button>
+          )}
           <button
             onClick={handleOpenSubjectWizard}
             className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-1.5"
@@ -304,6 +319,19 @@ export default function Dashboard({
           isOpen={showGamification}
           onClose={() => setShowGamification(false)}
           userId={user.id}
+        />
+      )}
+
+      {/* Import & Card Generation Modal */}
+      {showImportModal && (
+        <CardImportModal
+          isOpen={showImportModal}
+          subjects={subjects.filter(s => s.status !== 'archived')}
+          userId={user?.id}
+          onClose={() => setShowImportModal(false)}
+          onSuccess={async () => {
+            await loadDashboard()
+          }}
         />
       )}
     </div>

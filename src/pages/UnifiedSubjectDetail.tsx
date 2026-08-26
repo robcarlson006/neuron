@@ -6,6 +6,7 @@ import CardBrowser from '../components/CardBrowser'
 import CurriculumView from '../components/classes/CurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
+import CardImportModal from '../components/CardImportModal'
 import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material } from '../types'
 
 type Tab = 'cards' | 'curriculum' | 'materials' | 'deadlines'
@@ -238,12 +239,18 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     if (subject) setShowConfigModal({ subjectId, subjectName: subject.name })
   }
 
-  async function handleGenerateCards(moduleId: number): Promise<void> {
+  async function handleGenerateCards(moduleId: number, options?: import('../types').ModuleCardGenOptions): Promise<void> {
     setLoadingCards(prev => ({ ...prev, [moduleId]: true }))
     try {
-      const result = await window.electronAPI.cardsGenerateFromModule(subjectId, moduleId)
+      const result = await window.electronAPI.cardsGenerateFromModule(subjectId, moduleId, options)
       if (result.success) {
-        addToast({ type: 'success', title: 'Cards Generated', message: `${result.count} cards created from ${result.module_name || 'module'}.` })
+        const typeStr = options?.type === 'flashcard' ? 'flashcards' : options?.type === 'active_recall' ? 'active recall questions' : 'cards'
+        const dupNote = result.duplicates_filtered && result.duplicates_filtered > 0 ? ` (${result.duplicates_filtered} duplicates skipped)` : ''
+        addToast({
+          type: 'success',
+          title: 'Cards Generated',
+          message: `${result.count} ${typeStr} created from ${result.module_name || 'module'}${dupNote}.`
+        })
       } else {
         addToast({ type: 'error', title: 'Generation Failed', message: result.error || 'Unknown error' })
       }
@@ -701,6 +708,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           {modules.length > 0 ? (
             <CurriculumView
               modules={modules}
+              subjectName={subject?.name}
               onStartTutor={handleStartTutor}
               onGenerateCards={handleGenerateCards}
               onToggleTopic={handleToggleTopic}
@@ -1025,19 +1033,30 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         </div>
       )}
 
-      {/* Text Import Modal */}
+      {/* Import & Card Generation Modal */}
       {showTextImport && (
-        <TextImportModal
+        <CardImportModal
+          isOpen={showTextImport}
+          subjectId={subjectId}
+          subjectName={subject?.name}
           folders={folders}
+          userId={user?.id}
           onClose={() => setShowTextImport(false)}
-          onSave={async (importedCards) => {
+          onSuccess={async (count, mode) => {
+            await loadAllData()
+            addToast({
+              type: 'success',
+              title: mode === 'generate' ? 'Cards Generated' : 'Cards Imported',
+              message: `${count} card${count !== 1 ? 's' : ''} added to ${subject?.name || 'subject'}.`
+            })
+          }}
+          onManualSave={async (importedCards) => {
             if (!user) return
             await window.electronAPI.saveManyCards(
               importedCards.map(c => ({ subject_id: subjectId, ...c, is_manual: 1 })),
               user.id
             )
             await loadAllData()
-            setShowTextImport(false)
           }}
         />
       )}
@@ -1179,171 +1198,6 @@ function CardDetailModal({
             <option value="">No folder</option>
             {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function TextImportModal({ onClose, onSave, folders }: {
-  onClose: () => void
-  onSave: (cards: { type: 'flashcard' | 'active_recall'; front: string; back: string; folder_id?: number | null }[]) => Promise<void>
-  folders: CardFolder[]
-}): React.JSX.Element {
-  const [text, setText] = useState('')
-  const [termSep, setTermSep] = useState('...')
-  const [cardSep, setCardSep] = useState(';')
-  const [eachLineIsCard, setEachLineIsCard] = useState(false)
-  const [cardType, setCardType] = useState<'flashcard' | 'active_recall'>('flashcard')
-  const [importFolderId, setImportFolderId] = useState<number | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [showHelp, setShowHelp] = useState(false)
-  const [detectedFormat, setDetectedFormat] = useState<string | null>(null)
-
-  const parsed = React.useMemo(() => {
-    if (!text.trim() || !termSep.trim()) return []
-    const sep = eachLineIsCard ? '\n' : cardSep
-    if (!sep) return []
-    return text.split(sep).map(chunk => {
-      const sepIndex = chunk.indexOf(termSep)
-      if (sepIndex === -1) return null
-      const front = chunk.slice(0, sepIndex).trim()
-      const back = chunk.slice(sepIndex + termSep.length).trim()
-      if (!front || !back) return null
-      return { front, back }
-    }).filter((c): c is { front: string; back: string } => c !== null)
-  }, [text, termSep, cardSep, eachLineIsCard])
-
-  function handleFileLoad(e: React.ChangeEvent<HTMLInputElement>): void {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const ext = file.name.split('.').pop()?.toLowerCase()
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const content = ev.target?.result as string
-      setText(content)
-      if (ext === 'csv') { setTermSep(','); setEachLineIsCard(true); setDetectedFormat('CSV — comma separates front/back, each line is a card') }
-      else if (ext === 'tsv') { setTermSep('\t'); setEachLineIsCard(true); setDetectedFormat('TSV — tab separates front/back, each line is a card') }
-      else { setDetectedFormat(`${ext?.toUpperCase()} file loaded — adjust separators below`) }
-    }
-    reader.readAsText(file)
-    e.target.value = ''
-  }
-
-  async function handleSave(): Promise<void> {
-    if (parsed.length === 0) return
-    setSaving(true)
-    try { await onSave(parsed.map(c => ({ ...c, type: cardType, folder_id: importFolderId }))) }
-    finally { setSaving(false) }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/40 dark:bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl w-full max-w-2xl animate-slide-up flex flex-col max-h-[90vh]">
-        <div className="p-6 pb-4 border-b border-slate-100 dark:border-slate-700 flex-shrink-0">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import Cards</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Paste text or load a file — no AI required.</p>
-            </div>
-            <button onClick={() => setShowHelp(v => !v)} className="w-7 h-7 rounded-full border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-400 hover:text-violet-600 hover:border-violet-400 transition-colors flex-shrink-0 text-sm font-semibold">?</button>
-          </div>
-          {showHelp && (
-            <div className="mt-4 p-4 bg-violet-50 dark:bg-violet-900/20 rounded-xl border border-violet-200 dark:border-violet-800 text-sm text-slate-700 dark:text-slate-300 space-y-2 animate-fade-in">
-              <p className="font-semibold text-violet-700 dark:text-violet-300">How import works</p>
-              <p>Each card has a <strong>front</strong> (question/term) and a <strong>back</strong> (answer/definition). Set two separators:</p>
-              <ul className="space-y-1 ml-3">
-                <li>· <strong>Front/Back separator</strong> — splits question from answer. Default: <code className="bg-violet-100 dark:bg-violet-900 px-1 rounded">...</code></li>
-                <li>· <strong>Card separator</strong> — splits one card from the next. Default: <code className="bg-violet-100 dark:bg-violet-900 px-1 rounded">;</code></li>
-              </ul>
-              <code className="block bg-slate-100 dark:bg-slate-700 rounded-lg px-3 py-2 text-xs font-mono">What is H₂O...Water; What is photosynthesis...Plants converting sunlight to energy</code>
-            </div>
-          )}
-        </div>
-        <div className="p-6 space-y-5 overflow-y-auto flex-1">
-          <div>
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Import from file</label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 hover:border-violet-400 transition-colors text-sm text-slate-600 dark:text-slate-300 font-medium">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M7 1L4 4M7 1l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                Choose file
-              </div>
-              <span className="text-xs text-slate-400 dark:text-slate-500">.txt · .csv · .tsv · .md</span>
-              <input type="file" accept=".txt,.csv,.tsv,.md,.markdown" onChange={handleFileLoad} className="hidden" />
-            </label>
-            {detectedFormat && <p className="text-xs text-violet-600 dark:text-violet-400 mt-1.5">✓ {detectedFormat}</p>}
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Front / Back separator</label>
-              <input type="text" className="input font-mono" value={termSep} onChange={e => setTermSep(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Card separator</label>
-              <input type="text" className="input font-mono" value={cardSep} onChange={e => setCardSep(e.target.value)} disabled={eachLineIsCard} />
-            </div>
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox" checked={eachLineIsCard} onChange={e => setEachLineIsCard(e.target.checked)} className="rounded accent-violet-600" />
-            <span className="text-sm text-slate-600 dark:text-slate-300">Each line is one card</span>
-          </label>
-          <div>
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Card Type</label>
-            <div className="flex gap-2">
-              {(['flashcard', 'active_recall'] as const).map(t => (
-                <button key={t} onClick={() => setCardType(t)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${cardType === t ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-violet-400'}`}>
-                  {t === 'flashcard' ? 'Flashcard' : 'Active Recall'}
-                </button>
-              ))}
-            </div>
-          </div>
-          {folders.length > 0 && (
-            <div>
-              <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Add to Folder (optional)</label>
-              <select className="input text-sm" value={importFolderId ?? ''} onChange={e => setImportFolderId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">No folder</option>
-                {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-            </div>
-          )}
-          <div>
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Paste your cards</label>
-            <textarea className="input min-h-[100px] resize-none font-mono text-sm leading-relaxed" placeholder={`Term${termSep}Definition${eachLineIsCard ? '\nAnother term' + termSep + 'Another definition' : cardSep + ' Another term' + termSep + 'Another definition'}`} value={text} onChange={e => setText(e.target.value)} />
-          </div>
-          {text.trim() && (
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Preview</p>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${parsed.length > 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'}`}>
-                  {parsed.length} card{parsed.length !== 1 ? 's' : ''} found
-                </span>
-              </div>
-              {parsed.length > 0 ? (
-                <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
-                  {parsed.map((card, i) => (
-                    <div key={i} className="flex items-start gap-3 px-4 py-2.5 bg-white dark:bg-slate-800">
-                      <span className="text-xs text-slate-300 dark:text-slate-600 font-mono mt-0.5 w-5 flex-shrink-0">{i + 1}</span>
-                      <div className="flex-1 min-w-0 flex items-start gap-2">
-                        <p className="text-sm font-medium text-slate-700 dark:text-slate-200 flex-1 truncate">{card.front}</p>
-                        <span className="text-slate-300 dark:text-slate-600 flex-shrink-0 mt-0.5">→</span>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 flex-1 truncate">{card.back}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-600 dark:text-red-400">
-                  No cards could be parsed. Check separators match the text.
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="p-6 pt-4 border-t border-slate-100 dark:border-slate-700 flex gap-3 flex-shrink-0">
-          <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-          <button onClick={handleSave} disabled={parsed.length === 0 || saving} className="btn-primary flex-1">
-            {saving ? 'Saving...' : `Import ${parsed.length > 0 ? parsed.length : ''} Card${parsed.length !== 1 ? 's' : ''}`}
-          </button>
         </div>
       </div>
     </div>
