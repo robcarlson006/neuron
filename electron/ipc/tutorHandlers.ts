@@ -5,6 +5,7 @@ import { app } from 'electron'
 import fs from 'fs'
 import { streamAI, callAIMessages } from './aiHandlers'
 import { getApiKey, getAIConfig } from './aiConfigStore'
+import { parseFileToText } from './documentParser'
 import { bktUpdate } from '../../src/lib/bkt'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
 import type {
@@ -1426,7 +1427,14 @@ Rules:
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
       filters: [
-        { name: 'Study Materials', extensions: ['pdf', 'docx', 'pptx', 'txt', 'md', 'html'] }
+        {
+          name: 'All Study Materials',
+          extensions: ['pdf', 'docx', 'doc', 'pptx', 'ppt', 'txt', 'md', 'markdown', 'csv', 'tsv', 'rtf', 'html', 'htm']
+        },
+        { name: 'PowerPoint', extensions: ['pptx', 'ppt', 'pptm', 'potx', 'ppsx'] },
+        { name: 'PDF Files', extensions: ['pdf'] },
+        { name: 'Word Documents', extensions: ['docx', 'doc'] },
+        { name: 'Notes & Text', extensions: ['txt', 'md', 'csv', 'tsv', 'rtf', 'html'] }
       ]
     })
     if (result.canceled || result.filePaths.length === 0) return null
@@ -1435,22 +1443,28 @@ Rules:
 
   ipcMain.handle('library:saveFile', async (_event, subjectId: number, filePath: string) => {
     const filename = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown'
-    const ext = filename.split('.').pop()?.toLowerCase() || 'txt'
-    const fileType = ['pdf', 'docx', 'pptx', 'txt', 'md', 'html'].includes(ext) ? ext : 'txt'
-
-    // Read the file content (for text-based files, read as text; for binary, store metadata)
     let contentText = ''
+    let fileType = 'txt'
     let fileSize = 0
+
     try {
       const stats = fs.statSync(filePath)
       fileSize = stats.size
+    } catch {}
 
-      // For supported text formats, extract content
-      if (['txt', 'md', 'html'].includes(ext)) {
-        contentText = fs.readFileSync(filePath, 'utf-8')
-      }
-    } catch {
-      // If file can't be read, still store metadata
+    try {
+      const parsed = await parseFileToText(filePath)
+      contentText = parsed.contentText
+      fileType = parsed.fileType
+    } catch (err) {
+      console.warn('Failed to extract text during library upload:', err)
+      const ext = filename.split('.').pop()?.toLowerCase() || 'txt'
+      fileType = ['pdf', 'docx', 'pptx', 'txt', 'md', 'html', 'ppt', 'doc', 'csv', 'tsv', 'rtf'].includes(ext) ? ext : 'txt'
+      try {
+        if (['txt', 'md', 'html', 'csv', 'tsv'].includes(ext)) {
+          contentText = fs.readFileSync(filePath, 'utf-8')
+        }
+      } catch {}
     }
 
     // Copy file to userData directory

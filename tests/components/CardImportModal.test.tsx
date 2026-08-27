@@ -2,7 +2,7 @@ import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import CardImportModal from '../../src/components/CardImportModal'
-import type { Subject, CardFolder } from '../../src/types'
+import type { Subject, CardFolder, Material } from '../../src/types'
 
 describe('CardImportModal', () => {
   const mockSubject: Subject = {
@@ -18,6 +18,25 @@ describe('CardImportModal', () => {
     { id: 1, subject_id: 10, name: 'Synaptic Transmission', created_at: new Date().toISOString() }
   ]
 
+  const mockMaterials: Material[] = [
+    {
+      id: 101,
+      subject_id: 10,
+      filename: 'Lecture_03_Action_Potentials.pdf',
+      file_type: 'pdf',
+      content_text: 'The resting membrane potential is typically -70mV. Voltage-gated sodium channels open rapidly during depolarization.',
+      uploaded_at: new Date().toISOString()
+    },
+    {
+      id: 102,
+      subject_id: 10,
+      filename: 'Neurotransmitters_Overview.docx',
+      file_type: 'docx',
+      content_text: 'Glutamate is the primary excitatory neurotransmitter in the vertebrate CNS.',
+      uploaded_at: new Date().toISOString()
+    }
+  ]
+
   const mockOnClose = jest.fn()
   const mockOnSuccess = jest.fn()
   const mockOnManualSave = jest.fn()
@@ -28,7 +47,9 @@ describe('CardImportModal', () => {
       ...window.electronAPI,
       cardsGenerateFromText: jest.fn().mockResolvedValue({ success: true, count: 15, duplicates_filtered: 0 }),
       saveManyCards: jest.fn().mockResolvedValue(true),
-      getFolders: jest.fn().mockResolvedValue(mockFolders)
+      getFolders: jest.fn().mockResolvedValue(mockFolders),
+      getMaterials: jest.fn().mockResolvedValue(mockMaterials),
+      getSubjects: jest.fn().mockResolvedValue([mockSubject])
     } as any
   })
 
@@ -56,7 +77,7 @@ describe('CardImportModal', () => {
     expect(screen.getByText('Both (Mixed)')).toBeInTheDocument()
   })
 
-  it('generates cards with AI successfully', async () => {
+  it('generates cards with AI successfully using pasted text', async () => {
     await React.act(async () => {
       render(
         <CardImportModal
@@ -104,6 +125,99 @@ describe('CardImportModal', () => {
 
     expect(mockOnSuccess).toHaveBeenCalledWith(15, 'generate')
     expect(mockOnClose).toHaveBeenCalled()
+  })
+
+  it('selects from Subject Materials and generates cards from the material', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          subjects={[mockSubject]}
+          folders={mockFolders}
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Switch to Subject Materials mode
+    const materialsTabBtn = screen.getByRole('button', { name: /subject materials/i })
+    await React.act(async () => {
+      fireEvent.click(materialsTabBtn)
+    })
+
+    // Wait for materials to load and appear
+    await waitFor(() => {
+      expect(screen.getByText('Lecture_03_Action_Potentials.pdf')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Neurotransmitters_Overview.docx')).toBeInTheDocument()
+
+    // Select the first material
+    const useMaterialBtn = screen.getAllByRole('button', { name: /use material/i })[0]
+    await React.act(async () => {
+      fireEvent.click(useMaterialBtn)
+    })
+
+    // Verify active selection banner
+    expect(screen.getByText(/using: lecture_03_action_potentials\.pdf/i)).toBeInTheDocument()
+
+    // Click Generate button
+    const generateBtn = screen.getByRole('button', { name: /generate 15 flashcards/i })
+    await React.act(async () => {
+      fireEvent.click(generateBtn)
+    })
+
+    expect(window.electronAPI.cardsGenerateFromText).toHaveBeenCalledWith(
+      10,
+      mockMaterials[0].content_text,
+      expect.objectContaining({
+        type: 'flashcard',
+        count: 15
+      })
+    )
+
+    expect(mockOnSuccess).toHaveBeenCalledWith(15, 'generate')
+  })
+
+  it('allows entering any custom uncapped card count', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          folders={mockFolders}
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Fill source text
+    const textarea = screen.getByPlaceholderText(/paste lecture notes/i)
+    fireEvent.change(textarea, { target: { value: 'Comprehensive biology notes for exam review.' } })
+
+    // Enter a custom count (e.g. 75)
+    const numberInput = screen.getByRole('spinbutton')
+    fireEvent.change(numberInput, { target: { value: '75' } })
+
+    // Generate button should reflect 75
+    const generateBtn = screen.getByRole('button', { name: /generate 75 flashcards/i })
+    await React.act(async () => {
+      fireEvent.click(generateBtn)
+    })
+
+    expect(window.electronAPI.cardsGenerateFromText).toHaveBeenCalledWith(
+      10,
+      'Comprehensive biology notes for exam review.',
+      expect.objectContaining({
+        count: 75
+      })
+    )
   })
 
   it('switches to Manual & File Import tab and parses cards', async () => {

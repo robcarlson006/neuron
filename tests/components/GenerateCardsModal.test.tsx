@@ -121,7 +121,7 @@ describe('GenerateCardsModal', () => {
     })
   })
 
-  it('allows adjusting card count between 5 and 50', () => {
+  it('allows adjusting card count to any positive amount', () => {
     render(
       <GenerateCardsModal
         isOpen={true}
@@ -131,21 +131,17 @@ describe('GenerateCardsModal', () => {
       />
     )
 
-    // Select preset 5
-    const preset5 = screen.getByRole('button', { name: '5' })
-    fireEvent.click(preset5)
-
-    // Click minus - should stay at minimum 5
-    const minusBtn = screen.getByRole('button', { name: '-' })
-    fireEvent.click(minusBtn)
+    // Direct input of custom number (e.g. 75)
+    const numberInput = screen.getByRole('spinbutton')
+    fireEvent.change(numberInput, { target: { value: '75' } })
 
     // Submit
-    const generateBtn = screen.getByRole('button', { name: /generate 5 cards/i })
+    const generateBtn = screen.getByRole('button', { name: /generate 75 cards/i })
     fireEvent.click(generateBtn)
 
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
-      count: 5,
+      count: 75,
       flashcardCount: undefined,
       activeRecallCount: undefined
     })

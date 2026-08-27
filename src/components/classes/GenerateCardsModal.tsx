@@ -53,26 +53,26 @@ export default function GenerateCardsModal({
   function handleConfirm(): void {
     if (isGenerating) return
 
-    const clampedCount = Math.max(5, Math.min(50, cardCount))
+    const finalCount = Math.max(1, cardCount)
     let flashcardCount: number | undefined
     let activeRecallCount: number | undefined
 
     if (selectedType === 'both') {
-      flashcardCount = Math.max(3, Math.round(clampedCount * 0.65))
-      activeRecallCount = Math.max(2, clampedCount - flashcardCount)
+      flashcardCount = finalCount === 1 ? 1 : Math.max(1, Math.round(finalCount * 0.65))
+      activeRecallCount = finalCount === 1 ? 0 : Math.max(1, finalCount - flashcardCount)
     }
 
     onGenerate({
       type: selectedType,
-      count: clampedCount,
+      count: finalCount,
       flashcardCount,
       activeRecallCount
     })
   }
 
   // Calculate split breakdown for 'both' type
-  const flashcardSplit = Math.max(3, Math.round(cardCount * 0.65))
-  const recallSplit = Math.max(2, cardCount - flashcardSplit)
+  const flashcardSplit = cardCount === 1 ? 1 : Math.max(1, Math.round(cardCount * 0.65))
+  const recallSplit = cardCount === 1 ? 0 : Math.max(1, cardCount - flashcardSplit)
 
   return (
     <div
@@ -205,79 +205,79 @@ export default function GenerateCardsModal({
             </div>
           </div>
 
-          {/* Quantity Selection (5 - 50) */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                2. How many cards do you want?
-              </label>
-              <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">
-                {cardCount} {selectedType === 'active_recall' ? 'Questions' : 'Cards'}
-              </span>
-            </div>
-
-            {/* Quick Preset Buttons */}
-            <div className="flex flex-wrap gap-2">
-              {CARD_GEN_PRESETS.map(preset => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => setCardCount(preset)}
-                  disabled={isGenerating}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    cardCount === preset
-                      ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-500/30'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
-
-            {/* Slider & Stepper */}
-            <div className="pt-2 flex items-center gap-4">
-              <input
-                type="range"
-                min={5}
-                max={50}
-                step={1}
-                value={cardCount}
-                onChange={e => setCardCount(Number(e.target.value))}
-                disabled={isGenerating}
-                className="flex-1 h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-              />
-              <div className="flex items-center border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setCardCount(prev => Math.max(5, prev - 1))}
-                  disabled={isGenerating || cardCount <= 5}
-                  className="px-2.5 py-1 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 text-xs font-bold"
-                >
-                  -
-                </button>
-                <input
-                  type="number"
-                  min={5}
-                  max={50}
-                  value={cardCount}
-                  onChange={e => {
-                    const val = parseInt(e.target.value, 10)
-                    if (!isNaN(val)) setCardCount(Math.max(5, Math.min(50, val)))
-                  }}
-                  disabled={isGenerating}
-                  className="w-12 text-center text-xs font-semibold bg-transparent text-slate-800 dark:text-slate-200 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => setCardCount(prev => Math.min(50, prev + 1))}
-                  disabled={isGenerating || cardCount >= 50}
-                  className="px-2.5 py-1 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 text-xs font-bold"
-                >
-                  +
-                </button>
+            {/* Quantity Selection */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  2. How many cards do you want?
+                </label>
+                <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">
+                  {cardCount} {selectedType === 'active_recall' ? 'Questions' : 'Cards'}
+                </span>
               </div>
-            </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex flex-wrap gap-2">
+                {CARD_GEN_PRESETS.map(preset => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setCardCount(preset)}
+                    disabled={isGenerating}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      cardCount === preset
+                        ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-500/30'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+
+              {/* Slider & Stepper */}
+              <div className="pt-2 flex items-center gap-4">
+                <input
+                  type="range"
+                  min={1}
+                  max={Math.max(100, cardCount)}
+                  step={1}
+                  value={cardCount}
+                  onChange={e => setCardCount(Math.max(1, Number(e.target.value)))}
+                  disabled={isGenerating}
+                  className="flex-1 h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+                <div className="flex items-center border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setCardCount(prev => Math.max(1, prev - 1))}
+                    disabled={isGenerating || cardCount <= 1}
+                    className="px-2.5 py-1 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 text-xs font-bold"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    value={cardCount}
+                    onChange={e => {
+                      const val = parseInt(e.target.value, 10)
+                      if (!isNaN(val)) setCardCount(Math.max(1, val))
+                      else if (e.target.value === '') setCardCount(1)
+                    }}
+                    disabled={isGenerating}
+                    className="w-14 text-center text-xs font-semibold bg-transparent text-slate-800 dark:text-slate-200 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCardCount(prev => prev + 1)}
+                    disabled={isGenerating}
+                    className="px-2.5 py-1 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 text-xs font-bold"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
 
             {/* Breakdown explanation if 'both' */}
             {selectedType === 'both' && (

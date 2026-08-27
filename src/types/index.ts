@@ -738,7 +738,7 @@ export interface ModuleCardGenOptions {
   userId?: number
 }
 
-export const CARD_GEN_PRESETS = [5, 10, 15, 20, 30, 50] as const
+export const CARD_GEN_PRESETS = [5, 10, 15, 20, 30, 50, 100] as const
 
 export interface ParsedFlashcard {
   type: 'flashcard'
