@@ -35,7 +35,7 @@ export interface Material {
 export interface Card {
   id: number
   subject_id: number
-  material_id?: number
+  material_id?: number | null
   folder_id?: number | null
   type: 'flashcard' | 'active_recall' | 'cloze'
   front: string
@@ -728,13 +728,17 @@ export interface SyllabusGenerationResult {
   totalTopics: number
 }
 
-export type ModuleCardGenType = 'flashcard' | 'active_recall' | 'both'
+export type ModuleCardGenType = 'flashcard' | 'active_recall'
 
 export interface ModuleCardGenOptions {
   type: ModuleCardGenType
   count: number
   flashcardCount?: number
   activeRecallCount?: number
+  folderId?: number | null
+  materialId?: number | null
+  topicId?: number | null
+  concept?: string | null
   userId?: number
 }
 

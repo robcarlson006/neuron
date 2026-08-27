@@ -14,6 +14,7 @@ import {
 } from '../../src/lib/fsrs'
 import { bktUpdate } from '../../src/lib/bkt'
 import { deleteSubjectCascade } from '../../src/lib/db'
+import { getOrCreateMaterialFolder, syncCardsToMaterialFolders } from './materialFolderHelper'
 import type {
   User,
   Subject,
@@ -98,18 +99,34 @@ export function registerDbHandlers(): void {
 
   // Card handlers
   ipcMain.handle('db:getCards', (_event, subjectId: number) => {
+    syncCardsToMaterialFolders(db)
     return db.prepare('SELECT * FROM cards WHERE subject_id = ? ORDER BY created_at DESC').all(subjectId) as Card[]
   })
 
   ipcMain.handle('db:saveCard', (_event, card: Partial<Card>) => {
+    let folderId = card.folder_id ?? null
+    if (!folderId && card.subject_id && card.material_id) {
+      folderId = getOrCreateMaterialFolder(db, card.subject_id, card.material_id, card.concept)
+    }
+
     if (card.id) {
       db.prepare(
-        'UPDATE cards SET front = ?, back = ?, type = ?, folder_id = ?, concept = ? WHERE id = ?'
-      ).run(card.front, card.back, card.type, card.folder_id ?? null, card.concept ?? null, card.id)
+        'UPDATE cards SET front = ?, back = ?, type = ?, folder_id = ?, concept = ?, topic_id = ?, material_id = ?, tags = ? WHERE id = ?'
+      ).run(
+        card.front,
+        card.back,
+        card.type,
+        folderId,
+        card.concept ?? null,
+        card.topic_id ?? null,
+        card.material_id ?? null,
+        card.tags || '',
+        card.id
+      )
       return db.prepare('SELECT * FROM cards WHERE id = ?').get(card.id) as Card
     } else {
       const result = db.prepare(
-        'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, concept, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, concept, topic_id, tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(
         card.subject_id,
         card.material_id || null,
@@ -117,8 +134,10 @@ export function registerDbHandlers(): void {
         card.front,
         card.back,
         card.is_manual || 0,
-        card.folder_id ?? null,
+        folderId,
         card.concept ?? null,
+        card.topic_id ?? null,
+        card.tags || '',
         new Date().toISOString()
       )
       return db.prepare('SELECT * FROM cards WHERE id = ?').get(result.lastInsertRowid) as Card
@@ -135,7 +154,7 @@ export function registerDbHandlers(): void {
 
   ipcMain.handle('db:saveManyCards', (_event, cards: Partial<Card>[], userId: number) => {
     const insertCard = db.prepare(
-      'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, folder_id, concept, topic_id, tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     const insertSchedule = db.prepare(
       'INSERT OR REPLACE INTO card_schedule (card_id, user_id, interval, repetitions, ease_factor, due_date, last_reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -144,6 +163,11 @@ export function registerDbHandlers(): void {
     const savedCards: Card[] = []
     const saveMany = db.transaction(() => {
       for (const card of cards) {
+        let folderId = card.folder_id ?? null
+        if (!folderId && card.subject_id && card.material_id) {
+          folderId = getOrCreateMaterialFolder(db, card.subject_id, card.material_id, card.concept)
+        }
+
         const result = insertCard.run(
           card.subject_id,
           card.material_id || null,
@@ -151,7 +175,10 @@ export function registerDbHandlers(): void {
           card.front,
           card.back,
           card.is_manual || 0,
-          card.folder_id ?? null,
+          folderId,
+          card.concept ?? null,
+          card.topic_id ?? null,
+          card.tags || '',
           new Date().toISOString()
         )
         const cardId = result.lastInsertRowid as number
@@ -670,6 +697,7 @@ export function registerDbHandlers(): void {
 
   // Folder handlers
   ipcMain.handle('db:getFolders', (_event, subjectId: number) => {
+    syncCardsToMaterialFolders(db)
     return db.prepare('SELECT * FROM card_folders WHERE subject_id = ? ORDER BY name ASC').all(subjectId) as CardFolder[]
   })
 

@@ -4,6 +4,9 @@ import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
 import { buildAutoCardGenerationPrompt, buildFlashcardOnlyPrompt, buildActiveRecallOnlyPrompt } from '../../src/lib/promptBuilders'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
+import { safeParseAICards } from '../../src/lib/jsonRepair'
+import { consolidateCardTopics } from '../../src/lib/topicClustering'
+import { getOrCreateMaterialFolder } from './materialFolderHelper'
 import type { Card } from '../../src/types'
 
 let db: Database.Database
@@ -59,35 +62,20 @@ export function registerCardGenerationHandlers(): void {
         { type: 'json_object' }
       )
 
-      // Parse the response
-      let flashcardsData: { front: string; back: string }[] = []
-      let activeRecallData: { question: string; model_answer: string }[] = []
+      // Parse the response using bulletproof parser
+      const parsed = safeParseAICards(responseText)
+      let flashcardsData = parsed.flashcards || []
+      let activeRecallData = parsed.active_recall || []
 
-      try {
-        let cleaned = responseText.trim()
-        if (cleaned.startsWith('```')) {
-          cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-        }
-        const parsed = JSON.parse(cleaned)
-
-        if (parsed.flashcards && Array.isArray(parsed.flashcards)) {
-          flashcardsData = parsed.flashcards
-        } else if (parsed.cards && Array.isArray(parsed.cards)) {
-          const cards = parsed.cards as { type?: string; front?: string; back?: string }[]
-          flashcardsData = cards.filter(c => c.type === 'flashcard' || !c.type)
-            .map(c => ({ front: c.front || '', back: c.back || '' }))
-          activeRecallData = cards.filter(c => c.type === 'active_recall')
-            .map(c => ({ question: c.front || '', model_answer: c.back || '' }))
-        } else {
-          throw new Error('Invalid response: missing flashcards array')
-        }
-
-        if (parsed.active_recall && Array.isArray(parsed.active_recall)) {
-          activeRecallData = parsed.active_recall
-        }
-      } catch (parseErr) {
-        console.error('Failed to parse card generation response:', parseErr)
-        return { success: false, count: 0, error: 'Failed to parse AI response' }
+      if (parsed.cards && Array.isArray(parsed.cards)) {
+        const extraFlashcards = parsed.cards
+          .filter(c => c.type === 'flashcard' || !c.type)
+          .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
+        const extraActiveRecall = parsed.cards
+          .filter(c => c.type === 'active_recall')
+          .map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
+        if (extraFlashcards.length > 0) flashcardsData = [...flashcardsData, ...extraFlashcards]
+        if (extraActiveRecall.length > 0) activeRecallData = [...activeRecallData, ...extraActiveRecall]
       }
 
       const validFlashcards = flashcardsData.filter(fc =>
@@ -105,6 +93,8 @@ export function registerCardGenerationHandlers(): void {
         const base = {
           subject_id: subjectId,
           material_id: materialId,
+          topic_id: material.module_id || null,
+          concept: fc.concept || moduleTitle || null,
           type: 'flashcard' as const,
           front: fc.front.trim(),
           back: fc.back.trim(),
@@ -126,6 +116,8 @@ export function registerCardGenerationHandlers(): void {
         const base = {
           subject_id: subjectId,
           material_id: materialId,
+          topic_id: material.module_id || null,
+          concept: ar.concept || moduleTitle || null,
           type: 'active_recall' as const,
           front: ar.question.trim(),
           back: ar.model_answer.trim(),
@@ -280,7 +272,7 @@ ${materialText}`
       const apiKey = getApiKey()
       if (!apiKey) throw new Error('AI API key not configured')
 
-      const BATCH_SIZE = 15
+      const BATCH_SIZE = 8
       let remaining = Math.max(1, minCount)
       const runningExistingCards = [...existingCards]
       const allCandidateCards: Partial<Card>[] = []
@@ -296,29 +288,33 @@ ${materialText}`
           { type: 'json_object' }
         )
 
-        let cleaned = responseText.trim()
-        if (cleaned.startsWith('```')) {
-          cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-        }
-        const parsed = JSON.parse(cleaned)
+        const parsed = safeParseAICards(responseText)
 
         // Build raw card data from the response key
-        let rawCards: { front: string; back: string }[] = []
+        let rawCards: { front: string; back: string; concept?: string }[] = []
         if (responseKey === 'flashcards') {
           if (parsed.flashcards && Array.isArray(parsed.flashcards)) {
             rawCards = parsed.flashcards
           } else if (parsed.cards && Array.isArray(parsed.cards)) {
-            rawCards = (parsed.cards as { type?: string; front?: string; back?: string }[])
+            rawCards = (parsed.cards as { type?: string; front?: string; back?: string; concept?: string }[])
               .filter(c => c.type === 'flashcard' || !c.type)
-              .map(c => ({ front: c.front || '', back: c.back || '' }))
+              .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
           }
         } else {
           if (parsed.active_recall && Array.isArray(parsed.active_recall)) {
-            rawCards = parsed.active_recall
+            rawCards = parsed.active_recall.map(ar => ({
+              front: ar.question,
+              back: ar.model_answer,
+              concept: ar.concept
+            }))
           } else if (parsed.cards && Array.isArray(parsed.cards)) {
-            rawCards = (parsed.cards as { type?: string; front?: string; back?: string }[])
+            rawCards = (parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[])
               .filter(c => c.type === 'active_recall')
-              .map(c => ({ question: c.front || '', model_answer: c.back || '' }))
+              .map(c => ({
+                front: c.question || c.front || '',
+                back: c.model_answer || c.back || '',
+                concept: c.concept
+              }))
           }
         }
 
@@ -334,6 +330,7 @@ ${materialText}`
             type: cardType,
             front: item.front.trim(),
             back: item.back.trim(),
+            concept: item.concept || mod.title || null,
             is_manual: 0 as const,
             source: 'syllabus' as const,
             topic_id: moduleId
@@ -380,7 +377,17 @@ ${materialText}`
         return { success: false, count: 0, error: reason, duplicates_filtered: totalDuplicatesFiltered }
       }
 
-      const savedCards = saveGeneratedCards(allCandidateCards, db, userId)
+      const subtopics = mod.topic_titles
+        ? mod.topic_titles.split('||').map(t => t.trim()).filter(Boolean)
+        : [mod.title]
+
+      const consolidatedCards = consolidateCardTopics(allCandidateCards, {
+        maxTopics: 4,
+        canonicalTopics: subtopics.length > 0 ? subtopics : undefined,
+        defaultTopic: mod.title
+      })
+
+      const savedCards = saveGeneratedCards(consolidatedCards, db, userId)
       return {
         success: true,
         count: savedCards.length,
@@ -408,10 +415,8 @@ ${materialText}`
     subjectId: number,
     moduleId: number,
     options?: {
-      type?: 'flashcard' | 'active_recall' | 'both'
+      type?: 'flashcard' | 'active_recall'
       count?: number
-      flashcardCount?: number
-      activeRecallCount?: number
       userId?: number
     }
   ) => {
@@ -435,21 +440,10 @@ ${materialText}`
         { name: string } | undefined
       if (!subject) throw new Error('Subject not found')
 
-      const requestedType = options?.type || 'both'
+      const requestedType = options?.type === 'active_recall' ? 'active_recall' : 'flashcard'
       const totalCount = Math.max(1, Math.min(200, options?.count ?? 12))
 
-      // If user specifically requested flashcards only or active recall only
-      if (requestedType === 'flashcard') {
-        return generateCardsFromModule(
-          subjectId,
-          moduleId,
-          'flashcard',
-          buildFlashcardOnlyPrompt,
-          totalCount,
-          'flashcards',
-          options?.userId
-        )
-      } else if (requestedType === 'active_recall') {
+      if (requestedType === 'active_recall') {
         return generateCardsFromModule(
           subjectId,
           moduleId,
@@ -457,6 +451,16 @@ ${materialText}`
           buildActiveRecallOnlyPrompt,
           totalCount,
           'active_recall',
+          options?.userId
+        )
+      } else {
+        return generateCardsFromModule(
+          subjectId,
+          moduleId,
+          'flashcard',
+          buildFlashcardOnlyPrompt,
+          totalCount,
+          'flashcards',
           options?.userId
         )
       }
@@ -495,7 +499,7 @@ ${materialText}`
       const apiKey = getApiKey()
       if (!apiKey) throw new Error('AI API key not configured')
 
-      const BATCH_SIZE = 15
+      const BATCH_SIZE = 8
       let remaining = totalCount
       const runningExistingCards = [...existingCards]
       const allCandidateCards: Partial<Card>[] = []
@@ -522,23 +526,19 @@ ${materialText}`
           { type: 'json_object' }
         )
 
-        let cleaned = responseText.trim()
-        if (cleaned.startsWith('```')) {
-          cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-        }
-        const parsed = JSON.parse(cleaned)
+        const parsed = safeParseAICards(responseText)
 
-        let flashcards: { front: string; back: string }[] = []
-        let activeRecall: { question: string; model_answer: string }[] = []
+        let flashcards: { front: string; back: string; concept?: string }[] = []
+        let activeRecall: { question: string; model_answer: string; concept?: string }[] = []
 
         if (parsed.flashcards && Array.isArray(parsed.flashcards)) {
           flashcards = parsed.flashcards
         } else if (parsed.cards && Array.isArray(parsed.cards)) {
-          const cards = parsed.cards as { type?: string; front?: string; back?: string }[]
+          const cards = parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[]
           flashcards = cards.filter(c => c.type === 'flashcard' || !c.type)
-            .map(c => ({ front: c.front || '', back: c.back || '' }))
+            .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
           activeRecall = cards.filter(c => c.type === 'active_recall')
-            .map(c => ({ question: c.front || '', model_answer: c.back || '' }))
+            .map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
         }
 
         if (parsed.active_recall && Array.isArray(parsed.active_recall)) {
@@ -562,6 +562,7 @@ ${materialText}`
             type: 'flashcard' as const,
             front: fc.front.trim(),
             back: fc.back.trim(),
+            concept: fc.concept || mod.title || null,
             is_manual: 0 as const,
             source: 'syllabus' as const,
             topic_id: moduleId
@@ -627,7 +628,17 @@ ${materialText}`
         return { success: false, count: 0, error: reason, duplicates_filtered: totalDuplicatesFiltered }
       }
 
-      const savedCards = saveGeneratedCards(allCandidateCards, db, options?.userId)
+      const subtopics = mod.topic_titles
+        ? mod.topic_titles.split('||').map(t => t.trim()).filter(Boolean)
+        : [mod.title]
+
+      const consolidatedCards = consolidateCardTopics(allCandidateCards, {
+        maxTopics: 4,
+        canonicalTopics: subtopics.length > 0 ? subtopics : undefined,
+        defaultTopic: mod.title
+      })
+
+      const savedCards = saveGeneratedCards(consolidatedCards, db, options?.userId)
       return {
         success: true,
         count: savedCards.length,
@@ -646,11 +657,12 @@ ${materialText}`
     subjectId: number,
     text: string,
     options?: {
-      type?: 'flashcard' | 'active_recall' | 'both'
+      type?: 'flashcard' | 'active_recall'
       count?: number
-      flashcardCount?: number
-      activeRecallCount?: number
       folderId?: number | null
+      materialId?: number | null
+      topicId?: number | null
+      concept?: string | null
       userId?: number
     }
   ) => {
@@ -663,7 +675,7 @@ ${materialText}`
         { name: string } | undefined
       if (!subject) throw new Error('Subject not found')
 
-      const requestedType = options?.type || 'flashcard'
+      const requestedType = options?.type === 'active_recall' ? 'active_recall' : 'flashcard'
       const totalCount = Math.max(1, Math.min(200, options?.count ?? 10))
 
       // Query existing cards for this subject to prevent duplicates
@@ -671,37 +683,65 @@ ${materialText}`
         'SELECT front, back FROM cards WHERE subject_id = ?'
       ).all(subjectId) as { front: string; back: string }[]
 
+      let canonicalTopics: string[] = []
+      if (options?.concept) {
+        canonicalTopics = [options.concept]
+      } else if (options?.topicId) {
+        const t = db.prepare('SELECT title FROM module_topics WHERE id = ?').get(options.topicId) as { title: string } | undefined
+        if (t?.title) canonicalTopics = [t.title]
+      } else {
+        const existingTopics = (db.prepare(`
+          SELECT DISTINCT title FROM module_topics WHERE module_id IN (
+            SELECT id FROM syllabus_modules WHERE subject_id = ?
+          )
+        `).all(subjectId) as { title: string }[]).map(r => r.title)
+        if (existingTopics.length > 0) {
+          canonicalTopics = existingTopics.slice(0, 5)
+        }
+      }
+
       const config = getAIConfig()
       const apiKey = getApiKey()
       if (!apiKey) throw new Error('AI API key not configured')
 
-      const BATCH_SIZE = 15
+      const BATCH_SIZE = 8
       let remaining = totalCount
+      const totalBatches = Math.ceil(totalCount / BATCH_SIZE)
       const runningExistingCards = [...existingCards]
       const allCandidateCards: Partial<Card>[] = []
       let totalDuplicatesFiltered = 0
+      let batchIdx = 0
 
       while (remaining > 0) {
         const currentBatchTarget = Math.min(remaining, BATCH_SIZE)
 
-        let prompt = ''
-        if (requestedType === 'flashcard') {
-          prompt = buildFlashcardOnlyPrompt(text, subject.name, undefined, currentBatchTarget, runningExistingCards)
-        } else if (requestedType === 'active_recall') {
-          prompt = buildActiveRecallOnlyPrompt(text, subject.name, undefined, currentBatchTarget, runningExistingCards)
-        } else {
-          const flashcardCount = options?.flashcardCount ?? (currentBatchTarget === 1 ? 1 : Math.max(1, Math.round(currentBatchTarget * 0.65)))
-          const activeRecallCount = options?.activeRecallCount ?? (currentBatchTarget === 1 ? 0 : Math.max(0, currentBatchTarget - flashcardCount))
-          prompt = buildAutoCardGenerationPrompt(
-            text,
-            subject.name,
-            undefined,
-            undefined,
-            runningExistingCards,
-            flashcardCount,
-            activeRecallCount
-          )
+        // Partition large text across batches so every section of a 10k-100k word doc is covered
+        let batchText = text
+        if (text.length > 8000) {
+          const activeBatchIdx = totalBatches > 0 ? (batchIdx % totalBatches) : 0
+          const sliceLength = Math.max(5000, Math.ceil(text.length / totalBatches))
+          const start = Math.max(0, Math.floor(activeBatchIdx * (text.length / totalBatches)) - 400)
+          const end = Math.min(text.length, start + sliceLength + 400)
+          batchText = text.slice(start, end)
         }
+
+        const prompt = requestedType === 'active_recall'
+          ? buildActiveRecallOnlyPrompt(
+              batchText,
+              subject.name,
+              undefined,
+              currentBatchTarget,
+              runningExistingCards,
+              canonicalTopics.length > 0 ? canonicalTopics : undefined
+            )
+          : buildFlashcardOnlyPrompt(
+              batchText,
+              subject.name,
+              undefined,
+              currentBatchTarget,
+              runningExistingCards,
+              canonicalTopics.length > 0 ? canonicalTopics : undefined
+            )
 
         const responseText = await callAIMessages(
           [{ role: 'user', content: prompt }],
@@ -709,40 +749,36 @@ ${materialText}`
           { type: 'json_object' }
         )
 
-        let cleaned = responseText.trim()
-        if (cleaned.startsWith('```')) {
-          cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-        }
-        const parsed = JSON.parse(cleaned)
+        const parsed = safeParseAICards(responseText)
 
-        let flashcards: { front: string; back: string }[] = []
-        let activeRecall: { question: string; model_answer: string }[] = []
+        let flashcards: { front: string; back: string; concept?: string }[] = []
+        let activeRecall: { question: string; model_answer: string; concept?: string }[] = []
 
         if (requestedType === 'flashcard') {
           if (parsed.flashcards && Array.isArray(parsed.flashcards)) {
             flashcards = parsed.flashcards
           } else if (parsed.cards && Array.isArray(parsed.cards)) {
-            flashcards = (parsed.cards as { type?: string; front?: string; back?: string }[])
+            flashcards = (parsed.cards as { type?: string; front?: string; back?: string; concept?: string }[])
               .filter(c => c.type === 'flashcard' || !c.type)
-              .map(c => ({ front: c.front || '', back: c.back || '' }))
+              .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
           }
         } else if (requestedType === 'active_recall') {
           if (parsed.active_recall && Array.isArray(parsed.active_recall)) {
             activeRecall = parsed.active_recall
           } else if (parsed.cards && Array.isArray(parsed.cards)) {
-            activeRecall = (parsed.cards as { type?: string; front?: string; back?: string }[])
+            activeRecall = (parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[])
               .filter(c => c.type === 'active_recall')
-              .map(c => ({ question: c.front || '', model_answer: c.back || '' }))
+              .map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
           }
         } else {
           if (parsed.flashcards && Array.isArray(parsed.flashcards)) {
             flashcards = parsed.flashcards
           } else if (parsed.cards && Array.isArray(parsed.cards)) {
-            const cards = parsed.cards as { type?: string; front?: string; back?: string }[]
+            const cards = parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[]
             flashcards = cards.filter(c => c.type === 'flashcard' || !c.type)
-              .map(c => ({ front: c.front || '', back: c.back || '' }))
+              .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
             activeRecall = cards.filter(c => c.type === 'active_recall')
-              .map(c => ({ question: c.front || '', model_answer: c.back || '' }))
+              .map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
           }
           if (parsed.active_recall && Array.isArray(parsed.active_recall)) {
             activeRecall = parsed.active_recall
@@ -763,6 +799,9 @@ ${materialText}`
         for (const fc of validFlashcards) {
           const base = {
             subject_id: subjectId,
+            material_id: options?.materialId ?? null,
+            topic_id: options?.topicId ?? null,
+            concept: fc.concept || options?.concept || null,
             type: 'flashcard' as const,
             front: fc.front.trim(),
             back: fc.back.trim(),
@@ -784,6 +823,9 @@ ${materialText}`
         for (const ar of validActiveRecall) {
           const base = {
             subject_id: subjectId,
+            material_id: options?.materialId ?? null,
+            topic_id: options?.topicId ?? null,
+            concept: ar.concept || options?.concept || null,
             type: 'active_recall' as const,
             front: ar.question.trim(),
             back: ar.model_answer.trim(),
@@ -823,6 +865,7 @@ ${materialText}`
         }
 
         remaining -= validBatchCards.length
+        batchIdx++
       }
 
       if (allCandidateCards.length === 0) {
@@ -833,7 +876,13 @@ ${materialText}`
         return { success: false, count: 0, error: reason, duplicates_filtered: totalDuplicatesFiltered }
       }
 
-      const savedCards = saveGeneratedCards(allCandidateCards, db, options?.userId)
+      const consolidatedCards = consolidateCardTopics(allCandidateCards, {
+        maxTopics: 4,
+        canonicalTopics: canonicalTopics.length > 0 ? canonicalTopics : undefined,
+        defaultTopic: options?.concept || subject.name
+      })
+
+      const savedCards = saveGeneratedCards(consolidatedCards, db, options?.userId)
       return {
         success: true,
         count: savedCards.length,
@@ -929,7 +978,7 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
     if (mod) moduleTitle = mod.title
   }
 
-  const existingCards = db.prepare(
+const existingCards = db.prepare(
     'SELECT front, back FROM cards WHERE subject_id = ? AND material_id IS NOT NULL'
   ).all(subjectId) as { front: string; back: string }[]
 
@@ -947,21 +996,16 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
     { type: 'json_object' }
   )
 
-  let cleaned = responseText.trim()
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-  }
-
-  const parsed = JSON.parse(cleaned)
-  let flashcards: { front: string; back: string }[] = []
-  let activeRecall: { question: string; model_answer: string }[] = []
+  const parsed = safeParseAICards(responseText)
+  let flashcards: { front: string; back: string; concept?: string }[] = []
+  let activeRecall: { question: string; model_answer: string; concept?: string }[] = []
 
   if (parsed.flashcards && Array.isArray(parsed.flashcards)) {
     flashcards = parsed.flashcards
   } else if (parsed.cards && Array.isArray(parsed.cards)) {
-    const cards = parsed.cards as { type?: string; front?: string; back?: string }[]
-    flashcards = cards.filter(c => c.type === 'flashcard' || !c.type).map(c => ({ front: c.front || '', back: c.back || '' }))
-    activeRecall = cards.filter(c => c.type === 'active_recall').map(c => ({ question: c.front || '', model_answer: c.back || '' }))
+    const cards = parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[]
+    flashcards = cards.filter(c => c.type === 'flashcard' || !c.type).map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
+    activeRecall = cards.filter(c => c.type === 'active_recall').map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
   }
 
   if (parsed.active_recall && Array.isArray(parsed.active_recall)) {
@@ -1025,7 +1069,12 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
     return { success: false, count: 0, error: 'No valid cards passed quality check' }
   }
 
-  const savedCards = saveGeneratedCards(validatedCards, db)
+  const consolidatedCards = consolidateCardTopics(validatedCards, {
+    maxTopics: 4,
+    defaultTopic: moduleTitle || subject.name
+  })
+
+  const savedCards = saveGeneratedCards(consolidatedCards, db)
   return { success: true, count: savedCards.length, filename: material.filename }
 }
 
@@ -1039,8 +1088,8 @@ function saveGeneratedCards(cards: Partial<Card>[], database: Database.Database,
 
   const insertCard = database.prepare(`
     INSERT INTO cards (subject_id, material_id, type, front, back, is_manual,
-      source, topic_id, folder_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      source, topic_id, folder_id, concept, tags, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertSchedule = database.prepare(
     'INSERT OR REPLACE INTO card_schedule (card_id, user_id, interval, repetitions, ease_factor, due_date, last_reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -1049,6 +1098,11 @@ function saveGeneratedCards(cards: Partial<Card>[], database: Database.Database,
   const savedCards: Card[] = []
   const saveMany = database.transaction(() => {
     for (const card of cards) {
+      let folderId = card.folder_id || null
+      if (!folderId && card.subject_id) {
+        folderId = getOrCreateMaterialFolder(database, card.subject_id, card.material_id, card.concept)
+      }
+
       const result = insertCard.run(
         card.subject_id,
         card.material_id || null,
@@ -1058,7 +1112,9 @@ function saveGeneratedCards(cards: Partial<Card>[], database: Database.Database,
         card.is_manual || 0,
         card.source || 'manual',
         card.topic_id || null,
-        card.folder_id || null,
+        folderId,
+        card.concept || null,
+        card.tags || '',
         new Date().toISOString()
       )
       const cardId = result.lastInsertRowid as number

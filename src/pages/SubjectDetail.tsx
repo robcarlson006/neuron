@@ -4,7 +4,7 @@ import { useAppStore } from '../store/appStore'
 import PomodoroWidget from '../components/PomodoroWidget'
 import CardBrowser from '../components/CardBrowser'
 import CardImportModal from '../components/CardImportModal'
-import type { Card, CardFolder, CardSchedule, Deadline } from '../types'
+import type { Card, CardFolder, CardSchedule, Deadline, Material, ModuleTopic, SyllabusModule } from '../types'
 
 type Tab = 'cards' | 'deadlines'
 
@@ -32,8 +32,6 @@ export default function SubjectDetail(): React.JSX.Element {
   const [newCardBack, setNewCardBack] = useState('')
   const [newCardType, setNewCardType] = useState<'flashcard' | 'active_recall'>('flashcard')
   const [newCardFolderId, setNewCardFolderId] = useState<number | null>(null)
-  const [cardSearch, setCardSearch] = useState('')
-  const [cardTypeFilter, setCardTypeFilter] = useState<'all' | 'flashcard' | 'active_recall'>('all')
   const [folderFilter, setFolderFilter] = useState<'all' | 'uncategorized' | number>('all')
   const [showNewFolderInput, setShowNewFolderInput] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
@@ -41,6 +39,8 @@ export default function SubjectDetail(): React.JSX.Element {
   const [showTextImport, setShowTextImport] = useState(false)
   const [newCardImageUrl, setNewCardImageUrl] = useState('')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [materials, setMaterials] = useState<Material[]>([])
+  const [topics, setTopics] = useState<(ModuleTopic | SyllabusModule)[]>([])
 
   useEffect(() => {
     if (subject) {
@@ -52,14 +52,36 @@ export default function SubjectDetail(): React.JSX.Element {
   }, [subjectId])
 
   async function loadData(): Promise<void> {
-    const [c, d, f] = await Promise.all([
-      window.electronAPI.getCards(subjectId),
-      window.electronAPI.getDeadlines(subjectId),
-      window.electronAPI.getFolders(subjectId)
-    ])
-    setCards(c)
-    setDeadlines(d as Deadline[])
-    setFolders(f)
+    try {
+      const [c, d, f, m] = await Promise.all([
+        window.electronAPI.getCards(subjectId),
+        window.electronAPI.getDeadlines(subjectId),
+        window.electronAPI.getFolders(subjectId),
+        window.electronAPI.getMaterials ? window.electronAPI.getMaterials(subjectId) : Promise.resolve([])
+      ])
+      setCards(c)
+      setDeadlines(d as Deadline[])
+      setFolders(f)
+      setMaterials((m as Material[]) || [])
+
+      if (window.electronAPI.syllabusListModules) {
+        try {
+          const mods = (await window.electronAPI.syllabusListModules(subjectId)) as SyllabusModule[]
+          const allTopics: (ModuleTopic | SyllabusModule)[] = [...mods]
+          for (const mod of mods) {
+            if (window.electronAPI.syllabusListTopics) {
+              const topList = (await window.electronAPI.syllabusListTopics(mod.id)) as ModuleTopic[]
+              allTopics.push(...(topList || []))
+            }
+          }
+          setTopics(allTopics)
+        } catch {
+          // ignore
+        }
+      }
+    } catch (err) {
+      console.error('Error loading subject details:', err)
+    }
   }
 
   async function handleAddDeadline(): Promise<void> {
@@ -166,14 +188,10 @@ export default function SubjectDetail(): React.JSX.Element {
   }
 
   const filteredCards = cards.filter(c => {
-    const matchesType = cardTypeFilter === 'all' || c.type === cardTypeFilter
-    const matchesSearch = !cardSearch.trim() ||
-      c.front.toLowerCase().includes(cardSearch.toLowerCase()) ||
-      c.back.toLowerCase().includes(cardSearch.toLowerCase())
-    const matchesFolder =
+    return (
       folderFilter === 'all' ||
       (folderFilter === 'uncategorized' ? !c.folder_id : c.folder_id === folderFilter)
-    return matchesType && matchesSearch && matchesFolder
+    )
   })
   const flashcards = filteredCards.filter(c => c.type === 'flashcard')
   const activeRecalls = filteredCards.filter(c => c.type === 'active_recall')
@@ -386,58 +404,16 @@ export default function SubjectDetail(): React.JSX.Element {
             </div>
           )}
 
-          {/* Search & filter */}
-          {cards.length > 0 && (
-            <div className="flex gap-2 mb-4">
-              <div className="relative flex-1">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <circle cx="6" cy="6" r="4" stroke="currentColor" strokeWidth="1.5"/>
-                  <path d="M9.5 9.5L12 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                </svg>
-                <input
-                  type="text"
-                  className="input pl-8 py-1.5 text-sm"
-                  placeholder="Search cards..."
-                  value={cardSearch}
-                  onChange={e => setCardSearch(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-1 bg-slate-100 dark:bg-slate-700/50 rounded-lg p-1">
-                {(['all', 'flashcard', 'active_recall'] as const).map(type => (
-                  <button
-                    key={type}
-                    onClick={() => setCardTypeFilter(type)}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors font-medium ${
-                      cardTypeFilter === type
-                        ? 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    {type === 'all' ? 'All' : type === 'flashcard' ? 'Flashcards' : 'Recall'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {cards.length === 0 ? (
             <div className="text-center py-14 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
               <p className="text-sm text-slate-400 dark:text-slate-500">No cards yet. Upload a document to generate cards.</p>
-            </div>
-          ) : filteredCards.length === 0 ? (
-            <div className="text-center py-10 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-              <p className="text-sm text-slate-400 dark:text-slate-500">No cards match your search.</p>
-              <button
-                onClick={() => { setCardSearch(''); setCardTypeFilter('all') }}
-                className="text-xs text-violet-500 hover:text-violet-700 dark:hover:text-violet-300 mt-2 transition-colors"
-              >
-                Clear filters
-              </button>
             </div>
           ) : (
             <CardBrowser
               cards={cards}
               folders={folders}
+              materials={materials}
+              topics={topics}
               onCardClick={(card) => {
                 setSelectedCardForDetail(card)
               }}

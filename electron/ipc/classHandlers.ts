@@ -2,6 +2,9 @@ import { ipcMain } from 'electron'
 import Database from 'better-sqlite3'
 import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
+import { safeParseAIJson, safeParseAICards } from '../../src/lib/jsonRepair'
+import { consolidateCardTopics } from '../../src/lib/topicClustering'
+import { getOrCreateMaterialFolder } from './materialFolderHelper'
 import type { ClassCreationData, Subject } from '../../src/types'
 
 let db: Database.Database
@@ -255,11 +258,7 @@ Rules:
     { type: 'json_object' }
   )
 
-  let cleaned = responseText.trim()
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-  }
-  const parsed = JSON.parse(cleaned)
+  const parsed = safeParseAIJson<{ modules?: any[] }>(responseText, { modules: [] })
 
   if (!parsed.modules || !Array.isArray(parsed.modules)) {
     throw new Error('Invalid syllabus response: missing modules array')
@@ -350,18 +349,40 @@ async function generateCardsAsync(subjectId: number, materialIds: number[]): Pro
         { type: 'json_object' }
       )
 
-      let cleaned = responseText.trim()
-      if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-      const parsed = JSON.parse(cleaned)
+      const parsed = safeParseAICards(responseText)
 
-      const flashcards = (parsed.flashcards || [])
-        .filter((fc: { front: string; back: string }) => fc.front?.trim() && fc.back?.trim())
-      const activeRecall = (parsed.active_recall || [])
-        .filter((ar: { question: string; model_answer: string }) => ar.question?.trim() && ar.model_answer?.trim())
+      const rawCards: Partial<Card>[] = []
+      for (const fc of (parsed.flashcards || [])) {
+        if (fc.front?.trim() && fc.back?.trim()) {
+          rawCards.push({
+            type: 'flashcard',
+            front: fc.front.trim(),
+            back: fc.back.trim(),
+            concept: fc.concept
+          })
+        }
+      }
+      for (const ar of (parsed.active_recall || [])) {
+        if (ar.question?.trim() && ar.model_answer?.trim()) {
+          rawCards.push({
+            type: 'active_recall',
+            front: ar.question.trim(),
+            back: ar.model_answer.trim(),
+            concept: ar.concept
+          })
+        }
+      }
+
+      const consolidated = consolidateCardTopics(rawCards, {
+        maxTopics: 4,
+        defaultTopic: subject.name
+      })
+
+      const folderId = getOrCreateMaterialFolder(db, subjectId, materialId)
 
       const insertCard = db.prepare(`
-        INSERT INTO cards (subject_id, material_id, type, front, back, is_manual, source, created_at)
-        VALUES (?, ?, ?, ?, ?, 0, 'auto', ?)
+        INSERT INTO cards (subject_id, material_id, type, front, back, concept, folder_id, is_manual, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'auto', ?)
       `)
       const insertSchedule = db.prepare(
         'INSERT OR REPLACE INTO card_schedule (card_id, user_id, interval, repetitions, ease_factor, due_date, last_reviewed_at) VALUES (?, ?, 1, 0, 1.3, ?, null)'
@@ -372,12 +393,8 @@ async function generateCardsAsync(subjectId: number, materialIds: number[]): Pro
       const now = new Date().toISOString()
 
       db.transaction(() => {
-        for (const fc of flashcards) {
-          const r = insertCard.run(subjectId, materialId, 'flashcard', fc.front.trim(), fc.back.trim(), now)
-          insertSchedule.run(r.lastInsertRowid, uid, now)
-        }
-        for (const ar of activeRecall) {
-          const r = insertCard.run(subjectId, materialId, 'active_recall', ar.question.trim(), ar.model_answer.trim(), now)
+        for (const c of consolidated) {
+          const r = insertCard.run(subjectId, materialId, c.type, c.front, c.back, c.concept || subject.name, folderId, now)
           insertSchedule.run(r.lastInsertRowid, uid, now)
         }
       })()

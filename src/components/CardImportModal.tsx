@@ -137,19 +137,6 @@ export default function CardImportModal({
     return subjectMaterials.filter(m => m.filename.toLowerCase().includes(q))
   }, [subjectMaterials, materialSearchQuery])
 
-  // Split calculation when "Both" is selected
-  const flashcardSplit = useMemo(() => {
-    if (cardType !== 'both') return 0
-    if (cardCount <= 1) return 1
-    return Math.max(1, Math.round(cardCount * 0.65))
-  }, [cardType, cardCount])
-
-  const activeRecallSplit = useMemo(() => {
-    if (cardType !== 'both') return 0
-    if (cardCount <= 1) return 0
-    return Math.max(1, cardCount - flashcardSplit)
-  }, [cardType, cardCount, flashcardSplit])
-
   // Manual parser
   const parsedManual = useMemo(() => {
     if (!manualText.trim() || !termSep.trim()) return []
@@ -312,12 +299,11 @@ export default function CardImportModal({
     setIsGenerating(true)
 
     try {
-      const options: ModuleCardGenOptions & { folderId?: number | null } = {
+      const options: ModuleCardGenOptions = {
         type: cardType,
         count: cardCount,
-        flashcardCount: cardType === 'both' ? flashcardSplit : undefined,
-        activeRecallCount: cardType === 'both' ? activeRecallSplit : undefined,
         folderId: aiFolderId,
+        materialId: selectedMaterialId || undefined,
         userId
       }
 
@@ -872,7 +858,7 @@ export default function CardImportModal({
                 <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
                   2. Choose Card Format
                 </label>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setCardType('flashcard')}
@@ -908,25 +894,6 @@ export default function CardImportModal({
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
                       Why & how questions, mechanisms, causal reasoning.
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setCardType('both')}
-                    disabled={isGenerating}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                      cardType === 'both'
-                        ? 'border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-100 ring-2 ring-emerald-500/20'
-                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-base">⚡</span>
-                      <span className="text-xs font-semibold">Both (Mixed)</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                      Balanced deck of core definitions + reasoning questions.
                     </p>
                   </button>
                 </div>
@@ -1005,16 +972,6 @@ export default function CardImportModal({
                     +
                   </button>
                 </div>
-
-                {/* Breakdown indicator for "Both" */}
-                {cardType === 'both' && (
-                  <div className="mt-2.5 p-2.5 bg-slate-50 dark:bg-slate-800/80 rounded-lg border border-slate-200/80 dark:border-slate-700/80 text-[11px] text-slate-600 dark:text-slate-400 flex items-center justify-between">
-                    <span>Deck Breakdown:</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">
-                      🃏 {flashcardSplit} Flashcards + 🧠 {activeRecallSplit} Active Recall Questions
-                    </span>
-                  </div>
-                )}
               </div>
 
               {/* Target Folder Selector */}

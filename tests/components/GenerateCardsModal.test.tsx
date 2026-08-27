@@ -24,7 +24,7 @@ describe('GenerateCardsModal', () => {
     jest.clearAllMocks()
   })
 
-  it('renders correctly when open', () => {
+  it('renders correctly with Flashcards and Active Recall options', () => {
     render(
       <GenerateCardsModal
         isOpen={true}
@@ -40,7 +40,7 @@ describe('GenerateCardsModal', () => {
     expect(screen.getByText('Biochemistry 101')).toBeInTheDocument()
     expect(screen.getByText('Flashcards')).toBeInTheDocument()
     expect(screen.getByText('Active Recall')).toBeInTheDocument()
-    expect(screen.getByText('Both (Mixed)')).toBeInTheDocument()
+    expect(screen.queryByText('Both (Mixed)')).toBeNull()
   })
 
   it('does not render when isOpen is false', () => {
@@ -56,7 +56,7 @@ describe('GenerateCardsModal', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('allows selecting card format and presets', () => {
+  it('allows selecting active recall format and presets', () => {
     render(
       <GenerateCardsModal
         isOpen={true}
@@ -80,13 +80,11 @@ describe('GenerateCardsModal', () => {
 
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'active_recall',
-      count: 30,
-      flashcardCount: undefined,
-      activeRecallCount: undefined
+      count: 30
     })
   })
 
-  it('calculates split when Both is selected', () => {
+  it('allows selecting flashcard format and presets', () => {
     render(
       <GenerateCardsModal
         isOpen={true}
@@ -96,28 +94,17 @@ describe('GenerateCardsModal', () => {
       />
     )
 
-    // Select Both
-    const bothBtn = screen.getByText('Both (Mixed)').closest('button')!
-    fireEvent.click(bothBtn)
-
-    // Select preset 20
+    // Flashcard is selected by default, select preset 20
     const preset20 = screen.getByRole('button', { name: '20' })
     fireEvent.click(preset20)
-
-    // Verify breakdown helper text appears
-    expect(screen.getByText(/Deck Breakdown:/i)).toBeInTheDocument()
-    expect(screen.getByText(/13 Flashcards/i)).toBeInTheDocument()
-    expect(screen.getByText(/7 Active Recall Questions/i)).toBeInTheDocument()
 
     // Submit
     const generateBtn = screen.getByRole('button', { name: /generate 20 cards/i })
     fireEvent.click(generateBtn)
 
     expect(mockOnGenerate).toHaveBeenCalledWith({
-      type: 'both',
-      count: 20,
-      flashcardCount: 13,
-      activeRecallCount: 7
+      type: 'flashcard',
+      count: 20
     })
   })
 
@@ -141,9 +128,7 @@ describe('GenerateCardsModal', () => {
 
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
-      count: 75,
-      flashcardCount: undefined,
-      activeRecallCount: undefined
+      count: 75
     })
   })
 

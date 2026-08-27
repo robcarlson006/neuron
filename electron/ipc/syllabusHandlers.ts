@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import Database from 'better-sqlite3'
 import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
+import { safeParseAIJson } from '../../src/lib/jsonRepair'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 
 let db: Database.Database
@@ -10,13 +11,9 @@ export function setSyllabusDatabase(database: Database.Database): void {
   db = database
 }
 
-/** Strip markdown code fences from an AI response and parse it as JSON. */
+/** Strip markdown code fences from an AI response and parse it as JSON safely. */
 function parseAIJson<T>(responseText: string): T {
-  let cleaned = responseText.trim()
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-  }
-  return JSON.parse(cleaned)
+  return safeParseAIJson<T>(responseText, {} as T)
 }
 
 /**
@@ -336,11 +333,7 @@ Return ONLY valid JSON. No markdown.`
       { type: 'json_object' }
     )
 
-    let cleaned = responseText.trim()
-    if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-    }
-    return JSON.parse(cleaned)
+    return parseAIJson(responseText)
   })
 
   // ── Get single module with topics ──────────────────────────────────────

@@ -301,7 +301,7 @@ export async function callAIMessages(
     const body: Record<string, unknown> = {
       model,
       messages,
-      max_tokens: 4096,
+      max_tokens: 8192,
       temperature: 0.7
     }
     if (responseFormat) {

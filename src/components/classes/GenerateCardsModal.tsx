@@ -54,25 +54,12 @@ export default function GenerateCardsModal({
     if (isGenerating) return
 
     const finalCount = Math.max(1, cardCount)
-    let flashcardCount: number | undefined
-    let activeRecallCount: number | undefined
-
-    if (selectedType === 'both') {
-      flashcardCount = finalCount === 1 ? 1 : Math.max(1, Math.round(finalCount * 0.65))
-      activeRecallCount = finalCount === 1 ? 0 : Math.max(1, finalCount - flashcardCount)
-    }
 
     onGenerate({
       type: selectedType,
-      count: finalCount,
-      flashcardCount,
-      activeRecallCount
+      count: finalCount
     })
   }
-
-  // Calculate split breakdown for 'both' type
-  const flashcardSplit = cardCount === 1 ? 1 : Math.max(1, Math.round(cardCount * 0.65))
-  const recallSplit = cardCount === 1 ? 0 : Math.max(1, cardCount - flashcardSplit)
 
   return (
     <div
@@ -133,7 +120,7 @@ export default function GenerateCardsModal({
               1. Choose Card Format
             </label>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-2 gap-2.5">
               {/* Flashcards */}
               <button
                 type="button"
@@ -177,29 +164,6 @@ export default function GenerateCardsModal({
                 <span className="text-sm font-semibold mb-0.5">Active Recall</span>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
                   Why/How questions, mechanisms & reasoning
-                </span>
-              </button>
-
-              {/* Both */}
-              <button
-                type="button"
-                onClick={() => setSelectedType('both')}
-                disabled={isGenerating}
-                className={`flex flex-col items-start p-3.5 rounded-xl border text-left transition-all ${
-                  selectedType === 'both'
-                    ? 'border-purple-600 bg-purple-50/70 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 ring-2 ring-purple-500/20 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800/60 hover:border-slate-300 dark:hover:border-slate-600 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <div className="flex items-center justify-between w-full mb-1.5">
-                  <span className="text-xl">⚡</span>
-                  {selectedType === 'both' && (
-                    <span className="w-2 h-2 rounded-full bg-purple-600 dark:bg-purple-400"></span>
-                  )}
-                </div>
-                <span className="text-sm font-semibold mb-0.5">Both (Mixed)</span>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Balanced blend of flashcards & recall
                 </span>
               </button>
             </div>
@@ -278,15 +242,6 @@ export default function GenerateCardsModal({
                   </button>
                 </div>
               </div>
-
-            {/* Breakdown explanation if 'both' */}
-            {selectedType === 'both' && (
-              <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/80">
-                ⚡ <span className="font-medium text-slate-700 dark:text-slate-300">Deck Breakdown:</span> approx.{' '}
-                <span className="font-semibold text-indigo-600 dark:text-indigo-400">{flashcardSplit} Flashcards</span> +{' '}
-                <span className="font-semibold text-emerald-600 dark:text-emerald-400">{recallSplit} Active Recall Questions</span>.
-              </p>
-            )}
           </div>
 
           {/* Cognitive Science & Deduplication Badges */}

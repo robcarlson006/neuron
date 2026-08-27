@@ -8,6 +8,7 @@ import { getApiKey, getAIConfig } from './aiConfigStore'
 import { parseFileToText } from './documentParser'
 import { bktUpdate } from '../../src/lib/bkt'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
+import { safeParseAIJson } from '../../src/lib/jsonRepair'
 import type {
   TutorSession,
   TutorStreamParams,
@@ -958,7 +959,7 @@ Rules:
       gapTopics: params.gapTopics
     })
 
-    // Build material context (if studying a specific material)
+    // Build material context (if studying a specific material or general subject materials)
     let materialContextBlock = ''
     if (params.materialId) {
       try {
@@ -988,6 +989,33 @@ Rules:
         `--- MATERIAL CONTENT END ---`,
         ''
       ].join('\n')
+    } else {
+      try {
+        const subjectMaterials = db.prepare(`
+          SELECT filename, content_text FROM materials
+          WHERE subject_id = ? AND content_text IS NOT NULL AND LENGTH(content_text) > 50
+          ORDER BY uploaded_at DESC LIMIT 5
+        `).all(params.subjectId) as { filename: string; content_text: string }[]
+
+        if (subjectMaterials.length > 0) {
+          const combined = subjectMaterials.map(m =>
+            `[DOCUMENT: ${m.filename}]\n${m.content_text.substring(0, 6000)}`
+          ).join('\n\n---\n\n')
+
+          materialContextBlock = [
+            '',
+            `SOURCE STUDY MATERIALS FOR THIS SUBJECT:`,
+            `The student has uploaded the following course materials and lecture documents:`,
+            `--- COURSE MATERIALS START ---`,
+            combined,
+            `--- COURSE MATERIALS END ---`,
+            `Thoroughly draw upon these source materials to ground your Socratic questioning, test core mechanisms, verify accuracy, and quote relevant formulas or explanations when guiding the student.`,
+            ''
+          ].join('\n')
+        }
+      } catch (err) {
+        console.error('Failed to load subject materials for tutor session:', err)
+      }
     }
 
     // Append all context blocks to syllabusContext
@@ -1239,11 +1267,7 @@ Rules:
       { type: 'json_object' }
     )
 
-    let cleaned = responseText.trim()
-    if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-    }
-    const parsed = JSON.parse(cleaned)
+    const parsed = safeParseAIJson<{ plan_items?: any[] }>(responseText, { plan_items: [] })
 
     const planItems = parsed.plan_items || []
     if (!Array.isArray(planItems)) return []

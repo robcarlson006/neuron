@@ -74,7 +74,7 @@ describe('CardImportModal', () => {
     expect(screen.getByPlaceholderText(/paste lecture notes/i)).toBeInTheDocument()
     expect(screen.getByText('Flashcards')).toBeInTheDocument()
     expect(screen.getByText('Active Recall')).toBeInTheDocument()
-    expect(screen.getByText('Both (Mixed)')).toBeInTheDocument()
+    expect(screen.queryByText('Both (Mixed)')).toBeNull()
   })
 
   it('generates cards with AI successfully using pasted text', async () => {
@@ -116,9 +116,8 @@ describe('CardImportModal', () => {
       {
         type: 'active_recall',
         count: 20,
-        flashcardCount: undefined,
-        activeRecallCount: undefined,
         folderId: null,
+        materialId: undefined,
         userId: 1
       }
     )

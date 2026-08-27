@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neuron — UI Redesign Interactive Preview</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            neuron: {
+              50:  '#fbf9fe',
+              100: '#f5f0ff',
+              200: '#ede9fe',
+              300: '#c4b5fd',
+              400: '#a78bfa',
+              500: '#8b5cf6',
+              600: '#7c3aed',
+              700: '#6d28d9',
+              800: '#5b21b6',
+              900: '#2e1065',
+              950: '#130924',
+              surface: '#180d30',
+              surfaceCard: '#1f123d',
+              surfaceBorder: '#2e1b57',
+            },
+            sky: {
+              400: '#38bdf8',
+              500: '#0ea5e9',
+              600: '#0284c7',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, 0.2); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(139, 92, 246, 0.4); }
+
+    .glass-card {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(226, 232, 240, 0.8);
+    }
+    .dark .glass-card {
+      background: rgba(27, 16, 51, 0.65);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(139, 92, 246, 0.18);
+    }
+
+    .glass-card-elevated {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(203, 213, 225, 0.8);
+      box-shadow: 0 10px 25px -5px rgba(124, 58, 237, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+    }
+    .dark .glass-card-elevated {
+      background: linear-gradient(135deg, rgba(35, 20, 66, 0.75) 0%, rgba(24, 13, 48, 0.85) 100%);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(167, 139, 250, 0.22);
+      box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px 0 rgba(139, 92, 246, 0.12);
+    }
+
+    @keyframes somaPulse {
+      0%, 100% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.08); opacity: 1; filter: drop-shadow(0 0 8px #a78bfa); }
+    }
+    .logo-soma {
+      animation: somaPulse 3s ease-in-out infinite;
+      transform-origin: center;
+    }
+  </style>
+</head>
+<body class="bg-[#fbf9fe] dark:bg-[#110720] text-slate-800 dark:text-slate-100 font-sans antialiased min-h-screen flex flex-col transition-colors duration-300">
+
+  <!-- Top Preview Header Bar -->
+  <header class="bg-white/90 dark:bg-neuron-950/90 border-b border-slate-200 dark:border-neuron-800/80 px-6 py-2.5 flex items-center justify-between backdrop-blur-md sticky top-0 z-50">
+    <div class="flex items-center gap-3">
+      <span class="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+      <span class="text-xs font-bold uppercase tracking-wider text-neuron-600 dark:text-neuron-400">Neuron UI Design Draft</span>
+      <span class="text-xs text-slate-400 dark:text-slate-500">• Same Colors & Logo • 100% Feature Parity • Modernized Layout</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="toggleTheme()" class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-neuron-900 border border-slate-200 dark:border-neuron-700 text-slate-700 dark:text-neuron-200 hover:bg-slate-200 dark:hover:bg-neuron-800 transition-all shadow-sm">
+        <span id="themeIcon">☀️ Toggle Light / Dark</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+    
+    <!-- Redesigned Sidebar Navigation -->
+    <aside class="w-64 bg-neuron-100/70 dark:bg-[#150a28]/80 border-r border-neuron-200/80 dark:border-neuron-800/60 flex flex-col flex-shrink-0 backdrop-blur-xl transition-colors duration-300">
+      
+      <!-- Brand & App Title -->
+      <div class="px-5 pt-7 pb-5 border-b border-neuron-200/60 dark:border-neuron-800/40">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3 cursor-pointer group">
+            <!-- Exact Animated Neuron SVG Logo -->
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-neuron-200 to-sky-100 dark:from-neuron-900 dark:to-neuron-950 p-1 border border-neuron-300 dark:border-neuron-700 shadow-sm group-hover:shadow transition-all">
+              <svg viewBox="0 0 100 100" fill="none" class="w-full h-full">
+                <circle cx="50" cy="50" r="14" fill="#8b5cf6" class="logo-soma" />
+                <circle cx="50" cy="50" r="6" fill="#ede9fe" />
+                <!-- Dendrites -->
+                <path d="M50 50 Q40 35 32 24" stroke="#a78bfa" stroke-width="3" stroke-linecap="round" />
+                <path d="M32 24 Q22 20 16 14" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" />
+                <path d="M50 50 Q62 38 72 26" stroke="#a78bfa" stroke-width="3" stroke-linecap="round" />
+                <path d="M72 26 Q80 20 86 12" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" />
+                <!-- Axon (Sky Blue) -->
+                <path d="M50 50 Q60 66 66 82" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" />
+                <path d="M66 82 Q74 86 80 82" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" />
+                <circle cx="16" cy="14" r="2.5" fill="#c4b5fd" />
+                <circle cx="86" cy="12" r="2.5" fill="#c4b5fd" />
+                <circle cx="80" cy="82" r="3" fill="#7dd3fc" />
+              </svg>
+            </div>
+            <div>
+              <span class="font-extrabold text-slate-900 dark:text-white text-base tracking-tight block leading-tight">Neuron</span>
+              <span class="text-[11px] font-medium text-neuron-500 dark:text-neuron-400">Spaced Recall Engine</span>
+            </div>
+          </div>
+
+          <div class="px-2 py-1 rounded-md bg-neuron-200/50 dark:bg-neuron-900/60 border border-neuron-300/40 dark:border-neuron-700/50 text-[10px] font-mono text-neuron-600 dark:text-neuron-400">
+            ⌘K
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation Links -->
+      <nav class="flex-1 px-3 py-4 space-y-6 overflow-y-auto">
+        
+        <!-- MAIN Section -->
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-neuron-400/80 px-3 mb-2">
+            Study Hub
+          </p>
+          <div class="space-y-1">
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold bg-neuron-600 text-white shadow-sm shadow-neuron-600/30">
+              <div class="flex items-center gap-3">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+                <span>Dashboard</span>
+              </div>
+              <span class="px-2 py-0.5 text-xs font-bold bg-white/20 text-white rounded-full">32 due</span>
+            </a>
+
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-neuron-200/50 dark:hover:bg-neuron-900/40 hover:text-neuron-900 dark:hover:text-white transition-all">
+              <div class="flex items-center gap-3">
+                <svg class="w-4 h-4 text-neuron-500 dark:text-neuron-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                <span>AI Tutor Hub</span>
+              </div>
+              <span class="flex h-2 w-2 rounded-full bg-sky-400"></span>
+            </a>
+
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-neuron-200/50 dark:hover:bg-neuron-900/40 hover:text-neuron-900 dark:hover:text-white transition-all">
+              <div class="flex items-center gap-3">
+                <svg class="w-4 h-4 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                <span>Calendar & Deadlines</span>
+              </div>
+            </a>
+          </div>
+        </div>
+
+        <!-- PROGRESS Section -->
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-neuron-400/80 px-3 mb-2">
+            Insights
+          </p>
+          <div class="space-y-1">
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-neuron-200/50 dark:hover:bg-neuron-900/40 hover:text-neuron-900 dark:hover:text-white transition-all">
+              <div class="flex items-center gap-3">
+                <svg class="w-4 h-4 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                <span>Analytics & Mastery</span>
+              </div>
+            </a>
+          </div>
+        </div>
+
+        <!-- SUBJECTS Section -->
+        <div>
+          <div class="flex items-center justify-between px-3 mb-2">
+            <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-neuron-400/80">
+              Your Subjects
+            </p>
+            <button class="w-5 h-5 rounded-md flex items-center justify-center text-neuron-600 dark:text-neuron-400 hover:bg-neuron-200 dark:hover:bg-neuron-800 transition-colors text-xs font-bold" title="New Subject">
+              +
+            </button>
+          </div>
+          <div class="space-y-1">
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-neuron-200/50 dark:hover:bg-neuron-900/40 transition-all group">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="w-2 h-2 rounded-full bg-violet-500 flex-shrink-0"></span>
+                <span class="truncate">Cellular Biology</span>
+              </div>
+              <span class="px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 text-[10px] font-bold">14 due</span>
+            </a>
+
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-neuron-200/50 dark:hover:bg-neuron-900/40 transition-all group">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="w-2 h-2 rounded-full bg-sky-500 flex-shrink-0"></span>
+                <span class="truncate">Data Structures & Algo</span>
+              </div>
+              <span class="px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 text-[10px] font-bold">12 due</span>
+            </a>
+
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-neuron-200/50 dark:hover:bg-neuron-900/40 transition-all group">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0"></span>
+                <span class="truncate">Microeconomics</span>
+              </div>
+              <span class="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">6 due</span>
+            </a>
+
+            <a href="#" class="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-neuron-200/50 dark:hover:bg-neuron-900/40 transition-all group">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0"></span>
+                <span class="truncate">Cognitive Neuroscience</span>
+              </div>
+              <span class="text-slate-400 text-[10px]">Done</span>
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      <!-- User Profile & Settings Footer -->
+      <div class="p-3 border-t border-neuron-200/60 dark:border-neuron-800/50 space-y-2">
+        <div class="flex items-center justify-between p-2 rounded-xl bg-neuron-200/40 dark:bg-neuron-900/40 border border-neuron-200/60 dark:border-neuron-800/40">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-neuron-600 to-sky-400 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-sm">
+              RC
+            </div>
+            <div class="min-w-0">
+              <p class="text-xs font-bold text-slate-900 dark:text-slate-100 truncate leading-tight">Rob Carlson</p>
+              <p class="text-[10px] text-neuron-600 dark:text-neuron-400 font-medium">Level 4 Scholar • 840 XP</p>
+            </div>
+          </div>
+          <button class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-y-auto px-8 py-8">
+      <div class="max-w-6xl mx-auto space-y-8">
+        
+        <!-- Streamlined Header & Unified Action Bar -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-3">
+              <h1 class="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+                Good evening, Rob 👋
+              </h1>
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-300 text-xs font-bold">
+                🔥 5 Day Streak
+              </span>
+            </div>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Wednesday, August 26 • Keep your retention peak before upcoming exams
+            </p>
+          </div>
+
+          <!-- Quick Action Toolbar -->
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <!-- Pomodoro Quick Widget -->
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-neuron-surface border border-slate-200 dark:border-neuron-surfaceBorder text-xs font-mono shadow-sm">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span class="font-bold text-slate-700 dark:text-slate-200">25:00</span>
+              <button class="text-neuron-600 dark:text-neuron-400 hover:text-neuron-700 font-sans font-semibold ml-1">▶</button>
+            </div>
+
+            <!-- Focus Mode Button -->
+            <button class="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-neuron-surface border border-slate-200 dark:border-neuron-surfaceBorder hover:bg-slate-50 dark:hover:bg-neuron-900 text-slate-700 dark:text-slate-200 transition-all shadow-sm">
+              <span>🎯 Focus</span>
+            </button>
+
+            <!-- Import / Card Generator Button -->
+            <button class="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-neuron-surface border border-slate-200 dark:border-neuron-surfaceBorder hover:bg-slate-50 dark:hover:bg-neuron-900 text-slate-700 dark:text-slate-200 transition-all shadow-sm">
+              <svg class="w-3.5 h-3.5 text-neuron-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+              <span>Import Notes</span>
+            </button>
+
+            <!-- Primary Add Subject CTA -->
+            <button class="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-neuron-600 to-neuron-700 hover:from-neuron-500 hover:to-neuron-600 text-white shadow-md shadow-neuron-600/20 hover:shadow-neuron-600/40 transition-all">
+              <span class="text-sm leading-none">+</span>
+              <span>Add Subject</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- HERO: Today's Plan Command Center -->
+        <div class="glass-card-elevated rounded-2xl p-6 relative overflow-hidden transition-all">
+          <!-- Background Ambient Glow -->
+          <div class="absolute -right-16 -top-16 w-64 h-64 bg-neuron-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <div class="absolute -left-16 -bottom-16 w-64 h-64 bg-sky-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+            <!-- Left Info Area with Progress Ring -->
+            <div class="flex items-center gap-6">
+              <!-- Animated Circular Progress Ring -->
+              <div class="relative w-24 h-24 flex-shrink-0 flex items-center justify-center">
+                <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                  <!-- Background Ring -->
+                  <path class="text-slate-200 dark:text-neuron-900" stroke-width="3.5" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                  <!-- Filled Progress (e.g. 68% Mastered) -->
+                  <path class="text-neuron-500" stroke-width="3.5" stroke-dasharray="68, 100" stroke-linecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                </svg>
+                <div class="absolute flex flex-col items-center">
+                  <span class="text-xl font-extrabold text-slate-900 dark:text-white leading-none">32</span>
+                  <span class="text-[9px] uppercase tracking-wider font-bold text-slate-400 dark:text-neuron-300">Due</span>
+                </div>
+              </div>
+
+              <div>
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="px-2.5 py-0.5 rounded-md bg-neuron-100 dark:bg-neuron-900 text-neuron-700 dark:text-neuron-300 text-xs font-bold">
+                    Today's Recall Plan
+                  </span>
+                  <span class="text-xs text-slate-400 dark:text-slate-500">• ~18 min total</span>
+                </div>
+                <h2 class="text-lg font-bold text-slate-900 dark:text-white">
+                  32 Cards scheduled for optimal memory consolidation
+                </h2>
+                <div class="flex items-center gap-4 mt-2 text-xs">
+                  <span class="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 font-medium">
+                    <span class="w-2.5 h-2.5 rounded-full bg-neuron-500"></span>
+                    24 Flashcards
+                  </span>
+                  <span class="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 font-medium">
+                    <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+                    8 Active Recall
+                  </span>
+                  <span class="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                    68% Retention Avg
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Study Action Segment -->
+            <div class="flex items-center gap-3 flex-shrink-0">
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+                <button class="px-6 py-3 rounded-xl bg-gradient-to-r from-neuron-600 to-neuron-700 hover:from-neuron-500 hover:to-neuron-600 text-white font-bold text-sm shadow-lg shadow-neuron-600/30 hover:shadow-neuron-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  <span>Start Daily Study</span>
+                </button>
+                <div class="relative group">
+                  <button class="w-full sm:w-auto px-4 py-3 rounded-xl bg-white dark:bg-neuron-surface border border-slate-200 dark:border-neuron-surfaceBorder text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-neuron-900 font-semibold text-xs transition-all flex items-center justify-center gap-1.5">
+                    <span>Modes</span>
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Active Subjects (Bento Style Cards) -->
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <h2 class="text-lg font-bold text-slate-900 dark:text-white">Active Subjects & Courses</h2>
+              <span class="px-2 py-0.5 rounded-full bg-neuron-100 dark:bg-neuron-900/60 text-neuron-700 dark:text-neuron-300 text-xs font-bold">4 Courses</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <button class="px-2.5 py-1 rounded-lg bg-neuron-200/60 dark:bg-neuron-800/60 font-semibold text-neuron-800 dark:text-neuron-200">All</button>
+              <button class="px-2.5 py-1 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-neuron-900 font-medium">Due First</button>
+              <button class="px-2.5 py-1 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-neuron-900 font-medium">By Exam Date</button>
+            </div>
+          </div>
+
+          <!-- Subject Cards Grid -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            
+            <!-- Subject Card 1 -->
+            <div class="glass-card hover:glass-card-elevated rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1 group relative cursor-pointer flex flex-col justify-between">
+              <!-- Top Row -->
+              <div>
+                <div class="flex items-start justify-between gap-3 mb-3">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-violet-100 dark:bg-violet-950/80 border border-violet-200 dark:border-violet-800/60 flex items-center justify-center text-violet-600 dark:text-violet-400 font-bold text-xs">
+                      🧬
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-slate-900 dark:text-white text-base group-hover:text-neuron-600 dark:group-hover:text-neuron-400 transition-colors">
+                        Cellular Biology
+                      </h3>
+                      <span class="text-[11px] font-mono font-medium text-slate-400 dark:text-slate-500">BIO-201</span>
+                    </div>
+                  </div>
+                  <span class="px-2 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-600 dark:text-violet-300 text-[11px] font-bold">
+                    Active
+                  </span>
+                </div>
+
+                <p class="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mb-4">
+                  Cell respiration, glycolysis, ATP synthesis, and membrane transport systems.
+                </p>
+              </div>
+
+              <!-- Metrics & Bottom Action -->
+              <div class="space-y-3 pt-3 border-t border-slate-100 dark:border-neuron-800/40">
+                <!-- Progress Bar -->
+                <div>
+                  <div class="flex items-center justify-between text-[11px] mb-1">
+                    <span class="font-semibold text-slate-500 dark:text-slate-400">Mastery</span>
+                    <span class="font-bold text-violet-600 dark:text-violet-400">74%</span>
+                  </div>
+                  <div class="w-full bg-slate-100 dark:bg-neuron-900 h-2 rounded-full overflow-hidden">
+                    <div class="bg-gradient-to-r from-neuron-500 to-sky-400 h-full rounded-full" style="width: 74%"></div>
+                  </div>
+                </div>
+
+                <!-- Deadline Badge & Due Count -->
+                <div class="flex items-center justify-between text-xs">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-300 font-semibold text-[11px]">
+                    ⏳ Midterm in 4d
+                  </span>
+                  <span class="font-bold text-neuron-600 dark:text-neuron-400">
+                    14 cards due
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subject Card 2 -->
+            <div class="glass-card hover:glass-card-elevated rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1 group relative cursor-pointer flex flex-col justify-between">
+              <div>
+                <div class="flex items-start justify-between gap-3 mb-3">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-sky-100 dark:bg-sky-950/80 border border-sky-200 dark:border-sky-800/60 flex items-center justify-center text-sky-600 dark:text-sky-400 font-bold text-xs">
+                      💻
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-slate-900 dark:text-white text-base group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
+                        Data Structures & Algo
+                      </h3>
+                      <span class="text-[11px] font-mono font-medium text-slate-400 dark:text-slate-500">CS-301</span>
+                    </div>
+                  </div>
+                  <span class="px-2 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-600 dark:text-sky-300 text-[11px] font-bold">
+                    Active
+                  </span>
+                </div>
+
+                <p class="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mb-4">
+                  Binary search trees, AVL balancing, Dijkstra algorithm, Dynamic Programming paradigms.
+                </p>
+              </div>
+
+              <div class="space-y-3 pt-3 border-t border-slate-100 dark:border-neuron-800/40">
+                <div>
+                  <div class="flex items-center justify-between text-[11px] mb-1">
+                    <span class="font-semibold text-slate-500 dark:text-slate-400">Mastery</span>
+                    <span class="font-bold text-sky-500">61%</span>
+                  </div>
+                  <div class="w-full bg-slate-100 dark:bg-neuron-900 h-2 rounded-full overflow-hidden">
+                    <div class="bg-gradient-to-r from-sky-400 to-sky-600 h-full rounded-full" style="width: 61%"></div>
+                  </div>
+                </div>
+
+                <div class="flex items-center justify-between text-xs">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-300 font-semibold text-[11px]">
+                    🚨 Quiz tomorrow
+                  </span>
+                  <span class="font-bold text-sky-500">
+                    12 cards due
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subject Card 3 -->
+            <div class="glass-card hover:glass-card-elevated rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1 group relative cursor-pointer flex flex-col justify-between">
+              <div>
+                <div class="flex items-start justify-between gap-3 mb-3">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 font-bold text-xs">
+                      📈
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-slate-900 dark:text-white text-base group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                        Microeconomics
+                      </h3>
+                      <span class="text-[11px] font-mono font-medium text-slate-400 dark:text-slate-500">ECON-101</span>
+                    </div>
+                  </div>
+                  <span class="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-300 text-[11px] font-bold">
+                    Active
+                  </span>
+                </div>
+
+                <p class="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mb-4">
+                  Elasticity, monopoly pricing, game theory Nash equilibrium, consumer surplus.
+                </p>
+              </div>
+
+              <div class="space-y-3 pt-3 border-t border-slate-100 dark:border-neuron-800/40">
+                <div>
+                  <div class="flex items-center justify-between text-[11px] mb-1">
+                    <span class="font-semibold text-slate-500 dark:text-slate-400">Mastery</span>
+                    <span class="font-bold text-emerald-500">88%</span>
+                  </div>
+                  <div class="w-full bg-slate-100 dark:bg-neuron-900 h-2 rounded-full overflow-hidden">
+                    <div class="bg-gradient-to-r from-emerald-400 to-emerald-600 h-full rounded-full" style="width: 88%"></div>
+                  </div>
+                </div>
+
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-slate-400 text-[11px]">No urgent deadlines</span>
+                  <span class="font-bold text-emerald-500">
+                    6 cards due
+                  </span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Quick AI Tutor Dock / Prompt Bar -->
+        <div class="p-4 rounded-2xl bg-gradient-to-r from-neuron-900/40 via-neuron-800/30 to-sky-950/40 border border-neuron-700/40 backdrop-blur-md flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-neuron-500 to-sky-400 flex items-center justify-center text-white text-sm shadow-md">
+              💬
+            </div>
+            <div>
+              <p class="text-xs font-bold text-slate-900 dark:text-white">Ask Socratic AI Tutor</p>
+              <p class="text-[11px] text-slate-400 dark:text-slate-400">Test your mental model or get instant multi-step explanations</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-xs font-medium border border-white/10 transition-all">
+              "Quiz me on Cellular Biology"
+            </button>
+            <button class="px-3 py-1.5 rounded-lg bg-neuron-600 hover:bg-neuron-700 text-white text-xs font-bold transition-all shadow-sm">
+              Open Tutor ↗
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function toggleTheme() {
+      const html = document.documentElement;
+      const themeIcon = document.getElementById('themeIcon');
+      if (html.classList.contains('dark')) {
+        html.classList.remove('dark');
+        themeIcon.innerText = '🌙 Toggle Light / Dark';
+      } else {
+        html.classList.add('dark');
+        themeIcon.innerText = '☀️ Toggle Light / Dark';
+      }
+    }
+  </script>
+</body>
+</html>
