@@ -5,7 +5,7 @@ import GenerateCardsModal from './GenerateCardsModal'
 interface CurriculumViewProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
   subjectName?: string
-  onStartTutor: (moduleId: number) => void
+  onStartTutor: (moduleId: number, selectedTopics?: string[]) => void
   onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
   onToggleTopic: (topicId: number, studied: boolean) => void
   loadingCards?: Record<number, boolean>
@@ -23,9 +23,36 @@ export default function CurriculumView({
     modules.find(m => m.status === 'in_progress')?.id ?? null
   )
   const [modalModule, setModalModule] = useState<(SyllabusModule & { topics?: ModuleTopic[] }) | null>(null)
+  const [selectedTopicsByModule, setSelectedTopicsByModule] = useState<Record<number, Set<number>>>({})
 
   function toggleModule(id: number): void {
     setExpandedModule(prev => prev === id ? null : id)
+  }
+
+  function toggleTopicSelection(moduleId: number, topicId: number): void {
+    setSelectedTopicsByModule(prev => {
+      const currentSet = new Set(prev[moduleId] || [])
+      if (currentSet.has(topicId)) {
+        currentSet.delete(topicId)
+      } else {
+        currentSet.add(topicId)
+      }
+      return { ...prev, [moduleId]: currentSet }
+    })
+  }
+
+  function selectAllTopics(moduleId: number, topics: ModuleTopic[]): void {
+    setSelectedTopicsByModule(prev => ({
+      ...prev,
+      [moduleId]: new Set(topics.map(t => t.id))
+    }))
+  }
+
+  function clearTopicSelection(moduleId: number): void {
+    setSelectedTopicsByModule(prev => ({
+      ...prev,
+      [moduleId]: new Set()
+    }))
   }
 
   if (modules.length === 0) {
@@ -43,6 +70,10 @@ export default function CurriculumView({
         const isInProgress = mod.status === 'in_progress'
         const isCompleted = mod.status === 'completed'
         const isPending = mod.status === 'pending'
+        const modTopics = mod.topics || []
+        const selectedSet = selectedTopicsByModule[mod.id] || new Set<number>()
+        const selectedCount = selectedSet.size
+        const completedCount = modTopics.filter(t => Boolean(t.completed || (t as ModuleTopic & { studied?: boolean }).studied)).length
 
         return (
           <div
@@ -61,11 +92,11 @@ export default function CurriculumView({
                 }`}
             >
               {/* Status icon */}
-              <span className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm
+              <span className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm font-medium
                 ${isCompleted ? 'bg-emerald-100 dark:bg-emerald-800 text-emerald-600 dark:text-emerald-300' : ''}
                 ${isInProgress ? 'bg-sky-100 dark:bg-sky-800 text-sky-600 dark:text-sky-300' : ''}
                 ${isPending ? 'bg-slate-100 dark:bg-slate-700 text-slate-400' : ''}
-              ">
+              `}>
                 {isCompleted ? '✓' : isInProgress ? '●' : String(index + 1)}
               </span>
 
@@ -113,43 +144,112 @@ export default function CurriculumView({
             {isExpanded && (
               <div className="border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
                 {/* Topics */}
-                {mod.topics && mod.topics.length > 0 && (
-                  <div className="px-4 py-3 space-y-1.5">
-                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">Topics</p>
-                    {mod.topics.map(topic => {
-                      const studied = (topic as ModuleTopic & { studied?: boolean }).studied
-                      return (
-                        <div
-                          key={topic.id}
-                          className="flex items-center gap-2.5 py-1.5"
-                        >
+                {modTopics.length > 0 && (
+                  <div className="px-4 py-3 space-y-2">
+                    <div className="flex items-center justify-between pb-1">
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                        Topics ({completedCount}/{modTopics.length} completed)
+                      </p>
+                      {modTopics.length > 1 && (
+                        <div className="flex items-center gap-2 text-[11px]">
                           <button
-                            onClick={() => onToggleTopic(topic.id, !studied)}
-                            className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors flex-shrink-0
-                              ${studied
-                                ? 'bg-emerald-500 border-emerald-500 text-white'
-                                : 'border-slate-300 dark:border-slate-600 hover:border-emerald-400'
-                              }`}
+                            type="button"
+                            onClick={() => selectAllTopics(mod.id, modTopics)}
+                            className="text-violet-600 dark:text-violet-400 hover:underline font-medium"
                           >
-                            {studied && <span className="text-[9px]">✓</span>}
+                            Select all
                           </button>
-                          <span className={`text-sm ${studied ? 'text-slate-400 line-through' : 'text-slate-600 dark:text-slate-300'}`}>
-                            {topic.title}
-                          </span>
+                          <span className="text-slate-300 dark:text-slate-600">·</span>
+                          <button
+                            type="button"
+                            onClick={() => clearTopicSelection(mod.id)}
+                            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                          >
+                            Clear
+                          </button>
                         </div>
-                      )
-                    })}
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      {modTopics.map(topic => {
+                        const topicCompleted = Boolean(topic.completed || (topic as ModuleTopic & { studied?: boolean }).studied)
+                        const isSelected = selectedSet.has(topic.id)
+
+                        return (
+                          <div
+                            key={topic.id}
+                            className={`flex items-center justify-between gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors ${
+                              isSelected
+                                ? 'bg-violet-50 dark:bg-violet-950/30 border border-violet-200/80 dark:border-violet-800/50'
+                                : 'hover:bg-slate-100 dark:hover:bg-slate-700/40 border border-transparent'
+                            }`}
+                          >
+                            <label className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleTopicSelection(mod.id, topic.id)}
+                                className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 cursor-pointer flex-shrink-0"
+                              />
+                              <span className={`text-sm truncate ${
+                                topicCompleted
+                                  ? 'text-slate-600 dark:text-slate-300'
+                                  : 'text-slate-800 dark:text-slate-200'
+                              }`}>
+                                {topic.title}
+                              </span>
+                            </label>
+
+                            {/* Completed indicator badge with toggle option */}
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {topicCompleted ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onToggleTopic(topic.id, false)
+                                  }}
+                                  title="Completed. Click to mark as uncompleted."
+                                  className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100/90 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700/60 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-emerald-200 dark:hover:bg-emerald-800/60 transition-colors"
+                                >
+                                  <span>✓</span> Completed
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onToggleTopic(topic.id, true)
+                                  }}
+                                  title="Mark as completed"
+                                  className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-0.5 rounded-full transition-colors"
+                                >
+                                  Mark complete
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
 
                 {/* Action buttons */}
                 <div className="px-4 py-3 flex items-center gap-2 border-t border-slate-100 dark:border-slate-700">
                   <button
-                    onClick={() => onStartTutor(mod.id)}
-                    disabled={isCompleted}
-                    className="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white text-xs font-medium rounded-lg transition-colors disabled:cursor-not-allowed"
+                    onClick={() => {
+                      const chosenTopicTitles = modTopics.length > 0
+                        ? (selectedCount > 0
+                            ? modTopics.filter(t => selectedSet.has(t.id)).map(t => t.title)
+                            : modTopics.map(t => t.title))
+                        : []
+                      onStartTutor(mod.id, chosenTopicTitles)
+                    }}
+                    className="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm"
                   >
-                    🎓 Start Tutor
+                    🎓 {selectedCount > 0 ? `Start Tutor (${selectedCount} topic${selectedCount > 1 ? 's' : ''})` : 'Start Tutor'}
                   </button>
                   <button
                     onClick={() => setModalModule(mod)}

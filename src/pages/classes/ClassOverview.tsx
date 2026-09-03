@@ -19,8 +19,16 @@ export default function ClassOverview(): React.JSX.Element {
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
   const [materials, setMaterials] = useState<Material[]>([])
   const [loadingCards, setLoadingCards] = useState<Record<number, boolean>>({})
-  const [, setStudyLog] = useState<Record<number, boolean>>({})
-  const [showConfigModal, setShowConfigModal] = useState<{ subjectId: number; subjectName: string } | null>(null)
+  const [showConfigModal, setShowConfigModal] = useState<{
+    subjectId: number
+    subjectName: string
+    materialId?: number
+    materialName?: string
+    initialTopic?: string
+    initialTopics?: string[]
+    moduleId?: number
+    initialMode?: 'fill_gaps' | 'syllabus' | 'material' | 'custom'
+  } | null>(null)
 
   useEffect(() => {
     if (subjectId && user) {
@@ -40,7 +48,7 @@ export default function ClassOverview(): React.JSX.Element {
       const mods = await window.electronAPI.syllabusListModules(subjectId) as (SyllabusModule & { topic_count?: number })[]
       const modsWithTopics: (SyllabusModule & { topics?: ModuleTopic[] })[] = []
       for (const mod of mods) {
-        const topics = await window.electronAPI.syllabusListTopics(mod.id) as ModuleTopic[]
+        const topics = await window.electronAPI.syllabusListTopics(mod.id, user!.id) as ModuleTopic[]
         modsWithTopics.push({ ...mod, topics })
       }
       setModules(modsWithTopics)
@@ -48,25 +56,6 @@ export default function ClassOverview(): React.JSX.Element {
       // Load materials
       const mats = await window.electronAPI.getMaterials(subjectId) as Material[]
       setMaterials(mats)
-
-      // Load study log for topics
-      try {
-        const log: Record<number, boolean> = {}
-        for (const mod of modsWithTopics) {
-          if (mod.topics) {
-            for (const topic of mod.topics) {
-              // We'll use concept_mastery as a proxy for whether a topic has been studied
-              const mastery = await window.electronAPI.getConceptMastery(user!.id, subjectId)
-              // For now, just check if topic title appears in concept mastery
-              const hasMastery = Array.isArray(mastery) && mastery.some(
-                (m: { concept: string }) => m.concept === topic.title
-              )
-              if (hasMastery) log[topic.id] = true
-            }
-          }
-        }
-        setStudyLog(log)
-      } catch { /* ignore */ }
 
       setPageState('ready')
     } catch (err) {
@@ -77,8 +66,16 @@ export default function ClassOverview(): React.JSX.Element {
 
   // ── Actions ──
 
-  function handleStartTutor(_moduleId: number): void {
-    if (subject) setShowConfigModal({ subjectId, subjectName: subject.name })
+  function handleStartTutor(moduleId: number, selectedTopics?: string[]): void {
+    if (subject) {
+      setShowConfigModal({
+        subjectId,
+        subjectName: subject.name,
+        moduleId,
+        initialTopics: selectedTopics,
+        initialMode: 'syllabus'
+      })
+    }
   }
 
   async function handleGenerateCards(moduleId: number, options?: import('../../types').ModuleCardGenOptions): Promise<void> {
@@ -105,8 +102,28 @@ export default function ClassOverview(): React.JSX.Element {
   }
 
   async function handleToggleTopic(topicId: number, studied: boolean): Promise<void> {
-    setStudyLog(prev => ({ ...prev, [topicId]: studied }))
-    // In a future iteration, save study log to DB via module_topic_study_log
+    try {
+      if (window.electronAPI.syllabusToggleTopicCompleted) {
+        const res = await window.electronAPI.syllabusToggleTopicCompleted(topicId, studied, user?.id)
+        if (res?.success) {
+          setModules(prev =>
+            prev.map(mod => {
+              const updatedTopics = mod.topics?.map(t =>
+                t.id === topicId ? { ...t, completed: studied, studied } : t
+              )
+              const newStatus = res.moduleStatus as 'pending' | 'in_progress' | 'completed' | undefined
+              return {
+                ...mod,
+                status: newStatus || mod.status,
+                topics: updatedTopics
+              }
+            })
+          )
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle topic completed:', err)
+    }
   }
 
   // ── Render ──
@@ -284,6 +301,12 @@ export default function ClassOverview(): React.JSX.Element {
         <SessionConfigModal
           subjectId={showConfigModal.subjectId}
           subjectName={showConfigModal.subjectName}
+          materialId={showConfigModal.materialId}
+          materialName={showConfigModal.materialName}
+          initialTopic={showConfigModal.initialTopic}
+          initialTopics={showConfigModal.initialTopics}
+          initialModuleId={showConfigModal.moduleId}
+          initialMode={showConfigModal.initialMode}
           onClose={() => setShowConfigModal(null)}
         />
       )}

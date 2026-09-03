@@ -315,8 +315,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:listSessions', subjectId, limit),
   tutorUpdateSessionPhase: (sessionId: number, phase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:updateSessionPhase', sessionId, phase),
-  tutorEndSession: (sessionId: number, summary?: string): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
-    ipcRenderer.invoke('tutor:endSession', sessionId, summary),
+  tutorEndSession: (sessionId: number, summary?: string, options?: { targetTopics?: string[]; moduleId?: number }): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
+    ipcRenderer.invoke('tutor:endSession', sessionId, summary, options),
   tutorGetGapAnalysis: (subjectId: number, userId: number): Promise<import('../src/types').GapAnalysisResult> =>
     ipcRenderer.invoke('tutor:getGapAnalysis', subjectId, userId),
   tutorGetTopicMemories: (subjectId: number, userId: number): Promise<import('../src/types').TutorTopicMemory[]> =>
@@ -364,8 +364,10 @@ const electronAPI = {
     ipcRenderer.invoke('syllabus:updateModule', moduleId, updates),
   syllabusDeleteModule: (moduleId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('syllabus:deleteModule', moduleId),
-  syllabusListTopics: (moduleId: number): Promise<import('../src/types').ModuleTopic[]> =>
-    ipcRenderer.invoke('syllabus:listTopics', moduleId),
+  syllabusListTopics: (moduleId: number, userId?: number): Promise<import('../src/types').ModuleTopic[]> =>
+    ipcRenderer.invoke('syllabus:listTopics', moduleId, userId),
+  syllabusToggleTopicCompleted: (topicId: number, completed: boolean, userId?: number): Promise<{ success: boolean; completed: boolean; moduleStatus?: string }> =>
+    ipcRenderer.invoke('syllabus:toggleTopicCompleted', topicId, completed, userId),
   syllabusCreateTopic: (topic: { module_id: number; title: string; description?: string; sort_order?: number }): Promise<import('../src/types').ModuleTopic> =>
     ipcRenderer.invoke('syllabus:createTopic', topic),
   syllabusUpdateTopic: (topicId: number, updates: Partial<import('../src/types').ModuleTopic>): Promise<{ success: boolean }> =>

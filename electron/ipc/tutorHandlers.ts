@@ -241,6 +241,7 @@ export function buildHistoricalMemoryBlock(database: Database.Database | undefin
 
 export function buildTopicFocusBlock(params: {
   targetTopic?: string
+  targetTopics?: string[]
   isFillGaps?: boolean
   gapTopics?: string[]
 }): string {
@@ -254,6 +255,19 @@ export function buildTopicFocusBlock(params: {
       '1. Begin by addressing misconceptions or difficult aspects of these topics.',
       '2. Connect previous knowledge to newly introduced concepts with clear analogies.',
       '3. Ask targeted questions to verify the gap is closed before moving forward.',
+      ''
+    ].join('\n')
+  }
+  if (params.targetTopics && params.targetTopics.length > 0) {
+    const list = params.targetTopics.map(t => `- ${t}`).join('\n')
+    return [
+      '',
+      'SELECTED TOPICS FOCUS:',
+      `The student explicitly selected the following topic(s) to study from their curriculum:`,
+      list,
+      '1. Guide the student step by step through each selected topic.',
+      '2. Ask interactive questions to assess and reinforce understanding of each topic.',
+      '3. Do not drift into unrelated concepts until these specific topics are addressed.',
       ''
     ].join('\n')
   }
@@ -413,12 +427,48 @@ export function computeGapAnalysis(
   }
 }
 
+// ── Module Completion Status Sync Helper ─────────────────────────────────
+
+export function syncModuleCompletionStatus(database: Database.Database, moduleId: number, userId?: number): string {
+  const allTopics = database.prepare('SELECT id FROM module_topics WHERE module_id = ?').all(moduleId) as { id: number }[]
+  if (allTopics.length === 0) {
+    database.prepare("UPDATE syllabus_modules SET status = 'completed' WHERE id = ?").run(moduleId)
+    return 'completed'
+  }
+
+  let actualUserId = userId
+  if (!actualUserId) {
+    const u = database.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined
+    actualUserId = u?.id || 1
+  }
+
+  const placeholders = allTopics.map(() => '?').join(',')
+  const completedRows = database.prepare(`
+    SELECT COUNT(DISTINCT topic_id) as c FROM module_topic_study_log
+    WHERE user_id = ? AND topic_id IN (${placeholders})
+  `).get(actualUserId, ...allTopics.map(t => t.id)) as { c: number }
+
+  let status = 'in_progress'
+  if (completedRows.c >= allTopics.length) {
+    status = 'completed'
+  } else if (completedRows.c === 0) {
+    const current = database.prepare('SELECT status FROM syllabus_modules WHERE id = ?').get(moduleId) as { status: string } | undefined
+    status = current?.status === 'in_progress' ? 'in_progress' : 'pending'
+  } else {
+    status = 'in_progress'
+  }
+
+  database.prepare('UPDATE syllabus_modules SET status = ? WHERE id = ?').run(status, moduleId)
+  return status
+}
+
 // ── Session End Analysis & Memory Persistence ──────────────────────────
 
 export async function evaluateAndSaveSessionMemory(
   database: Database.Database,
   sessionId: number,
-  summaryText?: string
+  summaryText?: string,
+  options?: { targetTopics?: string[]; moduleId?: number }
 ): Promise<{ strengths: string[]; struggles: string[]; topics_covered: string[]; summary: string } | null> {
   const session = database.prepare('SELECT * FROM tutor_sessions WHERE id = ?').get(sessionId) as TutorSession | undefined
   if (!session || !session.subject_id || !session.user_id) return null
@@ -572,14 +622,40 @@ Return STRICT JSON ONLY, no extra text, in this format:
     } catch { /* ignore */ }
   }
 
-  // Also log covered topics in module_topic_study_log
+  const effectiveModuleId = options?.moduleId || session.module_id
+
+  // Collect topics to log: evaluation covered topics plus any explicitly selected target topics
+  const topicsToLog = new Set<string>()
+  if (options?.targetTopics && Array.isArray(options.targetTopics)) {
+    for (const t of options.targetTopics) {
+      if (t && typeof t === 'string' && t.trim()) {
+        topicsToLog.add(t.trim())
+      }
+    }
+  }
   for (const top of evaluation.topics_covered) {
+    if (top && typeof top === 'string' && top.trim()) {
+      topicsToLog.add(top.trim())
+    }
+  }
+
+  // Log covered/targeted topics in module_topic_study_log
+  for (const top of topicsToLog) {
     try {
-      const modTopic = database.prepare(`
-        SELECT mt.id FROM module_topics mt
-        JOIN syllabus_modules sm ON sm.id = mt.module_id
-        WHERE sm.subject_id = ? AND LOWER(mt.title) = LOWER(?)
-      `).get(session.subject_id, top) as { id: number } | undefined
+      let modTopic: { id: number; module_id: number } | undefined
+      if (effectiveModuleId) {
+        modTopic = database.prepare(`
+          SELECT mt.id, mt.module_id FROM module_topics mt
+          WHERE mt.module_id = ? AND LOWER(TRIM(mt.title)) = LOWER(TRIM(?))
+        `).get(effectiveModuleId, top) as { id: number; module_id: number } | undefined
+      }
+      if (!modTopic) {
+        modTopic = database.prepare(`
+          SELECT mt.id, mt.module_id FROM module_topics mt
+          JOIN syllabus_modules sm ON sm.id = mt.module_id
+          WHERE sm.subject_id = ? AND LOWER(TRIM(mt.title)) = LOWER(TRIM(?))
+        `).get(session.subject_id, top) as { id: number; module_id: number } | undefined
+      }
       if (modTopic) {
         database.prepare(`
           INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
@@ -587,6 +663,11 @@ Return STRICT JSON ONLY, no extra text, in this format:
         `).run(modTopic.id, session.user_id, now)
       }
     } catch { /* ignore */ }
+  }
+
+  // Recalculate and sync parent module completion status
+  if (effectiveModuleId) {
+    syncModuleCompletionStatus(database, effectiveModuleId, session.user_id)
   }
 
   return evaluation
@@ -681,13 +762,13 @@ export function registerTutorHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('tutor:endSession', async (_event, sessionId: number, summary?: string) => {
+  ipcMain.handle('tutor:endSession', async (_event, sessionId: number, summary?: string, options?: { targetTopics?: string[]; moduleId?: number }) => {
     const now = new Date().toISOString()
     db.prepare(`
       UPDATE tutor_sessions SET phase = 'complete', summary = ?, ended_at = ? WHERE id = ?
     `).run(summary || null, now, sessionId)
 
-    const evaluation = await evaluateAndSaveSessionMemory(db, sessionId, summary)
+    const evaluation = await evaluateAndSaveSessionMemory(db, sessionId, summary, options)
     return { success: true, evaluation }
   })
 
@@ -808,29 +889,26 @@ export function registerTutorHandlers(): void {
       ? `\n\nCRITICAL ANTI-DUPLICATION LIST: Existing cards in this deck that you MUST NOT duplicate (avoid similar questions, terms, or answers):\n${existingCards.slice(0, 80).map(c => `- "${c.front}" -> "${c.back.substring(0, 80)}"`).join('\n')}\nEvery generated card MUST introduce a novel concept or a distinctly fresh perspective not covered above.`
       : ''
 
-    const prompt = `You are an expert educator creating study cards from a tutoring session about "${subjectName}".${moduleContext}
+    const prompt = `You are an expert cognitive scientist and flashcard designer creating high-yield, bite-sized study cards from a tutoring session about "${subjectName}".${moduleContext}
 
 SESSION CONTENT:
 ${sessionContent.substring(0, 6000)}
 
-Create a MIX of flashcards (term -> definition) and active recall questions (question -> detailed answer) based on what was covered.
+Create a balanced MIX of flashcards (term -> concise definition) and active recall questions (focused question -> punchy answer) based on the session's key takeaways and trouble spots.${existingCardHints}
 
-IMPORTANT: Cover BOTH concepts the student understood well AND areas they struggled with. Strong topics need maintenance cards too.${existingCardHints}
+Generate 6-10 cards total. Format each card on its own line using this exact format:
 
-Generate 6-10 cards total. Format them as a numbered list using this exact format:
+**[Term or Question]** -> [Concise Answer or Definition]
 
-**1. [Term or Question]** -> [Definition or Answer]
-**2. [Term or Question]** -> [Definition or Answer]
-
-Rules:
-- Use **bold** for the front of the card
-- Use -> (arrow) to separate front from back
-- Make backs thorough enough for self-evaluation (2-4 sentences for recall questions)
-- For mathematical expressions, wrap in $$...$$
-- For mathematical expressions, use proper LaTeX in $...$ or $$...$$ format (e.g. $E = mc^2$, not E = mc^2)
-- Prioritize conceptual understanding over trivia
-- STRICT ANTI-DUPLICATION: Do NOT recreate or re-test any of the existing cards listed above. Focus on new angles or uncovered concepts from the session.
-- Return ONLY the card list. No introduction, commentary, or closing.`
+STRICT DESIGN RULES (CRITICAL):
+1. ATOMICITY (Minimum Information Principle): Each card must test exactly ONE idea, mechanism, or fact. Never create compound cards or multi-item lists.
+2. CONCISENESS (NO LONG ANSWERS):
+   - Front: 1 clear question or term (max 15 words). Do NOT include numbering (like "1.") inside the bold tags.
+   - Back: 1 to 2 short, punchy sentences (STRICTLY under 30 words). Get straight to the point—no fluff, filler, or textbook paragraphs.
+3. HIGH YIELD: Focus on the core mechanism or conceptual distinction that matters most for exam mastery.
+4. For mathematical expressions, use proper LaTeX in $...$ or $$...$$ format (e.g. $E = mc^2$).
+5. STRICT ANTI-DUPLICATION: Do NOT duplicate any existing cards listed above. Focus on fresh takeaways from this session.
+6. Return ONLY the formatted cards. No introductory text, numbering outside format, or commentary.`
 
     const config = getAIConfig()
     const apiKey = getApiKey()
@@ -955,6 +1033,7 @@ Rules:
     // Build target topic & gap filling focus directive
     const topicFocusBlock = buildTopicFocusBlock({
       targetTopic: params.targetTopic,
+      targetTopics: params.targetTopics,
       isFillGaps: params.isFillGaps,
       gapTopics: params.gapTopics
     })
@@ -1347,10 +1426,52 @@ Rules:
     `).all(subjectId)
   })
 
-  ipcMain.handle('syllabus:listTopics', (_event, moduleId: number) => {
-    return db.prepare(`
-      SELECT * FROM module_topics WHERE module_id = ? ORDER BY sort_order ASC
-    `).all(moduleId)
+  ipcMain.handle('syllabus:listTopics', (_event, moduleId: number, userId?: number) => {
+    const rows = db.prepare(`
+      SELECT mt.*,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM module_topic_study_log sl
+          WHERE sl.topic_id = mt.id AND (? IS NULL OR sl.user_id = ?)
+        ) THEN 1 ELSE 0 END as completed,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM module_topic_study_log sl
+          WHERE sl.topic_id = mt.id AND (? IS NULL OR sl.user_id = ?)
+        ) THEN 1 ELSE 0 END as studied
+      FROM module_topics mt
+      WHERE mt.module_id = ?
+    `).all(userId ?? null, userId ?? null, userId ?? null, userId ?? null, moduleId) as (Omit<ModuleTopic, 'completed' | 'studied'> & { completed: number; studied: number })[]
+
+    return rows.map(r => ({
+      ...r,
+      completed: Boolean(r.completed),
+      studied: Boolean(r.studied)
+    }))
+  })
+
+  ipcMain.handle('syllabus:toggleTopicCompleted', (_event, topicId: number, completed: boolean, userId?: number) => {
+    const topic = db.prepare('SELECT * FROM module_topics WHERE id = ?').get(topicId) as ModuleTopic | undefined
+    if (!topic) return { success: false, error: 'Topic not found' }
+
+    let actualUserId = userId
+    if (!actualUserId) {
+      const u = db.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined
+      actualUserId = u?.id || 1
+    }
+
+    if (completed) {
+      const now = new Date().toISOString()
+      db.prepare(`
+        INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
+        VALUES (?, ?, ?)
+      `).run(topicId, actualUserId, now)
+    } else {
+      db.prepare(`
+        DELETE FROM module_topic_study_log WHERE topic_id = ? AND user_id = ?
+      `).run(topicId, actualUserId)
+    }
+
+    const newStatus = syncModuleCompletionStatus(db, topic.module_id, actualUserId)
+    return { success: true, completed, moduleStatus: newStatus }
   })
 
   ipcMain.handle('syllabus:createModule', (_event, subjectId: number, data: Partial<SyllabusModule>) => {

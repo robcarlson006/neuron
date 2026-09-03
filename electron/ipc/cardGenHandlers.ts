@@ -415,9 +415,11 @@ ${materialText}`
     subjectId: number,
     moduleId: number,
     options?: {
-      type?: 'flashcard' | 'active_recall'
+      type?: 'flashcard' | 'active_recall' | 'auto'
       count?: number
       userId?: number
+      flashcardCount?: number
+      activeRecallCount?: number
     }
   ) => {
     try {
@@ -440,10 +442,9 @@ ${materialText}`
         { name: string } | undefined
       if (!subject) throw new Error('Subject not found')
 
-      const requestedType = options?.type === 'active_recall' ? 'active_recall' : 'flashcard'
       const totalCount = Math.max(1, Math.min(200, options?.count ?? 12))
 
-      if (requestedType === 'active_recall') {
+      if (options?.type === 'active_recall') {
         return generateCardsFromModule(
           subjectId,
           moduleId,
@@ -453,7 +454,7 @@ ${materialText}`
           'active_recall',
           options?.userId
         )
-      } else {
+      } else if (options?.type === 'flashcard') {
         return generateCardsFromModule(
           subjectId,
           moduleId,
@@ -528,8 +529,8 @@ ${materialText}`
 
         const parsed = safeParseAICards(responseText)
 
-        let flashcards: { front: string; back: string; concept?: string }[] = []
-        let activeRecall: { question: string; model_answer: string; concept?: string }[] = []
+        let flashcards: any[] = []
+        let activeRecall: any[] = []
 
         if (parsed.flashcards && Array.isArray(parsed.flashcards)) {
           flashcards = parsed.flashcards

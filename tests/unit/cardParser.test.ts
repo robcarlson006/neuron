@@ -49,10 +49,22 @@ describe('parseCardsFromText', () => {
     expect(cards[0].type).toBe('active_recall')
   })
 
-  it('splits numbered lists into multiple cards', () => {
+  it('splits numbered lists into multiple cards and cleans numbers', () => {
     const text = '1. **Alpha** → First letter\n2. **Beta** → Second letter\n3. **Gamma** → Third letter'
     const cards = parseCardsFromText(text)
     expect(cards).toHaveLength(3)
+    expect(cards[0].front).toBe('Alpha')
+    expect(cards[1].front).toBe('Beta')
+    expect(cards[2].front).toBe('Gamma')
+  })
+
+  it('strips leading numbers embedded inside bold', () => {
+    const text = '**1. Action Potential** → An electrical signal in neurons\n**2. Synapse** → The junction between neurons'
+    const cards = parseCardsFromText(text)
+    expect(cards).toHaveLength(2)
+    expect(cards[0].front).toBe('Action Potential')
+    expect(cards[0].back).toBe('An electrical signal in neurons')
+    expect(cards[1].front).toBe('Synapse')
   })
 
   it('splits double-newline separated cards', () => {

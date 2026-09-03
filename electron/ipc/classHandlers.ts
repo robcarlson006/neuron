@@ -5,7 +5,7 @@ import { getAIConfig, getApiKey } from './aiConfigStore'
 import { safeParseAIJson, safeParseAICards } from '../../src/lib/jsonRepair'
 import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
-import type { ClassCreationData, Subject } from '../../src/types'
+import type { ClassCreationData, Subject, Card } from '../../src/types'
 
 let db: Database.Database
 

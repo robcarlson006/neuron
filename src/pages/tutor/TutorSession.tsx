@@ -24,6 +24,8 @@ export default function TutorSession(): React.JSX.Element {
   const [streamingContent, setStreamingContent] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showEndModal, setShowEndModal] = useState(false)
+  const [endingSession, setEndingSession] = useState(false)
   const [showCardReview, setShowCardReview] = useState(false)
   const [sessionEnded, setSessionEnded] = useState(false)
   const [sessionEvaluation, setSessionEvaluation] = useState<TutorSessionEvaluation | null>(null)
@@ -107,7 +109,10 @@ export default function TutorSession(): React.JSX.Element {
     try {
       // Load syllabus modules
       const mods = await window.electronAPI.syllabusListModules(subjectId) as SyllabusModule[]
-      const inProgressMod = mods.find(m => m.status === 'in_progress') || mods.find(m => m.status === 'pending')
+      const targetMod = config.module_id ? mods.find(m => m.id === config.module_id) : null
+      const inProgressMod = targetMod || (!config.material_name && !config.target_topic && !config.is_fill_gaps
+        ? (mods.find(m => m.status === 'in_progress') || mods.find(m => m.status === 'pending') || null)
+        : null)
       if (inProgressMod) setCurrentModule(inProgressMod)
 
       // Load mastery data
@@ -172,6 +177,16 @@ ${config.never_studied ? 'The student has never studied this material before. St
 
 Topic: ${config.material_name}
 Specific Material Focus: "${config.material_name}"
+Difficulty: ${difficultyLabel}
+${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
+${config.never_studied ? 'The student has never studied this material before. Start from absolute basics.' : ''}`
+      } else if (config.target_topics && config.target_topics.length > 0) {
+        const topicsList = config.target_topics.join(', ')
+        initialMsg = `Greet me and ask your first question in this exact format:
+"Welcome! Today we'll cover ${topicsList} from ${inProgressMod?.title || subject?.name || 'this module'}. Let's start with ${config.target_topics[0]}. [Specific question about ${config.target_topics[0]}]?"
+
+Topics to teach: ${topicsList}
+Module: ${inProgressMod?.title || 'Current Module'}
 Difficulty: ${difficultyLabel}
 ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
 ${config.never_studied ? 'The student has never studied this material before. Start from absolute basics.' : ''}`
@@ -260,6 +275,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         neverStudied: runtime.config.never_studied,
         materialId: sessionConfig?.material_id || runtime.config.material_id,
         targetTopic: sessionConfig?.target_topic || runtime.config.target_topic,
+        targetTopics: sessionConfig?.target_topics || runtime.config.target_topics,
         isFillGaps: sessionConfig?.is_fill_gaps || runtime.config.is_fill_gaps,
         gapTopics: sessionConfig?.gap_topics || runtime.config.gap_topics,
         timeElapsedSeconds: runtime.time_elapsed_seconds,
@@ -536,29 +552,47 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     await streamMessage(sessionId!, transitionMsg, 'summary', history)
   }
 
-  async function handleEndSession(): Promise<void> {
+  function handleOpenEndModal(): void {
     setShowTimeUp(false)
+    setShowEndModal(true)
+  }
 
-    const allMessages = [...messages]
-    const sessionContent = allMessages
-      .filter(m => m.role !== 'system')
-      .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
-      .join('\n\n')
+  async function executeEndSession(options: { generateCards: boolean }): Promise<void> {
+    if (!sessionId || endingSession) return
+    setEndingSession(true)
+    setShowTimeUp(false)
+    setShowEndModal(false)
 
-    const res = await window.electronAPI.tutorEndSession(sessionId!, sessionContent.substring(0, 5000))
-    if (res && (res as { evaluation?: TutorSessionEvaluation }).evaluation) {
-      setSessionEvaluation((res as { evaluation: TutorSessionEvaluation }).evaluation)
+    try {
+      const allMessages = [...messages]
+      const sessionContent = allMessages
+        .filter(m => m.role !== 'system')
+        .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
+        .join('\n\n')
+
+      const res = await window.electronAPI.tutorEndSession(
+        sessionId,
+        sessionContent.substring(0, 5000),
+        {
+          targetTopics: sessionConfig?.target_topics,
+          moduleId: currentModule?.id || sessionConfig?.module_id
+        }
+      )
+      if (res && (res as { evaluation?: TutorSessionEvaluation }).evaluation) {
+        setSessionEvaluation((res as { evaluation: TutorSessionEvaluation }).evaluation)
+      }
+
+      setSessionEnded(true)
+      if (options.generateCards) {
+        setShowCardReview(true)
+      }
+    } catch (err) {
+      console.error('Error ending tutor session:', err)
+      addToast({ type: 'error', title: 'Session Error', message: 'Failed to record session completion.' })
+      setSessionEnded(true)
+    } finally {
+      setEndingSession(false)
     }
-
-    // Mark current module as completed
-    if (currentModule && currentModule.status !== 'completed') {
-      try {
-        await window.electronAPI.syllabusUpdateModule(currentModule.id, { status: 'completed' })
-      } catch { /* non-critical */ }
-    }
-
-    setSessionEnded(true)
-    setShowCardReview(true)
   }
 
   // ── File attachment handlers ──
@@ -598,12 +632,13 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent): void {
       if (e.key === 'Escape') {
-        if (showCardReview) setShowCardReview(false)
+        if (showEndModal) setShowEndModal(false)
+        else if (showCardReview) setShowCardReview(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showCardReview])
+  }, [showEndModal, showCardReview])
 
   // ── Handle card review complete ──
   function handleCardsSaved(count: number): void {
@@ -726,9 +761,12 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               </div>
             )}
 
-            <div className="flex gap-3 justify-center pt-2">
+            <div className="flex gap-3 justify-center pt-2 flex-wrap">
               <button onClick={() => navigate('/tutor')} className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors">
                 Back to Tutor Hub
+              </button>
+              <button onClick={() => setShowCardReview(true)} className="px-5 py-2.5 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 rounded-xl text-xs font-bold transition-colors">
+                🃏 Generate Flashcards
               </button>
               <button onClick={() => navigate(`/subject/${subjectId}`)} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md">
                 View Class
@@ -810,9 +848,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           )}
 
           <button
-            onClick={handleEndSession}
-            disabled={sending}
-            className="text-xs text-slate-400 hover:text-red-400 dark:hover:text-red-400 transition-colors px-2 py-1"
+            onClick={handleOpenEndModal}
+            disabled={sending || endingSession}
+            className="text-xs text-slate-400 hover:text-red-400 dark:hover:text-red-400 transition-colors px-2 py-1 font-medium"
           >
             End Session
           </button>
@@ -923,7 +961,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               <button onClick={() => handleAddTime(60)} className="px-3 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors">
                 +1 hr
               </button>
-              <button onClick={handleEndSession} className="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors">
+              <button onClick={handleOpenEndModal} className="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors">
                 End Session →
               </button>
             </div>
@@ -948,6 +986,89 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             'Any final questions?'
           }
         />
+      )}
+
+      {/* End Session Modal */}
+      {showEndModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => !endingSession && setShowEndModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl max-w-md w-full p-6 text-center animate-slide-up"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 flex items-center justify-center text-2xl mx-auto mb-3">
+              🎓
+            </div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-50 mb-1">
+              End Tutor Session
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-5">
+              How would you like to finish your session?
+            </p>
+
+            <div className="space-y-3">
+              {/* Option 1: Generate Flashcards */}
+              <button
+                onClick={() => executeEndSession({ generateCards: true })}
+                disabled={endingSession}
+                className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-violet-500/80 bg-violet-50/70 dark:bg-violet-900/20 hover:bg-violet-100/70 dark:hover:bg-violet-900/30 text-left transition-all group shadow-sm"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl flex-shrink-0">🃏</span>
+                  <div>
+                    <div className="text-sm font-semibold text-violet-900 dark:text-violet-100 flex items-center gap-1.5">
+                      Generate Flashcards
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-200 dark:bg-violet-800 text-violet-800 dark:text-violet-200 font-medium">
+                        Recommended
+                      </span>
+                    </div>
+                    <p className="text-xs text-violet-700/80 dark:text-violet-300/70 mt-0.5 leading-relaxed">
+                      Extract key concepts from this session into bite-sized, high-yield study cards
+                    </p>
+                  </div>
+                </div>
+                <svg className="w-5 h-5 text-violet-500 group-hover:translate-x-0.5 transition-transform flex-shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+
+              {/* Option 2: End Session (no cards) */}
+              <button
+                onClick={() => executeEndSession({ generateCards: false })}
+                disabled={endingSession}
+                className="w-full flex items-center justify-between p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-700/60 text-left transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl flex-shrink-0">🏁</span>
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                      End Session
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                      Save learning progress and finish without creating new flashcards
+                    </p>
+                  </div>
+                </div>
+                <svg className="w-5 h-5 text-slate-400 group-hover:translate-x-0.5 transition-transform flex-shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Cancel option */}
+            <div className="mt-5 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex justify-center">
+              <button
+                onClick={() => setShowEndModal(false)}
+                disabled={endingSession}
+                className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-medium py-1.5 px-4 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              >
+                Continue Studying
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Card Review Modal */}

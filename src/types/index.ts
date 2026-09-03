@@ -516,6 +516,8 @@ export interface ModuleTopic {
   mastery_target: number
   sort_order: number
   created_at: string
+  completed?: boolean
+  studied?: boolean
 }
 
 /** Result of an incremental syllabus update (syllabus:updateFromMaterials).
@@ -620,6 +622,7 @@ export interface TutorStreamParams {
   materialId?: number
   materialContent?: string
   targetTopic?: string
+  targetTopics?: string[]
   isFillGaps?: boolean
   gapTopics?: string[]
 }
@@ -633,6 +636,7 @@ export interface TutorSessionConfig {
   module_id?: number
   module_name?: string
   target_topic?: string
+  target_topics?: string[]
   is_fill_gaps?: boolean
   gap_topics?: string[]
 }

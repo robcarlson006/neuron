@@ -24,7 +24,16 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     subject?.subject_type === 'class' || subject?.subject_type === 'book' ? 'curriculum' : 'cards'
   )
   const [showEditSubject, setShowEditSubject] = useState(false)
-  const [showConfigModal, setShowConfigModal] = useState<{ subjectId: number; subjectName: string; materialId?: number; materialName?: string } | null>(null)
+  const [showConfigModal, setShowConfigModal] = useState<{
+    subjectId: number
+    subjectName: string
+    materialId?: number
+    materialName?: string
+    initialTopic?: string
+    initialTopics?: string[]
+    moduleId?: number
+    initialMode?: 'fill_gaps' | 'syllabus' | 'material' | 'custom'
+  } | null>(null)
   const [editName, setEditName] = useState(subject?.name || '')
   const [editCode, setEditCode] = useState(subject?.course_code || '')
   const [editStatus, setEditStatus] = useState(subject?.status || 'active')
@@ -99,7 +108,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           const modsWithTopics: (SyllabusModule & { topics?: ModuleTopic[] })[] = []
           for (const mod of (mods || [])) {
             const topList = window.electronAPI.syllabusListTopics
-              ? ((await window.electronAPI.syllabusListTopics(mod.id)) as ModuleTopic[])
+              ? ((await window.electronAPI.syllabusListTopics(mod.id, user?.id)) as ModuleTopic[])
               : []
             modsWithTopics.push({ ...mod, topics: topList || [] })
           }
@@ -238,8 +247,16 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   }
 
   // ── Curriculum action handlers ──
-  function handleStartTutor(_moduleId: number): void {
-    if (subject) setShowConfigModal({ subjectId, subjectName: subject.name })
+  function handleStartTutor(moduleId: number, selectedTopics?: string[]): void {
+    if (subject) {
+      setShowConfigModal({
+        subjectId,
+        subjectName: subject.name,
+        moduleId,
+        initialTopics: selectedTopics,
+        initialMode: 'syllabus'
+      })
+    }
   }
 
   async function handleGenerateCards(moduleId: number, options?: import('../types').ModuleCardGenOptions): Promise<void> {
@@ -265,8 +282,30 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     }
   }
 
-  function handleToggleTopic(topicId: number, studied: boolean): void {
+  async function handleToggleTopic(topicId: number, studied: boolean): Promise<void> {
     setStudyLog(prev => ({ ...prev, [topicId]: studied }))
+    try {
+      if (window.electronAPI.syllabusToggleTopicCompleted) {
+        const res = await window.electronAPI.syllabusToggleTopicCompleted(topicId, studied, user?.id)
+        if (res?.success) {
+          setModules(prev =>
+            prev.map(mod => {
+              const updatedTopics = mod.topics?.map(t =>
+                t.id === topicId ? { ...t, completed: studied, studied } : t
+              )
+              const newStatus = res.moduleStatus as 'pending' | 'in_progress' | 'completed' | undefined
+              return {
+                ...mod,
+                status: newStatus || mod.status,
+                topics: updatedTopics
+              }
+            })
+          )
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle topic completed:', err)
+    }
   }
 
   // ── Material action handlers ──
@@ -1058,6 +1097,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           subjectName={showConfigModal.subjectName}
           materialId={showConfigModal.materialId}
           materialName={showConfigModal.materialName}
+          initialTopic={showConfigModal.initialTopic}
+          initialTopics={showConfigModal.initialTopics}
+          initialModuleId={showConfigModal.moduleId}
+          initialMode={showConfigModal.initialMode}
           onClose={() => setShowConfigModal(null)}
         />
       )}

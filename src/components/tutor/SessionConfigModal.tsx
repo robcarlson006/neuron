@@ -20,6 +20,9 @@ interface SessionConfigModalProps {
   materialId?: number
   materialName?: string
   initialTopic?: string
+  initialTopics?: string[]
+  initialModuleId?: number
+  initialMode?: StudyMode
   onClose: () => void
 }
 
@@ -31,6 +34,9 @@ export default function SessionConfigModal({
   materialId: propMaterialId,
   materialName: propMaterialName,
   initialTopic,
+  initialTopics,
+  initialModuleId: propInitialModuleId,
+  initialMode: propInitialMode,
   onClose
 }: SessionConfigModalProps): React.JSX.Element {
   const navigate = useNavigate()
@@ -38,7 +44,7 @@ export default function SessionConfigModal({
 
   // ── Mode & Topic State ──
   const [studyMode, setStudyMode] = useState<StudyMode>(
-    propMaterialId ? 'material' : initialTopic ? 'custom' : 'fill_gaps'
+    propInitialMode || (propMaterialId ? 'material' : propInitialModuleId ? 'syllabus' : initialTopic ? 'custom' : 'fill_gaps')
   )
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
   const [materialsList, setMaterialsList] = useState<LibraryFile[]>([])
@@ -46,8 +52,11 @@ export default function SessionConfigModal({
   const [loadingGaps, setLoadingGaps] = useState(true)
   const [loadingData, setLoadingData] = useState(true)
 
-  const [selectedModuleId, setSelectedModuleId] = useState<number | null>(null)
+  const [selectedModuleId, setSelectedModuleId] = useState<number | null>(propInitialModuleId || null)
   const [selectedTopic, setSelectedTopic] = useState<string>(initialTopic || '')
+  const [selectedTopics, setSelectedTopics] = useState<string[]>(
+    initialTopics && initialTopics.length > 0 ? initialTopics : initialTopic ? [initialTopic] : []
+  )
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(propMaterialId || null)
   const [customTopic, setCustomTopic] = useState(initialTopic || '')
 
@@ -84,12 +93,27 @@ export default function SessionConfigModal({
         }
         if (isMounted) {
           setModules(modsWithTopics)
-          if (modsWithTopics.length > 0 && !selectedModuleId) {
+          if (propInitialModuleId) {
+            setSelectedModuleId(propInitialModuleId)
+            const targetMod = modsWithTopics.find(m => m.id === propInitialModuleId)
+            if (initialTopics && initialTopics.length > 0) {
+              setSelectedTopics(initialTopics)
+              setSelectedTopic(initialTopics.join(', '))
+            } else if (targetMod?.topics && targetMod.topics.length > 0) {
+              setSelectedTopics(targetMod.topics.map(t => t.title))
+              setSelectedTopic(targetMod.topics[0].title)
+            } else if (targetMod) {
+              setSelectedTopics([targetMod.title])
+              setSelectedTopic(targetMod.title)
+            }
+          } else if (modsWithTopics.length > 0 && !selectedModuleId) {
             setSelectedModuleId(modsWithTopics[0].id)
             if (modsWithTopics[0].topics && modsWithTopics[0].topics.length > 0) {
               setSelectedTopic(modsWithTopics[0].topics[0].title)
+              setSelectedTopics([modsWithTopics[0].topics[0].title])
             } else {
               setSelectedTopic(modsWithTopics[0].title)
+              setSelectedTopics([modsWithTopics[0].title])
             }
           }
         }
@@ -178,6 +202,7 @@ export default function SessionConfigModal({
     setStarting(true)
 
     let chosenTopic = ''
+    let chosenTopics: string[] = []
     let chosenModuleId: number | undefined
     let chosenModuleName: string | undefined
     let chosenMaterialId: number | undefined
@@ -194,7 +219,15 @@ export default function SessionConfigModal({
       const activeMod = modules.find(m => m.id === selectedModuleId)
       chosenModuleId = activeMod?.id
       chosenModuleName = activeMod?.title
-      chosenTopic = selectedTopic || activeMod?.title || subjectName
+      if (selectedTopics.length > 0) {
+        chosenTopics = selectedTopics
+        chosenTopic = selectedTopics.join(', ')
+      } else {
+        chosenTopics = activeMod?.topics && activeMod.topics.length > 0
+          ? activeMod.topics.map(t => t.title)
+          : (activeMod?.title ? [activeMod.title] : [])
+        chosenTopic = chosenTopics.join(', ') || activeMod?.title || subjectName
+      }
     } else if (studyMode === 'material') {
       const activeMat = materialsList.find(m => m.id === selectedMaterialId)
       chosenMaterialId = activeMat?.id || propMaterialId
@@ -213,6 +246,7 @@ export default function SessionConfigModal({
       module_id: chosenModuleId,
       module_name: chosenModuleName,
       target_topic: chosenTopic,
+      target_topics: chosenTopics.length > 0 ? chosenTopics : undefined,
       is_fill_gaps: isFillGaps,
       gap_topics: gapTopics
     }
@@ -450,8 +484,10 @@ export default function SessionConfigModal({
                           setSelectedModuleId(id)
                           const mod = modules.find(m => m.id === id)
                           if (mod?.topics && mod.topics.length > 0) {
+                            setSelectedTopics(mod.topics.map(t => t.title))
                             setSelectedTopic(mod.topics[0].title)
                           } else if (mod) {
+                            setSelectedTopics([mod.title])
                             setSelectedTopic(mod.title)
                           }
                         }}
@@ -467,29 +503,74 @@ export default function SessionConfigModal({
 
                     {currentModule && currentModule.topics && currentModule.topics.length > 0 && (
                       <div>
-                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-1">
-                          Select Specific Topic:
-                        </label>
-                        <div className="space-y-1 max-h-36 overflow-y-auto">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                            Select Topics to Study ({selectedTopics.length}/{currentModule.topics.length}):
+                          </label>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTopics(currentModule.topics!.map(t => t.title))}
+                              className="text-violet-600 dark:text-violet-400 hover:underline font-medium"
+                            >
+                              Select all
+                            </button>
+                            <span className="text-slate-300 dark:text-slate-600">·</span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTopics([])}
+                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1 max-h-48 overflow-y-auto">
                           {currentModule.topics.map(t => {
-                            const isSelected = selectedTopic === t.title
+                            const isSelected = selectedTopics.includes(t.title)
+                            const isDone = Boolean(t.completed || (t as ModuleTopic & { studied?: boolean }).studied)
+
                             return (
-                              <button
+                              <div
                                 key={t.id}
-                                type="button"
-                                onClick={() => setSelectedTopic(t.title)}
-                                className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-between ${
+                                onClick={() => {
+                                  setSelectedTopics(prev =>
+                                    prev.includes(t.title)
+                                      ? prev.filter(item => item !== t.title)
+                                      : [...prev, t.title]
+                                  )
+                                  setSelectedTopic(t.title)
+                                }}
+                                className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-between cursor-pointer ${
                                   isSelected
-                                    ? 'bg-violet-600 text-white shadow-sm'
+                                    ? 'bg-violet-50 dark:bg-violet-950/40 text-violet-900 dark:text-violet-100 border border-violet-300 dark:border-violet-700 shadow-sm'
                                     : 'bg-white dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'
                                 }`}
                               >
-                                <span className="truncate">{t.title}</span>
-                                {isSelected && <span>✓</span>}
-                              </button>
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => {}}
+                                    className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 pointer-events-none"
+                                  />
+                                  <span className="truncate">{t.title}</span>
+                                </div>
+                                {isDone && (
+                                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-100/80 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded-full">
+                                    ✓ Done
+                                  </span>
+                                )}
+                              </div>
                             )
                           })}
                         </div>
+                        {selectedTopics.length === 0 && (
+                          <p className="text-[11px] text-slate-400 mt-1 italic">
+                            All topics in this module will be covered by default.
+                          </p>
+                        )}
                       </div>
                     )}
                   </>
