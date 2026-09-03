@@ -6,8 +6,9 @@ import os from 'os'
 import https from 'https'
 import http from 'http'
 
-const GITHUB_OWNER = 'robmcarlson006'
-const GITHUB_REPO  = 'neuron'
+export const GITHUB_OWNER   = 'robmcarlson006'
+export const GITHUB_REPO    = 'neuron'
+export const GITHUB_REPO_ID = '1205182997'
 
 let getWindow: () => BrowserWindow | null = () => null
 let backgroundCheckTimer: NodeJS.Timeout | null = null
@@ -247,12 +248,19 @@ open "$DEST" || open -a Neuron
 // ── Update Checker Core Function ─────────────────────────────────────────────
 
 export async function checkGitHubUpdates(): Promise<UpdateInfo> {
-  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
-  const data = await fetchJSON(url) as {
+  let data: {
     tag_name: string
     html_url: string
     body?: string
     assets: { name: string; browser_download_url: string }[]
+  }
+
+  try {
+    const url = `https://api.github.com/repositories/${GITHUB_REPO_ID}/releases/latest`
+    data = (await fetchJSON(url)) as typeof data
+  } catch {
+    const fallbackUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+    data = (await fetchJSON(fallbackUrl)) as typeof data
   }
 
   const latestTag      = data.tag_name ?? ''

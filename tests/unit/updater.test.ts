@@ -86,3 +86,13 @@ describe('Updater - buildMacInstallScript', () => {
     expect(script).toContain('/Applications/Neuron.app')
   })
 })
+
+describe('Updater - GitHub configuration', () => {
+  test('has correct GitHub repo identifiers defined', async () => {
+    const { GITHUB_OWNER, GITHUB_REPO, GITHUB_REPO_ID } = await import('../../electron/ipc/updaterHandlers')
+    expect(GITHUB_OWNER).toBe('robmcarlson006')
+    expect(GITHUB_REPO).toBe('neuron')
+    expect(GITHUB_REPO_ID).toBe('1205182997')
+  })
+})
+
