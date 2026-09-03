@@ -366,7 +366,7 @@ const electronAPI = {
     ipcRenderer.invoke('syllabus:deleteModule', moduleId),
   syllabusListTopics: (moduleId: number, userId?: number): Promise<import('../src/types').ModuleTopic[]> =>
     ipcRenderer.invoke('syllabus:listTopics', moduleId, userId),
-  syllabusToggleTopicCompleted: (topicId: number, completed: boolean, userId?: number): Promise<{ success: boolean; completed: boolean; moduleStatus?: string }> =>
+  syllabusToggleTopicCompleted: (topicId: number, completed: boolean, userId?: number): Promise<{ success: boolean; completed: boolean; moduleStatus?: string; moduleId?: number }> =>
     ipcRenderer.invoke('syllabus:toggleTopicCompleted', topicId, completed, userId),
   syllabusCreateTopic: (topic: { module_id: number; title: string; description?: string; sort_order?: number }): Promise<import('../src/types').ModuleTopic> =>
     ipcRenderer.invoke('syllabus:createTopic', topic),

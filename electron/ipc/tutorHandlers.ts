@@ -432,8 +432,8 @@ export function computeGapAnalysis(
 export function syncModuleCompletionStatus(database: Database.Database, moduleId: number, userId?: number): string {
   const allTopics = database.prepare('SELECT id FROM module_topics WHERE module_id = ?').all(moduleId) as { id: number }[]
   if (allTopics.length === 0) {
-    database.prepare("UPDATE syllabus_modules SET status = 'completed' WHERE id = ?").run(moduleId)
-    return 'completed'
+    const current = database.prepare('SELECT status FROM syllabus_modules WHERE id = ?').get(moduleId) as { status: string } | undefined
+    return current?.status || 'pending'
   }
 
   let actualUserId = userId
@@ -1471,7 +1471,7 @@ Rules:
     }
 
     const newStatus = syncModuleCompletionStatus(db, topic.module_id, actualUserId)
-    return { success: true, completed, moduleStatus: newStatus }
+    return { success: true, completed, moduleStatus: newStatus, moduleId: topic.module_id }
   })
 
   ipcMain.handle('syllabus:createModule', (_event, subjectId: number, data: Partial<SyllabusModule>) => {

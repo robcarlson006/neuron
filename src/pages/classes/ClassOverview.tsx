@@ -108,6 +108,10 @@ export default function ClassOverview(): React.JSX.Element {
         if (res?.success) {
           setModules(prev =>
             prev.map(mod => {
+              const containsTopic = mod.topics?.some(t => t.id === topicId) || (res.moduleId !== undefined && mod.id === res.moduleId)
+              if (!containsTopic) {
+                return mod
+              }
               const updatedTopics = mod.topics?.map(t =>
                 t.id === topicId ? { ...t, completed: studied, studied } : t
               )
