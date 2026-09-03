@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build && electron-builder",
     "install-app": "cp -fR dist/mac-arm64/Neuron.app /Applications/Neuron.app",
+    "install-desktop": "cp -fR dist/mac-arm64/Neuron.app ~/Desktop/Neuron.app",
     "preview": "electron-vite preview",
     "test": "jest",
     "test:coverage": "jest --coverage",
