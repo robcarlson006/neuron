@@ -1,4 +1,4 @@
-import type { CalendarEvent, CalendarEventType } from '../../src/types'
+import type { CalendarEventType } from '../../src/types'
 
 export interface SubjectLookup {
   id: number

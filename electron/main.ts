@@ -13,6 +13,7 @@ import { registerRAGHandlers, setRAGDatabase } from './ipc/ragHandlers'
 import { registerSyllabusHandlers, setSyllabusDatabase } from './ipc/syllabusHandlers'
 import { registerCardGenerationHandlers, setCardGenerationDatabase } from './ipc/cardGenHandlers'
 import { registerClassHandlers, setClassDatabase } from './ipc/classHandlers'
+import { registerCalendarHandlers, setCalendarDatabase } from './ipc/calendarHandlers'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -194,6 +195,8 @@ app.whenReady().then(async () => {
   registerCardGenerationHandlers()
   setClassDatabase(db)
   registerClassHandlers()
+  setCalendarDatabase(db)
+  registerCalendarHandlers()
   registerUpdaterHandlers(() => mainWindow)
   createWindow()
 

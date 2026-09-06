@@ -348,6 +348,8 @@ const electronAPI = {
     ipcRenderer.invoke('plan:getDailyPlan', userId, date),
   planGeneratePlan: (userId: number, date: string): Promise<(DailyPlan & { subject_name: string })[]> =>
     ipcRenderer.invoke('plan:generatePlan', userId, date),
+  planGenerateFocusBlock: (userId: number, availableMinutes: number, date: string): Promise<(DailyPlan & { subject_name: string })[]> =>
+    ipcRenderer.invoke('plan:generateFocusBlock', userId, availableMinutes, date),
   planCompleteAction: (planId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('plan:completeAction', planId),
   planDismissAction: (planId: number): Promise<{ success: boolean }> =>
@@ -437,6 +439,26 @@ const electronAPI = {
     ipcRenderer.invoke('class:create', userId, data),
   classAddMaterials: (subjectId: number, materials: { filename: string; fileType: string; contentText: string }[]): Promise<{ success: boolean; materials: { id: number; filename: string }[]; materialCount: number }> =>
     ipcRenderer.invoke('class:addMaterials', subjectId, materials),
+
+  // ── Calendar operations ──
+  calendar: {
+    getSources: (userId: number): Promise<import('../src/types').CalendarSource[]> =>
+      ipcRenderer.invoke('calendar:getSources', userId),
+    saveSource: (data: Partial<import('../src/types').CalendarSource> & { userId: number; name: string; type: string }): Promise<import('../src/types').CalendarSource> =>
+      ipcRenderer.invoke('calendar:saveSource', data),
+    deleteSource: (sourceId: number): Promise<boolean> =>
+      ipcRenderer.invoke('calendar:deleteSource', sourceId),
+    syncSource: (sourceId: number): Promise<{ success: boolean; eventCount: number; error?: string }> =>
+      ipcRenderer.invoke('calendar:syncSource', sourceId),
+    getEvents: (params: { userId: number; startDate?: string; endDate?: string }): Promise<import('../src/types').CalendarEvent[]> =>
+      ipcRenderer.invoke('calendar:getEvents', params),
+    saveEvent: (userId: number, event: Partial<import('../src/types').CalendarEvent>): Promise<import('../src/types').CalendarEvent> =>
+      ipcRenderer.invoke('calendar:saveEvent', { userId, event }),
+    deleteEvent: (eventId: number): Promise<boolean> =>
+      ipcRenderer.invoke('calendar:deleteEvent', eventId),
+    detectCurrentContext: (userId: number): Promise<import('../src/types').CalendarScheduleContext | null> =>
+      ipcRenderer.invoke('calendar:detectCurrentContext', userId),
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
