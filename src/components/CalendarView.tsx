@@ -5,6 +5,7 @@ interface DayInfo {
   date: string
   cardsDue: number
   deadlines: Deadline[]
+  eventCount?: number
 }
 
 interface CalendarViewProps {
@@ -101,18 +102,19 @@ export default function CalendarView({ daysInfo, onDayClick, selectedDate }: Cal
           const isToday = dateStr === todayStr
           const isSelected = dateStr === selectedDate
           const hasDeadline = info && info.deadlines.length > 0
+          const eventCount = info?.eventCount || 0
           const cardsDue = info?.cardsDue || 0
 
           return (
             <button
               key={dateStr}
               onClick={() => onDayClick(dateStr)}
-              className={`relative p-1 rounded-lg text-sm transition-colors text-center min-h-[48px] flex flex-col items-center justify-start gap-0.5 ${
+              className={`relative p-1 rounded-lg text-sm transition-colors text-center min-h-[50px] flex flex-col items-center justify-start gap-0.5 ${
                 isSelected
-                  ? 'bg-emerald-600 text-white'
+                  ? 'bg-violet-600 text-white shadow-xs'
                   : isToday
-                  ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-semibold'
-                  : 'hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+                  ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 font-semibold ring-1 ring-violet-300 dark:ring-violet-700'
+                  : 'hover:bg-slate-50 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-300'
               }`}
             >
               <span className={`text-xs font-medium leading-tight ${isToday && !isSelected ? 'font-bold' : ''}`}>
@@ -129,25 +131,36 @@ export default function CalendarView({ daysInfo, onDayClick, selectedDate }: Cal
                 </span>
               )}
 
-              {hasDeadline && (
-                <span className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                  isSelected ? 'bg-white/70' : 'bg-red-400'
-                }`} title="Deadline" />
-              )}
+              <div className="flex items-center gap-1 mt-0.5">
+                {hasDeadline && (
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    isSelected ? 'bg-white/90' : 'bg-red-400'
+                  }`} title="Deadline" />
+                )}
+                {eventCount > 0 && (
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    isSelected ? 'bg-violet-200' : 'bg-violet-500'
+                  }`} title={`${eventCount} event(s)`} />
+                )}
+              </div>
             </button>
           )
         })}
       </div>
 
       {/* Legend */}
-      <div className="flex gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 text-xs text-slate-400 dark:text-slate-500">
+      <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 text-xs text-slate-400 dark:text-slate-500">
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-semibold text-amber-500">12</span>
-          Cards due (projected)
+          Cards due
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-red-400" />
           Deadline
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-violet-500" />
+          Lecture / Event
         </div>
       </div>
     </div>
