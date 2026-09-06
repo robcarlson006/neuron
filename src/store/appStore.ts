@@ -1,7 +1,20 @@
 import { create } from 'zustand'
-import type { User, Subject, Theme, ToastMessage } from '../types'
+import type { User, Subject, Theme, ToastMessage, DailyPlan } from '../types'
 
 export type PomodoroPhase = 'idle' | 'work' | 'work-done' | 'break' | 'break-done'
+
+export type FocusBlockItem = DailyPlan & { subject_name: string }
+
+export interface ActiveFocusBlockState {
+  items: FocusBlockItem[]
+  activeIndex: number
+  remainingSeconds: number
+  totalSeconds: number
+  isRunning: boolean
+  isPaused: boolean
+  isOvertime: boolean
+  showTimeUpModal: boolean
+}
 
 interface AppState {
   user: User | null
@@ -10,6 +23,9 @@ interface AppState {
   isLoading: boolean
   error: string | null
   showDemo: boolean
+
+  // Focus Block runtime state
+  focusBlock: ActiveFocusBlockState | null
 
   // Pomodoro settings (persisted to localStorage)
   pomodoroEnabled: boolean
@@ -50,6 +66,16 @@ interface AppState {
   startBreak: () => void
   startWorkAfterBreak: () => void
   resetPomodoro: () => void
+
+  // Focus Block actions
+  startFocusBlock: (items: FocusBlockItem[], startIndex?: number) => void
+  pauseFocusBlock: () => void
+  resumeFocusBlock: () => void
+  extendFocusBlock: (extraMinutes: number) => void
+  tickFocusBlock: () => void
+  nextFocusBlockStep: () => void
+  endFocusBlock: () => void
+  dismissFocusBlockTimeUp: () => void
 }
 
 function loadPomodoroSettings(): { enabled: boolean; workMinutes: number; breakMinutes: number } {
@@ -206,6 +232,130 @@ export const useAppStore = create<AppState>((set, get) => {
         pomodoroStartedAt: null,
         pomodoroSecondsTotal: pomodoroWorkMinutes * 60,
         pomodoroPausedSecondsLeft: null
+      })
+    },
+
+    // Focus Block initial state & actions
+    focusBlock: null,
+
+    startFocusBlock: (items: FocusBlockItem[], startIndex = 0) => {
+      if (!items || items.length === 0) return
+      const validIndex = Math.max(0, Math.min(items.length - 1, startIndex))
+      const current = items[validIndex]
+      const totalSec = Math.max(60, (current.estimated_minutes || 20) * 60)
+      set({
+        focusBlock: {
+          items,
+          activeIndex: validIndex,
+          remainingSeconds: totalSec,
+          totalSeconds: totalSec,
+          isRunning: true,
+          isPaused: false,
+          isOvertime: false,
+          showTimeUpModal: false
+        }
+      })
+    },
+
+    pauseFocusBlock: () => {
+      set((state) => {
+        if (!state.focusBlock) return {}
+        return {
+          focusBlock: {
+            ...state.focusBlock,
+            isPaused: true
+          }
+        }
+      })
+    },
+
+    resumeFocusBlock: () => {
+      set((state) => {
+        if (!state.focusBlock) return {}
+        return {
+          focusBlock: {
+            ...state.focusBlock,
+            isPaused: false
+          }
+        }
+      })
+    },
+
+    extendFocusBlock: (extraMinutes: number) => {
+      set((state) => {
+        if (!state.focusBlock) return {}
+        const addedSeconds = extraMinutes * 60
+        const newRemaining = Math.max(0, state.focusBlock.remainingSeconds) + addedSeconds
+        return {
+          focusBlock: {
+            ...state.focusBlock,
+            remainingSeconds: newRemaining,
+            totalSeconds: state.focusBlock.totalSeconds + addedSeconds,
+            isOvertime: false,
+            showTimeUpModal: false,
+            isPaused: false,
+            isRunning: true
+          }
+        }
+      })
+    },
+
+    tickFocusBlock: () => {
+      set((state) => {
+        if (!state.focusBlock || !state.focusBlock.isRunning || state.focusBlock.isPaused) {
+          return {}
+        }
+        const nextSeconds = state.focusBlock.remainingSeconds - 1
+        const justFinished = state.focusBlock.remainingSeconds > 0 && nextSeconds <= 0
+        return {
+          focusBlock: {
+            ...state.focusBlock,
+            remainingSeconds: nextSeconds,
+            isOvertime: nextSeconds <= 0,
+            showTimeUpModal: justFinished ? true : state.focusBlock.showTimeUpModal
+          }
+        }
+      })
+    },
+
+    nextFocusBlockStep: () => {
+      const { focusBlock } = get()
+      if (!focusBlock) return
+      const nextIndex = focusBlock.activeIndex + 1
+      if (nextIndex < focusBlock.items.length) {
+        const nextItem = focusBlock.items[nextIndex]
+        const totalSec = Math.max(60, (nextItem.estimated_minutes || 20) * 60)
+        set({
+          focusBlock: {
+            ...focusBlock,
+            activeIndex: nextIndex,
+            remainingSeconds: totalSec,
+            totalSeconds: totalSec,
+            isRunning: true,
+            isPaused: false,
+            isOvertime: false,
+            showTimeUpModal: false
+          }
+        })
+      } else {
+        // Finished all steps
+        set({ focusBlock: null })
+      }
+    },
+
+    endFocusBlock: () => {
+      set({ focusBlock: null })
+    },
+
+    dismissFocusBlockTimeUp: () => {
+      set((state) => {
+        if (!state.focusBlock) return {}
+        return {
+          focusBlock: {
+            ...state.focusBlock,
+            showTimeUpModal: false
+          }
+        }
       })
     }
   }

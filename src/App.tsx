@@ -18,6 +18,8 @@ import TutorSession from './pages/tutor/TutorSession'
 import GeneralChat from './pages/tutor/GeneralChat'
 import ToastContainer from './components/tutor/ToastContainer'
 import ClassCreationWizard from './pages/classes/ClassCreationWizard'
+import FocusBlockTimerBanner from './components/tutor/FocusBlockTimerBanner'
+import FocusBlockTimeUpModal from './components/tutor/FocusBlockTimeUpModal'
 
 const api = window.electronAPI
 
@@ -266,6 +268,8 @@ function ClassRedirect(): React.JSX.Element {
         <DemoTour onComplete={handleDemoComplete} />
       )}
 
+      {user && <FocusBlockTimerBanner />}
+
       <ErrorBoundary>
         <Routes>
           {!user ? (
@@ -297,6 +301,8 @@ function ClassRedirect(): React.JSX.Element {
       {showClassWizard && user && (
         <ClassCreationWizard onClose={() => setShowClassWizard(false)} />
       )}
+
+      {user && <FocusBlockTimeUpModal />}
 
       <ToastContainer />
       <KeyboardShortcutsModal isOpen={shortcutsOpen} onClose={closeShortcuts} />
