@@ -698,6 +698,9 @@ export interface DailyPlan {
   priority: number
   is_completed: number
   created_at: string
+  action_type?: 'flashcards' | 'tutor_drill' | 'syllabus_read' | 'custom'
+  learning_objective?: string
+  target_topic?: string
 }
 
 export interface PlanGenerationResult {
@@ -777,3 +780,46 @@ export interface ToastMessage {
   title: string
   message: string
 }
+
+// ── Calendar Events & Sources ─────────────────────────────────────────────
+
+export type CalendarEventType = 'lecture' | 'seminar' | 'lab' | 'workshop' | 'study' | 'personal'
+
+export interface CalendarSource {
+  id: number
+  user_id: number
+  name: string
+  type: 'ical' | 'manual' | 'google_oauth'
+  url?: string
+  color: string
+  last_synced_at?: string
+  created_at: string
+}
+
+export interface CalendarEvent {
+  id: number
+  user_id: number
+  source_id?: number | null
+  external_id?: string | null
+  title: string
+  description?: string | null
+  location?: string | null
+  start_time: string
+  end_time: string
+  all_day: boolean | number
+  recurrence_rule?: string | null
+  subject_id?: number | null
+  event_type: CalendarEventType
+  created_at: string
+  updated_at: string
+  subject_name?: string
+  subject_color?: string
+}
+
+export interface CalendarScheduleContext {
+  type: 'pre_event' | 'post_event'
+  event: CalendarEvent
+  minutesUntilStart?: number
+  minutesSinceEnd?: number
+}
+
