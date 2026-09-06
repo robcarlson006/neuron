@@ -348,8 +348,20 @@ const electronAPI = {
     ipcRenderer.invoke('plan:getDailyPlan', userId, date),
   planGeneratePlan: (userId: number, date: string): Promise<(DailyPlan & { subject_name: string })[]> =>
     ipcRenderer.invoke('plan:generatePlan', userId, date),
-  planGenerateFocusBlock: (userId: number, availableMinutes: number, date: string): Promise<(DailyPlan & { subject_name: string })[]> =>
-    ipcRenderer.invoke('plan:generateFocusBlock', userId, availableMinutes, date),
+  planGenerateFocusBlock: (
+    userId: number,
+    availableMinutes: number,
+    date: string,
+    contextOptions?: {
+      contextType?: 'pre_event' | 'post_event' | 'standard'
+      eventTitle?: string
+      subjectName?: string
+      subjectId?: number
+      lectureTopic?: string
+      materialsSummary?: string
+    }
+  ): Promise<(DailyPlan & { subject_name: string })[]> =>
+    ipcRenderer.invoke('plan:generateFocusBlock', userId, availableMinutes, date, contextOptions),
   planCompleteAction: (planId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('plan:completeAction', planId),
   planDismissAction: (planId: number): Promise<{ success: boolean }> =>

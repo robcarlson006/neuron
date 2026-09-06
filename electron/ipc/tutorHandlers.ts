@@ -703,6 +703,91 @@ function cleanupAIResponse(text: string): string {
   return cleaned
 }
 
+// ── Focus Block Prompt Builder ───────────────────────────────────────────
+
+export interface BuildFocusBlockPromptParams {
+  availableMinutes: number
+  subjectBriefs: string
+  completedText?: string
+  contextType?: 'pre_event' | 'post_event' | 'standard'
+  eventTitle?: string
+  subjectName?: string
+  subjectId?: number
+  lectureTopic?: string
+  materialsSummary?: string
+}
+
+export function buildFocusBlockPrompt(params: BuildFocusBlockPromptParams): string {
+  const {
+    availableMinutes,
+    subjectBriefs,
+    completedText = '',
+    contextType,
+    eventTitle,
+    subjectName,
+    lectureTopic,
+    materialsSummary
+  } = params
+
+  let contextDirectives = ''
+
+  if (contextType === 'post_event') {
+    contextDirectives = `
+SPECIAL CONTEXT: POST-LECTURE CONCEPT LOCK-IN SPRINT
+- The student just finished class: "${eventTitle || 'Lecture'}" (${subjectName || 'Current Subject'}).
+${lectureTopic ? `- Lecture Topic covered today: "${lectureTopic}".` : ''}
+${materialsSummary ? `- Associated Material: ${materialsSummary}` : ''}
+- High-Yield Cognitive Science Retention Protocol:
+  1. Free Recall Brain Dump: 3-5 min retrieval of 2-3 core principles or mechanism summary (action_type: "tutor_drill", target_topic: "${lectureTopic || 'Lecture Recap'}", learning_objective: "Active retrieval of key concepts from today's lecture").
+  2. Socratic Elaborative Dialogue: 5-15 min targeted deep-dive probing underlying mechanisms and misconceptions (action_type: "tutor_drill", target_topic: "${lectureTopic || 'Lecture Recap'}").
+  3. Card Synthesis: 5-10 min flashcard review / generation to schedule into spaced repetition (action_type: "flashcards").
+- Balance: Prioritize consolidating this lecture, while also ensuring overdue flashcards from any active subject are reviewed.
+`
+  } else if (contextType === 'pre_event') {
+    contextDirectives = `
+SPECIAL CONTEXT: PRE-CLASS PRIMER
+- The student has an upcoming class: "${eventTitle || 'Upcoming Class'}" (${subjectName || 'Subject'}) starting soon.
+- Prime the student's mind: focus on high-yield flashcard definitions, prerequisite concepts, and resolving prior misconceptions for ${subjectName || 'this subject'} so they step into class confident and ready to engage.
+`
+  }
+
+  return `You are an expert academic coach and learning planner. The student is starting an immediate "Focus Block" study sprint right now.
+
+AVAILABLE TIME WINDOW: ${availableMinutes} MINUTES TOTAL.
+${contextDirectives}
+STUDENT CLASSES & CURRENT STATUS:
+${subjectBriefs}
+
+${completedText}
+
+TASK:
+Create a focused 1 to 3 step study sprint that fits EXACTLY into the ${availableMinutes} minutes total.
+Strict Prioritization Order:
+1. Spaced Repetition Due Flashcards: If cards are due, include a card review step (typically 10-15 min, action_type: "flashcards").
+2. Weakness Interventions: If the student has recorded struggles or misconceptions in tutor memory, allocate a targeted Socratic drill (typically 15-25 min, action_type: "tutor_drill") with a specific target_topic and pedagogical learning_objective.
+3. Syllabus Forward Progress: If time remains, allocate time to reading or working through the current syllabus module (action_type: "syllabus_read").
+
+CRITICAL CONSTRAINTS:
+- The sum of estimated_minutes of all items in focus_items MUST equal ${availableMinutes} (within +/- 5 minutes).
+- Return between 1 and 3 items total.
+- Be specific, actionable, and encouraging.
+
+Return ONLY valid JSON matching this schema:
+{
+  "focus_items": [
+    {
+      "subject_id": 1,
+      "action_type": "flashcards" | "tutor_drill" | "syllabus_read",
+      "suggested_action": "Clear, concise title of the step",
+      "learning_objective": "1 sentence pedagogical focus or goal",
+      "target_topic": "Specific topic name or null",
+      "estimated_minutes": 15,
+      "priority": 1
+    }
+  ]
+}`
+}
+
 // ── Register all handlers ───────────────────────────────────────────────
 
 export function registerTutorHandlers(): void {
@@ -1374,6 +1459,306 @@ Rules:
       JOIN subjects s ON s.id = p.subject_id
       WHERE p.user_id = ? AND p.plan_date = ?
       ORDER BY p.priority DESC, p.estimated_minutes DESC
+    `).all(userId, date)
+  })
+
+  ipcMain.handle('plan:generateFocusBlock', async (
+    _event,
+    userId: number,
+    availableMinutes: number,
+    date: string,
+    contextOptions?: {
+      contextType?: 'pre_event' | 'post_event' | 'standard'
+      eventTitle?: string
+      subjectName?: string
+      subjectId?: number
+      lectureTopic?: string
+      materialsSummary?: string
+    }
+  ) => {
+    const totalMinutes = Math.max(10, Math.min(240, availableMinutes || 30))
+
+    // Collect all active subjects
+    const subjects = db.prepare(
+      "SELECT id, name, course_code, time_commitment_minutes FROM subjects WHERE user_id = ? AND status != 'archived'"
+    ).all(userId) as { id: number; name: string; course_code?: string; time_commitment_minutes: number }[]
+
+    if (subjects.length === 0) {
+      return []
+    }
+
+    // Keep completed items today; remove uncompleted ones so we don't pile up stale suggestions
+    db.prepare('DELETE FROM daily_plans WHERE user_id = ? AND plan_date = ? AND is_completed = 0').run(userId, date)
+
+    // Check completed tasks today to avoid duplicates
+    const completedToday = db.prepare(`
+      SELECT suggested_action, target_topic, subject_id FROM daily_plans
+      WHERE user_id = ? AND plan_date = ? AND is_completed = 1
+    `).all(userId, date) as { suggested_action: string; target_topic: string | null; subject_id: number }[]
+
+    // Gather subjects state: due cards, weak topics, current modules, deadlines
+    interface SubjectData {
+      id: number
+      name: string
+      dueCardCount: number
+      strugglingTopics: { topic: string; struggles: string | null; mastery_level: string }[]
+      currentModule?: SyllabusModule
+      nextModule?: SyllabusModule
+      deadlines: { label: string; deadline_date: string }[]
+    }
+
+    const subjectsData: SubjectData[] = []
+
+    for (const subject of subjects) {
+      const dueCards = db.prepare(`
+        SELECT COUNT(*) as count FROM card_schedule cs
+        JOIN cards c ON c.id = cs.card_id
+        WHERE cs.user_id = ? AND c.subject_id = ? AND cs.due_date <= ?
+      `).get(userId, subject.id, date) as { count: number }
+
+      let strugglingTopics: { topic: string; struggles: string | null; mastery_level: string }[] = []
+      try {
+        strugglingTopics = db.prepare(`
+          SELECT topic, struggles, mastery_level FROM tutor_topic_memories
+          WHERE user_id = ? AND subject_id = ? AND (mastery_level IN ('struggling', 'developing') OR struggles IS NOT NULL)
+          ORDER BY last_studied_at DESC LIMIT 5
+        `).all(userId, subject.id) as { topic: string; struggles: string | null; mastery_level: string }[]
+      } catch {
+        // In case table not yet created
+        strugglingTopics = []
+      }
+
+      const modules = db.prepare(`
+        SELECT * FROM syllabus_modules WHERE subject_id = ? ORDER BY sort_order ASC
+      `).all(subject.id) as SyllabusModule[]
+
+      const deadlines = db.prepare(`
+        SELECT label, deadline_date FROM deadlines WHERE subject_id = ? ORDER BY deadline_date ASC
+      `).all(subject.id) as { label: string; deadline_date: string }[]
+
+      const currentModule = modules.find(m => m.status === 'in_progress')
+      const nextModule = modules.find(m => m.status === 'pending')
+
+      subjectsData.push({
+        id: subject.id,
+        name: subject.name,
+        dueCardCount: dueCards?.count || 0,
+        strugglingTopics,
+        currentModule,
+        nextModule,
+        deadlines
+      })
+    }
+
+    // Helper: deterministic fallback builder
+    const buildDeterministicFocusBlock = (): any[] => {
+      const items: any[] = []
+      let remainingMinutes = totalMinutes
+
+      if (contextOptions?.contextType === 'post_event') {
+        const targetSubj = subjects.find(s => s.id === contextOptions.subjectId) || subjects[0]
+        const topicName = contextOptions.lectureTopic || 'Today\'s Lecture'
+        const drillMin = Math.max(10, Math.round(totalMinutes * 0.6))
+        const cardMin = totalMinutes - drillMin
+
+        items.push({
+          subject_id: targetSubj.id,
+          action_type: 'tutor_drill',
+          suggested_action: `Post-Lecture Recall & Socratic Debrief: ${topicName}`,
+          learning_objective: `Active retrieval of core mechanisms from ${topicName}`,
+          target_topic: topicName,
+          estimated_minutes: drillMin,
+          priority: 1
+        })
+
+        if (cardMin >= 5) {
+          items.push({
+            subject_id: targetSubj.id,
+            action_type: 'flashcards',
+            suggested_action: `Flashcard Review & Synthesis: ${targetSubj.name}`,
+            learning_objective: 'Reinforce new terms and review due cards',
+            target_topic: topicName,
+            estimated_minutes: cardMin,
+            priority: 2
+          })
+        }
+        return items
+      }
+
+      if (contextOptions?.contextType === 'pre_event') {
+        const targetSubj = subjects.find(s => s.id === contextOptions.subjectId) || subjects[0]
+        items.push({
+          subject_id: targetSubj.id,
+          action_type: 'flashcards',
+          suggested_action: `Pre-Class Primer Drill: ${targetSubj.name}`,
+          learning_objective: `Review definitions and prerequisite concepts before ${contextOptions.eventTitle || 'class'}`,
+          target_topic: null,
+          estimated_minutes: totalMinutes,
+          priority: 1
+        })
+        return items
+      }
+
+      // 1. Due cards first
+      const subjectsWithDue = subjectsData.filter(s => s.dueCardCount > 0).sort((a, b) => b.dueCardCount - a.dueCardCount)
+      if (subjectsWithDue.length > 0 && remainingMinutes >= 10) {
+        const topSubject = subjectsWithDue[0]
+        const cardMinutes = Math.min(remainingMinutes >= 45 ? 20 : 15, remainingMinutes, Math.max(10, Math.ceil(topSubject.dueCardCount * 0.75)))
+        items.push({
+          subject_id: topSubject.id,
+          action_type: 'flashcards',
+          suggested_action: `Review ${topSubject.dueCardCount} due flashcards in ${topSubject.name}`,
+          learning_objective: `Reinforce memory retention and clear the spaced repetition queue`,
+          target_topic: null,
+          estimated_minutes: cardMinutes,
+          priority: 1
+        })
+        remainingMinutes -= cardMinutes
+      }
+
+      // 2. Struggling topics / Tutor drill second
+      const subjectsWithStruggles = subjectsData.filter(s => s.strugglingTopics.length > 0)
+      if (subjectsWithStruggles.length > 0 && remainingMinutes >= 15) {
+        const topSubject = subjectsWithStruggles[0]
+        const weak = topSubject.strugglingTopics[0]
+        const drillMinutes = Math.min(remainingMinutes, 25)
+        items.push({
+          subject_id: topSubject.id,
+          action_type: 'tutor_drill',
+          suggested_action: `Targeted Socratic Drill: ${weak.topic}`,
+          learning_objective: weak.struggles ? `Work through misconceptions: ${weak.struggles}` : `Deepen understanding and strengthen recall for ${weak.topic}`,
+          target_topic: weak.topic,
+          estimated_minutes: drillMinutes,
+          priority: items.length + 1
+        })
+        remainingMinutes -= drillMinutes
+      }
+
+      // 3. Syllabus progress third (or another subject's due cards/weak spots)
+      if (remainingMinutes >= 10) {
+        const nextSubject = subjectsData.find(s => s.currentModule || s.nextModule) || subjectsData[0]
+        const mod = nextSubject.currentModule || nextSubject.nextModule
+        const modTitle = mod ? (mod.chapter_number ? `Ch. ${mod.chapter_number}: ${mod.title}` : mod.title) : 'Course Material'
+        items.push({
+          subject_id: nextSubject.id,
+          action_type: 'syllabus_read',
+          suggested_action: `Study ${modTitle} (${nextSubject.name})`,
+          learning_objective: `Advance through the syllabus and master key concepts`,
+          target_topic: mod?.title || null,
+          estimated_minutes: remainingMinutes,
+          priority: items.length + 1
+        })
+        remainingMinutes = 0
+      }
+
+      // If items is still empty, add a general study sprint
+      if (items.length === 0) {
+        items.push({
+          subject_id: subjectsData[0].id,
+          action_type: 'tutor_drill',
+          suggested_action: `Study Session: ${subjectsData[0].name}`,
+          learning_objective: `Explore key concepts with your AI tutor`,
+          target_topic: null,
+          estimated_minutes: totalMinutes,
+          priority: 1
+        })
+      }
+
+      return items
+    }
+
+    let generatedItems: any[] = []
+
+    try {
+      const config = getAIConfig()
+      const apiKey = getApiKey()
+
+      if (!apiKey) {
+        // Fall back to deterministic calculation
+        generatedItems = buildDeterministicFocusBlock()
+      } else {
+        // Build prompt with rich context
+        const subjectBriefs = subjectsData.map(s => {
+          const lines = [`Class: ${s.name} (id: ${s.id})`]
+          lines.push(`- Due Flashcards: ${s.dueCardCount}`)
+          if (s.strugglingTopics.length > 0) {
+            lines.push(`- Recorded Struggles/Weaknesses: ${s.strugglingTopics.map(t => `${t.topic} (${t.mastery_level}${t.struggles ? `: "${t.struggles}"` : ''})`).join(', ')}`)
+          }
+          if (s.currentModule) {
+            lines.push(`- In-Progress Chapter: ${s.currentModule.chapter_number ? `Ch ${s.currentModule.chapter_number} ` : ''}${s.currentModule.title}`)
+          } else if (s.nextModule) {
+            lines.push(`- Next Chapter: ${s.nextModule.chapter_number ? `Ch ${s.nextModule.chapter_number} ` : ''}${s.nextModule.title}`)
+          }
+          if (s.deadlines.length > 0) {
+            lines.push(`- Upcoming Deadlines: ${s.deadlines.map(d => `${d.label} (${d.deadline_date})`).join(', ')}`)
+          }
+          return lines.join('\n')
+        }).join('\n\n')
+
+        const completedText = completedToday.length > 0
+          ? `Tasks already completed today (DO NOT repeat these):\n${completedToday.map(c => `- ${c.suggested_action}`).join('\n')}\n`
+          : ''
+
+        const prompt = buildFocusBlockPrompt({
+          availableMinutes: totalMinutes,
+          subjectBriefs,
+          completedText,
+          contextType: contextOptions?.contextType,
+          eventTitle: contextOptions?.eventTitle,
+          subjectName: contextOptions?.subjectName,
+          subjectId: contextOptions?.subjectId,
+          lectureTopic: contextOptions?.lectureTopic,
+          materialsSummary: contextOptions?.materialsSummary
+        })
+
+        const responseText = await callAIMessages(
+          [{ role: 'user', content: prompt }],
+          { ...config, apiKey },
+          { type: 'json_object' }
+        )
+
+        const parsed = safeParseAIJson<{ focus_items?: any[] }>(responseText, { focus_items: [] })
+        if (Array.isArray(parsed.focus_items) && parsed.focus_items.length > 0) {
+          generatedItems = parsed.focus_items
+        } else {
+          generatedItems = buildDeterministicFocusBlock()
+        }
+      }
+    } catch (err) {
+      console.warn('AI Focus Block generation failed, using deterministic planner:', err)
+      generatedItems = buildDeterministicFocusBlock()
+    }
+
+    // Insert items into daily_plans
+    const insertItems = db.transaction((items: any[]) => {
+      for (const item of items) {
+        const subject = subjects.find(s => s.id === item.subject_id) || subjects[0]
+        db.prepare(`
+          INSERT INTO daily_plans
+            (user_id, plan_date, subject_id, suggested_action, estimated_minutes, priority, is_completed, action_type, learning_objective, target_topic)
+          VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+        `).run(
+          userId,
+          date,
+          subject.id,
+          item.suggested_action,
+          item.estimated_minutes || 20,
+          item.priority || 1,
+          item.action_type || 'custom',
+          item.learning_objective || null,
+          item.target_topic || null
+        )
+      }
+    })
+
+    insertItems(generatedItems)
+
+    return db.prepare(`
+      SELECT p.*, s.name as subject_name
+      FROM daily_plans p
+      JOIN subjects s ON s.id = p.subject_id
+      WHERE p.user_id = ? AND p.plan_date = ?
+      ORDER BY p.is_completed ASC, p.priority ASC, p.id ASC
     `).all(userId, date)
   })
 
