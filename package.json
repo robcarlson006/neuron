@@ -1,6 +1,6 @@
 {
   "name": "studyhelper",
-  "version": "3.5.3",
+  "version": "3.6.0",
   "description": "Spaced repetition and active recall for smarter studying",
   "main": "out/main/index.js",
   "author": "Neuron",
@@ -8,8 +8,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build && electron-builder",
-    "install-app": "cp -fR dist/mac-arm64/Neuron.app /Applications/Neuron.app",
-    "install-desktop": "cp -fR dist/mac-arm64/Neuron.app ~/Desktop/Neuron.app",
+    "install-app": "rm -rf /Applications/Neuron.app && cp -fR dist/mac-arm64/Neuron.app /Applications/",
+    "install-desktop": "rm -rf ~/Desktop/Neuron.app && cp -fR dist/mac-arm64/Neuron.app ~/Desktop/",
     "preview": "electron-vite preview",
     "test": "jest",
     "test:coverage": "jest --coverage",
