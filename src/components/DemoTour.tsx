@@ -8,7 +8,7 @@ import NeuronLogo from './NeuronLogo'
 interface Step {
   id: string
   modal?: boolean           // full blocking modal (welcome / complete)
-  navigateTo?: 'dashboard' | 'subject' | 'diagnostics' | 'study' | 'calendar' | 'analytics'
+  navigateTo?: 'dashboard' | 'subject' | 'diagnostics' | 'study' | 'tutor' | 'calendar' | 'analytics'
   title: string
   body: React.ReactNode
   cta: string
@@ -22,8 +22,8 @@ const STEPS: Step[] = [
     title: 'Welcome to Neuron!',
     body: (
       <p>
-        Let's take a quick tour so you know exactly how to use every feature.
-        We'll walk through the whole app together — it takes about 2 minutes.
+        Let's take a quick tour so you know exactly how to get the most out of Neuron.
+        We'll walk through all the core features together — it takes about 2 minutes.
       </p>
     ),
     cta: "Let's go →"
@@ -34,10 +34,9 @@ const STEPS: Step[] = [
     title: 'Your Dashboard',
     body: (
       <p>
-        This is your <strong>Dashboard</strong> — the home for all your classes.
-        Every class you create shows up here with a count of how many flashcards
-        are due for review today. You can also start a study session directly
-        from here.
+        This is your <strong>Dashboard</strong> — your learning command center.
+        Track flashcards due for review today, maintain your daily study streak, and watch your
+        mastery grow. As you complete sessions, you'll earn <strong>achievement badges</strong> and level up!
       </p>
     ),
     cta: 'Next →'
@@ -45,117 +44,99 @@ const STEPS: Step[] = [
   {
     id: 'create-class',
     navigateTo: 'dashboard',
-    title: 'Create Your First Class',
+    title: 'Create Classes with AI',
     body: (
       <>
         <p>
-          Click <strong>"+ New Subject"</strong> (top right) to add a class.
-          Give it a name like "Biology 101" and hit save.
+          Click <strong>"+ New Class"</strong> to launch the Class Creation Wizard.
+          Add course information, set upcoming exam dates, and upload study documents like PDFs, lecture slides,
+          or notes.
         </p>
         <p className="mt-2 text-xs opacity-80">
-          Once you create one, the tour will continue automatically.
+          Neuron can automatically analyze your materials and generate a structured curriculum for you!
         </p>
       </>
     ),
-    cta: 'Skip this step →',
+    cta: 'Next →',
     autoAdvanceOn: 'subject-created'
-  },
-  {
-    id: 'class-management',
-    navigateTo: 'dashboard',
-    title: 'Managing Your Classes',
-    body: (
-      <>
-        <p>
-          Click the <strong>vertical three-dot button (⋮)</strong> on any class card to open its options:
-        </p>
-        <ul className="mt-2 space-y-1 text-sm">
-          <li>🗑️ <strong>Delete</strong> — permanently removes the class and all its cards</li>
-          <li>📗 <strong>Active</strong> — currently taking this course</li>
-          <li>📘 <strong>Ongoing</strong> — long-term or self-study subject</li>
-          <li>📦 <strong>Archived</strong> — finished; hides it from your main dashboard</li>
-        </ul>
-      </>
-    ),
-    cta: 'Next →'
   },
   {
     id: 'enter-class',
     navigateTo: 'dashboard',
-    title: 'Open Your Class',
+    title: 'Open Your Class Workspace',
     body: (
       <>
         <p>
-          Click on any class card to open it. Inside you'll see your materials,
-          flashcard sets, and options to import new content.
+          Click on any class card to open its workspace. Inside you'll find dedicated tabs for
+          your <strong>Curriculum</strong>, <strong>Cards</strong>, <strong>Materials</strong>, and <strong>Deadlines</strong>.
         </p>
         <p className="mt-2 text-xs opacity-80">
           Click your class now — the tour will follow you in.
         </p>
       </>
     ),
-    cta: 'Skip — take me in →',
+    cta: 'Enter class →',
     autoAdvanceOn: 'subject-route'
   },
   {
-    id: 'import-intro',
+    id: 'curriculum-materials',
     navigateTo: 'subject',
-    title: 'Creating Your First Flashcard Set',
+    title: 'Curriculum & Study Materials',
+    body: (
+      <>
+        <p>
+          In the <strong>Curriculum</strong> and <strong>Materials</strong> tabs, you can view your structured course outline,
+          track topic-by-topic progress, and upload course documents (PDF, DOCX, PPTX).
+        </p>
+        <p className="mt-2">
+          Uploaded materials provide source context for AI tutoring and instant card generation.
+        </p>
+      </>
+    ),
+    cta: 'Next →'
+  },
+  {
+    id: 'creating-cards',
+    navigateTo: 'subject',
+    title: 'Creating & Generating Cards',
     body: (
       <p>
-        This is the inside of your class. Click the <strong>Import</strong> button
-        to create your first flashcard set. You can upload a file or paste your
-        notes directly.
+        Build your decks effortlessly: create custom cards manually, bulk import from text, or click
+        <strong> "AI Generate"</strong> to automatically extract high-yield questions and explanations
+        directly from your uploaded documents or custom prompts.
       </p>
     ),
     cta: 'Next →'
   },
   {
-    id: 'import-walkthrough',
+    id: 'card-types',
     navigateTo: 'subject',
-    title: 'How Import Works',
+    title: '4 Powerful Card Types',
     body: (
       <>
-        <p className="mb-2">Inside the Import panel:</p>
-        <ul className="space-y-2 text-sm">
-          <li>
-            <strong>AI Prompt</strong> — Neuron generates a ready-made prompt
-            for you. Copy it, then paste it along with your study material into
-            any AI of your choice — ChatGPT, Claude, Gemini, etc. The AI will
-            return a formatted list of flashcards.
-          </li>
-          <li>
-            <strong>Paste Cards Here</strong> — Take the cards the AI gave you
-            and paste them into this box.
-          </li>
-          <li>
-            <strong>Separators</strong> — These tell Neuron how to split each
-            card's front from its back. The default is{' '}
-            <code>...</code> between question and answer, and <code>;</code>{' '}
-            between cards. Make sure your AI output matches these (or adjust
-            them to match).
-          </li>
+        <p className="mb-2">Neuron supports multiple formats tailored for active recall:</p>
+        <ul className="space-y-1 text-xs">
+          <li>🃏 <strong>Flashcards</strong> — Classic 3D flip cards with question & answer</li>
+          <li>✍️ <strong>Active Recall</strong> — Type your explanation and receive instant AI grading</li>
+          <li>🧩 <strong>Cloze Deletion</strong> — Fill-in-the-blank cards to master key terminology</li>
+          <li>🔘 <strong>Multiple Choice</strong> — Fast drill practice with intelligent distractors</li>
         </ul>
       </>
     ),
-    cta: 'Got it →'
+    cta: 'Next →'
   },
   {
-    id: 'diagnostics-intro',
+    id: 'diagnostics',
     navigateTo: 'diagnostics',
-    title: 'Diagnostics',
+    title: 'Baseline Diagnostics',
     body: (
       <>
         <p>
-          <strong>Diagnostics</strong> is how Neuron figures out your starting
-          level. It shows you each card and asks you to rate how well you know
-          it using the same 1–5 scale as a study session.
+          Before drilling new material, run <strong>Diagnostics</strong> to rate your starting familiarity
+          on a 1–5 scale.
         </p>
         <p className="mt-2">
-          This matters because new cards are assumed completely unknown until
-          diagnosed. Running Diagnostics first lets you tell the algorithm which
-          cards you already know well — so it won't waste your time drilling
-          material you've already mastered.
+          This calibrates the spaced repetition algorithm so it won't waste your time reviewing concepts you already know well.
         </p>
       </>
     ),
@@ -164,32 +145,62 @@ const STEPS: Step[] = [
   {
     id: 'study-mode',
     navigateTo: 'study',
-    title: 'Study Mode — The 3 Rating Buttons',
+    title: 'Smart Study Sessions',
     body: (
       <>
         <p className="mb-2">
-          After you flip a flashcard, you'll see three buttons. Be honest — the
-          algorithm only works if you rate accurately:
+          Flip cards with Spacebar, keyboard shortcuts, or swipe gestures. Rate each card honestly:
         </p>
-        <ul className="space-y-2 text-sm">
+        <ul className="space-y-1.5 text-xs">
           <li>
-            <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-1.5 align-middle" />
-            <strong>Wrong</strong> — You blanked or got it wrong. Card comes back
-            tomorrow.
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 mr-1.5 align-middle" />
+            <strong>Wrong</strong> (1) — Review again tomorrow
           </li>
           <li>
-            <span className="inline-block w-3 h-3 rounded-full bg-amber-400 mr-1.5 align-middle" />
-            <strong>Partially Right</strong> — You kind of knew it. Card comes back
-            in a few days.
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 mr-1.5 align-middle" />
+            <strong>Partially Right</strong> (2) — Review in a few days
           </li>
           <li>
-            <span className="inline-block w-3 h-3 rounded-full bg-emerald-500 mr-1.5 align-middle" />
-            <strong>Got It</strong> — You nailed it. Card comes back much later.
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 mr-1.5 align-middle" />
+            <strong>Got It</strong> (3) — Mastered; spaced far out
           </li>
         </ul>
-        <p className="mt-2 text-xs opacity-75">
-          Over time this builds a schedule where hard cards appear often and easy
-          cards only appear when you're about to forget them.
+        <p className="mt-2 text-xs opacity-80">
+          Also features <strong>Learn Mode</strong> for new decks, <strong>Undo</strong> for quick corrections, and a built-in <strong>Pomodoro timer</strong>.
+        </p>
+      </>
+    ),
+    cta: 'Next →'
+  },
+  {
+    id: 'ai-tutor',
+    navigateTo: 'tutor',
+    title: 'Personal AI Tutor',
+    body: (
+      <>
+        <p>
+          Need deep conceptual understanding? Visit the <strong>Tutor</strong> hub to launch interactive AI study sessions.
+        </p>
+        <p className="mt-2">
+          Your tutor uses RAG (Retrieval-Augmented Generation) over your uploaded lecture notes to quiz you Socratically,
+          clarify tricky concepts, and convert chat breakthroughs into flashcards on the spot.
+        </p>
+      </>
+    ),
+    cta: 'Next →'
+  },
+  {
+    id: 'focus-blocks',
+    navigateTo: 'tutor',
+    title: 'Focus Blocks & Daily Plans',
+    body: (
+      <>
+        <p>
+          Neuron creates an optimized daily study plan based on your upcoming exams and card schedules.
+        </p>
+        <p className="mt-2">
+          Launch a <strong>Focus Block</strong> for guided, distraction-free study intervals with persistent timers,
+          automated task routing, and quick extension options.
         </p>
       </>
     ),
@@ -198,17 +209,15 @@ const STEPS: Step[] = [
   {
     id: 'calendar',
     navigateTo: 'calendar',
-    title: 'Calendar',
+    title: 'Calendar & Exam Boost',
     body: (
       <>
         <p>
-          The <strong>Calendar</strong> shows you how many flashcards are due on
-          every day of the month so you can plan your study time.
+          The <strong>Calendar</strong> displays your projected daily review workload so you can plan your week.
         </p>
         <p className="mt-2">
-          You can also create <strong>Events</strong> — add exam dates, quiz
-          deadlines, and assignment due dates. Neuron uses these to boost the
-          frequency of relevant cards in the days before your exam.
+          Add exam or assignment deadlines to activate <strong>Exam Boost</strong> — Neuron automatically concentrates
+          and prioritizes reviews for relevant topics as your test date approaches.
         </p>
       </>
     ),
@@ -217,14 +226,17 @@ const STEPS: Step[] = [
   {
     id: 'analytics',
     navigateTo: 'analytics',
-    title: 'Analytics',
+    title: 'Analytics & Mastery',
     body: (
-      <p>
-        <strong>Analytics</strong> gives you the full picture of your progress:
-        study streaks, total cards mastered, your review history over time, and
-        your weakest cards. Use it to stay motivated and spot exactly where
-        to focus more effort.
-      </p>
+      <>
+        <p>
+          Track your learning journey with detailed metrics: study streaks, retention rates, memory stability,
+          and review forecasts.
+        </p>
+        <p className="mt-2">
+          Identify your weakest cards so you know exactly where extra focus will deliver the highest returns!
+        </p>
+      </>
     ),
     cta: 'Finish tour →'
   },
@@ -234,12 +246,12 @@ const STEPS: Step[] = [
     title: "You're All Set! 🎉",
     body: (
       <p>
-        That's everything. Go add your first class, upload your notes, and let
-        Neuron build your study schedule. You can replay this tour anytime from{' '}
-        <strong>Settings → Help → Start Feature Tour</strong>.
+        You now have the full toolkit to master your coursework. Create your first class,
+        add your study materials, and let Neuron's spaced repetition take care of the rest.
+        You can revisit this tour anytime from <strong>Settings → Help → Start Feature Tour</strong>.
       </p>
     ),
-    cta: "Start studying →"
+    cta: 'Start studying →'
   }
 ]
 
@@ -274,6 +286,7 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
           return id ? `/diagnostics/${id}` : '/'
         }
         case 'study': return '/study'
+        case 'tutor': return '/tutor'
         case 'calendar': return '/calendar'
         case 'analytics': return '/analytics'
         default: return null
@@ -290,7 +303,7 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
         navigate(route)
       }
     }
-  }, [stepIdx]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stepIdx, step.modal, step.navigateTo, resolveRoute, location.pathname, navigate])
 
   // Auto-advance: subject created
   useEffect(() => {
@@ -301,7 +314,7 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
       prevSubjectCount.current = subjects.length
       advance()
     }
-  }, [subjects.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [subjects.length, step.autoAdvanceOn])
 
   // Auto-advance: user navigated into a subject
   useEffect(() => {
@@ -311,7 +324,7 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
     ) {
       advance()
     }
-  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname, step.autoAdvanceOn])
 
   function advance(): void {
     if (stepIdx >= STEPS.length - 1) {
@@ -325,14 +338,32 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
     }, 200)
   }
 
+  function goBack(): void {
+    if (stepIdx <= 0) return
+    setVisible(false)
+    setTimeout(() => {
+      setStepIdx((i) => i - 1)
+      setVisible(true)
+    }, 200)
+  }
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onComplete()
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea') return
+
+      if (e.key === 'Escape') {
+        onComplete()
+      } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+        advance()
+      } else if (e.key === 'ArrowLeft' && stepIdx > 0) {
+        goBack()
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onComplete])
+  }, [stepIdx, isLast, onComplete])
 
   const totalSteps = STEPS.length
   const progress = ((stepIdx + 1) / totalSteps) * 100
@@ -342,7 +373,7 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
         <div
-          className={`w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-8 transition-all duration-200 ${
+          className={`w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-8 border border-slate-200/80 dark:border-slate-800 transition-all duration-200 ${
             visible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
           }`}
         >
@@ -362,12 +393,24 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
             <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6">
               {step.body}
             </div>
-            <button
-              onClick={isLast ? onComplete : advance}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-700 hover:to-violet-600 text-white font-semibold text-sm shadow-sm transition-all active:scale-[0.98]"
-            >
-              {step.cta}
-            </button>
+
+            <div className="flex w-full gap-2">
+              {isLast && (
+                <button
+                  onClick={goBack}
+                  className="px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-sm transition-all active:scale-[0.98]"
+                >
+                  ← Back
+                </button>
+              )}
+              <button
+                onClick={isLast ? onComplete : advance}
+                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-700 hover:to-violet-600 text-white font-semibold text-sm shadow-md transition-all active:scale-[0.98]"
+              >
+                {step.cta}
+              </button>
+            </div>
+
             {stepIdx === 0 && (
               <button
                 onClick={onComplete}
@@ -420,13 +463,30 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
             {step.body}
           </div>
 
-          {/* Action button */}
-          <button
-            onClick={advance}
-            className="w-full py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold transition-colors active:scale-[0.98]"
-          >
-            {step.cta}
-          </button>
+          {/* Action buttons */}
+          <div className="flex items-center gap-2">
+            {stepIdx > 0 && (
+              <button
+                onClick={goBack}
+                className="px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold transition-colors active:scale-[0.98]"
+              >
+                ← Back
+              </button>
+            )}
+            <button
+              onClick={advance}
+              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-700 hover:to-violet-600 text-white text-xs font-semibold shadow-sm transition-all active:scale-[0.98]"
+            >
+              {step.cta}
+            </button>
+          </div>
+
+          {/* Keyboard shortcuts hint */}
+          <div className="mt-2.5 text-[10px] text-slate-400 dark:text-slate-500 flex items-center justify-center gap-2">
+            <span>Navigate: <kbd className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-[9px]">←</kbd> <kbd className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-[9px]">→</kbd> / <kbd className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-[9px]">Enter</kbd></span>
+            <span>•</span>
+            <span><kbd className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-[9px]">Esc</kbd> to exit</span>
+          </div>
         </div>
       </div>
     </div>
