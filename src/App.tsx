@@ -268,34 +268,38 @@ function ClassRedirect(): React.JSX.Element {
         <DemoTour onComplete={handleDemoComplete} />
       )}
 
-      {user && <FocusBlockTimerBanner />}
+      <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
+        {user && <FocusBlockTimerBanner />}
 
-      <ErrorBoundary>
-        <Routes>
-          {!user ? (
-            <>
-              <Route path="/onboarding" element={<Onboarding onUserCreated={handleUserCreated} />} />
-              <Route path="*" element={<Navigate to="/onboarding" replace />} />
-            </>
-          ) : (
-            <Route element={<Layout onNewClass={() => setShowClassWizard(true)} />}>
-              <Route path="/" element={<Dashboard onNewSubject={() => setShowClassWizard(true)} onNewClass={() => setShowClassWizard(true)} />} />
-              <Route path="/class/:id" element={<ClassRedirect />} />
-              <Route path="/subject/:id" element={<UnifiedSubjectDetail />} />
-              <Route path="/study/:subjectId" element={<StudySession />} />
-              <Route path="/study" element={<StudySession />} />
-              <Route path="/calendar" element={<Calendar />} />
-              <Route path="/diagnostics/:subjectId" element={<Diagnostics />} />
-              <Route path="/analytics" element={<Analytics />} />
-              <Route path="/tutor" element={<TutorHub />} />
-              <Route path="/tutor/general" element={<GeneralChat />} />
-              <Route path="/tutor/:classId" element={<TutorSession />} />
-              <Route path="/settings" element={<Settings onStartDemo={handleStartDemo} />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          )}
-        </Routes>
-      </ErrorBoundary>
+        <div className="flex-1 min-h-0 w-full overflow-hidden flex flex-col">
+          <ErrorBoundary>
+            <Routes>
+              {!user ? (
+                <>
+                  <Route path="/onboarding" element={<Onboarding onUserCreated={handleUserCreated} />} />
+                  <Route path="*" element={<Navigate to="/onboarding" replace />} />
+                </>
+              ) : (
+                <Route element={<Layout onNewClass={() => setShowClassWizard(true)} />}>
+                  <Route path="/" element={<Dashboard onNewSubject={() => setShowClassWizard(true)} onNewClass={() => setShowClassWizard(true)} />} />
+                  <Route path="/class/:id" element={<ClassRedirect />} />
+                  <Route path="/subject/:id" element={<UnifiedSubjectDetail />} />
+                  <Route path="/study/:subjectId" element={<StudySession />} />
+                  <Route path="/study" element={<StudySession />} />
+                  <Route path="/calendar" element={<Calendar />} />
+                  <Route path="/diagnostics/:subjectId" element={<Diagnostics />} />
+                  <Route path="/analytics" element={<Analytics />} />
+                  <Route path="/tutor" element={<TutorHub />} />
+                  <Route path="/tutor/general" element={<GeneralChat />} />
+                  <Route path="/tutor/:classId" element={<TutorSession />} />
+                  <Route path="/settings" element={<Settings onStartDemo={handleStartDemo} />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Route>
+              )}
+            </Routes>
+          </ErrorBoundary>
+        </div>
+      </div>
 
       {/* Class Creation Wizard Modal */}
       {showClassWizard && user && (

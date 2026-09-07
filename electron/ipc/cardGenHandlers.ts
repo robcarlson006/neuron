@@ -612,14 +612,15 @@ ${materialText}`
           break
         }
 
-        allCandidateCards.push(...validBatchCards)
-        for (const c of validBatchCards) {
+        const toAdd = validBatchCards.slice(0, remaining)
+        allCandidateCards.push(...toAdd)
+        for (const c of toAdd) {
           if (c.front) {
             runningExistingCards.push({ front: c.front, back: c.back || '' })
           }
         }
 
-        remaining -= validBatchCards.length
+        remaining -= toAdd.length
       }
 
       if (allCandidateCards.length === 0) {
@@ -858,14 +859,15 @@ ${materialText}`
           break
         }
 
-        allCandidateCards.push(...validBatchCards)
-        for (const c of validBatchCards) {
+        const toAdd = validBatchCards.slice(0, remaining)
+        allCandidateCards.push(...toAdd)
+        for (const c of toAdd) {
           if (c.front) {
             runningExistingCards.push({ front: c.front, back: c.back || '' })
           }
         }
 
-        remaining -= validBatchCards.length
+        remaining -= toAdd.length
         batchIdx++
       }
 

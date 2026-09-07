@@ -703,6 +703,8 @@ export interface DailyPlan {
   target_topic?: string
 }
 
+export type FocusBlockItem = DailyPlan & { subject_name: string }
+
 export interface PlanGenerationResult {
   plan: string
   modules: { title: string; description: string; week_number?: number; hours_estimated: number }[]

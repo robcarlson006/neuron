@@ -74,7 +74,7 @@ interface AppState {
   extendFocusBlock: (extraMinutes: number) => void
   tickFocusBlock: () => void
   nextFocusBlockStep: () => void
-  endFocusBlock: () => void
+  endFocusBlock: (markCurrentComplete?: boolean) => void
   dismissFocusBlockTimeUp: () => void
 }
 
@@ -321,6 +321,13 @@ export const useAppStore = create<AppState>((set, get) => {
     nextFocusBlockStep: () => {
       const { focusBlock } = get()
       if (!focusBlock) return
+      const currentItem = focusBlock.items[focusBlock.activeIndex]
+      if (currentItem && window.electronAPI?.planCompleteAction) {
+        window.electronAPI.planCompleteAction(currentItem.id).catch(console.error)
+      }
+      const updatedItems = focusBlock.items.map((item, idx) =>
+        idx === focusBlock.activeIndex ? { ...item, is_completed: 1 } : item
+      )
       const nextIndex = focusBlock.activeIndex + 1
       if (nextIndex < focusBlock.items.length) {
         const nextItem = focusBlock.items[nextIndex]
@@ -328,6 +335,7 @@ export const useAppStore = create<AppState>((set, get) => {
         set({
           focusBlock: {
             ...focusBlock,
+            items: updatedItems,
             activeIndex: nextIndex,
             remainingSeconds: totalSec,
             totalSeconds: totalSec,
@@ -343,7 +351,14 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    endFocusBlock: () => {
+    endFocusBlock: (markCurrentComplete = false) => {
+      const { focusBlock } = get()
+      if (focusBlock && markCurrentComplete) {
+        const currentItem = focusBlock.items[focusBlock.activeIndex]
+        if (currentItem && window.electronAPI?.planCompleteAction) {
+          window.electronAPI.planCompleteAction(currentItem.id).catch(console.error)
+        }
+      }
       set({ focusBlock: null })
     },
 

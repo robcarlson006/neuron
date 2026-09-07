@@ -87,16 +87,16 @@ const settingsNavItems = [
 ]
 
 export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): React.JSX.Element {
-  const { user, subjects, toggleTheme, theme } = useAppStore()
+  const { user, subjects, toggleTheme, theme, focusBlock } = useAppStore()
 
   const initials = user?.name
     ? user.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : 'U'
 
   return (
-    <aside className="w-60 min-h-screen bg-neuron-100 dark:bg-neuron-950 border-r border-neuron-200 dark:border-neuron-800 flex flex-col flex-shrink-0">
+    <aside className="w-60 h-full bg-neuron-100 dark:bg-neuron-950 border-r border-neuron-200 dark:border-neuron-800 flex flex-col flex-shrink-0 overflow-hidden">
       {/* App branding */}
-      <div className="px-5 pt-10 pb-5 border-b border-neuron-200 dark:border-neuron-800">
+      <div className={`px-5 ${focusBlock?.isRunning ? 'pt-4' : 'pt-10'} pb-5 border-b border-neuron-200 dark:border-neuron-800 flex-shrink-0`}>
         <div className="flex items-center gap-3">
           <NeuronLogo size={32} className="flex-shrink-0 rounded-lg" />
           <span className="font-semibold text-neuron-900 dark:text-neuron-100 text-base tracking-tight">Neuron</span>
@@ -246,7 +246,7 @@ export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): Re
       </nav>
 
       {/* Footer: user + theme toggle */}
-      <div className="px-3 py-4 border-t border-neuron-200 dark:border-neuron-800 space-y-2">
+      <div className="px-3 py-4 border-t border-neuron-200 dark:border-neuron-800 space-y-2 flex-shrink-0">
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}

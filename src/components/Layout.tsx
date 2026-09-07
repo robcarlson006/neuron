@@ -4,9 +4,9 @@ import Sidebar from './Sidebar'
 
 export default function Layout({ onNewClass }: { onNewClass?: () => void }): React.JSX.Element {
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden">
+    <div className="flex h-full w-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
       <Sidebar onNewClass={onNewClass} />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 min-h-0 min-w-0 h-full overflow-y-auto flex flex-col">
         <Outlet />
       </main>
     </div>

@@ -1,10 +1,12 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
+import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 
 export default function FocusBlockTimeUpModal(): React.JSX.Element | null {
   const navigate = useNavigate()
   const {
+    user,
     focusBlock,
     extendFocusBlock,
     nextFocusBlockStep,
@@ -20,25 +22,26 @@ export default function FocusBlockTimeUpModal(): React.JSX.Element | null {
   const isLastStep = focusBlock.activeIndex >= focusBlock.items.length - 1
   const nextItem = !isLastStep ? focusBlock.items[focusBlock.activeIndex + 1] : null
 
-  function handleMoveOn(): void {
+  async function handleMoveOn(): Promise<void> {
+    if (!focusBlock) return
     if (isLastStep) {
-      endFocusBlock()
+      endFocusBlock(true)
       navigate('/tutor')
       return
     }
 
+    const nextIndex = focusBlock.activeIndex + 1
+    const targetItem = focusBlock.items[nextIndex]
     nextFocusBlockStep()
 
-    // Automatically navigate to the appropriate screen for the next step
-    if (nextItem) {
-      if (nextItem.action_type === 'flashcards') {
-        navigate(`/study/${nextItem.subject_id}`)
-      } else if (nextItem.action_type === 'tutor_drill') {
-        navigate(`/tutor/${nextItem.subject_id}`)
-      } else {
-        navigate(`/subject/${nextItem.subject_id}`)
-      }
+    if (targetItem) {
+      await navigateToFocusBlockItem(targetItem, navigate, user?.id)
     }
+  }
+
+  function handleReturnToHub(): void {
+    endFocusBlock(true)
+    navigate('/tutor')
   }
 
   return (
@@ -99,6 +102,13 @@ export default function FocusBlockTimeUpModal(): React.JSX.Element | null {
                 <span>Move On to Next Step</span>
                 <span>→</span>
               </button>
+              <button
+                onClick={handleReturnToHub}
+                className="w-full py-2.5 px-4 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+              >
+                <span>Finish & Return to Hub</span>
+                <span>✓</span>
+              </button>
               <div className="flex items-center gap-2 mt-1">
                 <button
                   onClick={() => extendFocusBlock(1)}
@@ -123,17 +133,15 @@ export default function FocusBlockTimeUpModal(): React.JSX.Element | null {
           ) : (
             <button
               onClick={handleMoveOn}
-              className="w-full py-2.5 px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-colors"
+              className="w-full py-2.5 px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2"
             >
-              Wrap Up & View Hub
+              <span>Wrap Up & View Hub</span>
+              <span>✓</span>
             </button>
           )}
 
           <button
-            onClick={() => {
-              endFocusBlock()
-              navigate('/tutor')
-            }}
+            onClick={handleReturnToHub}
             className="w-full py-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors mt-1"
           >
             End Focus Block early

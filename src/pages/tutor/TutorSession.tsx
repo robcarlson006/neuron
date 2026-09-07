@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
+import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 import ChatMessage from '../../components/tutor/ChatMessage'
 import ChatInput from '../../components/tutor/ChatInput'
 import TutorCardReviewModal from '../../components/tutor/TutorCardReviewModal'
@@ -13,7 +14,7 @@ export default function TutorSession(): React.JSX.Element {
   const { classId } = useParams<{ classId: string }>()
   const subjectId = Number(classId)
   const navigate = useNavigate()
-  const { user, subjects, addToast } = useAppStore()
+  const { user, subjects, addToast, focusBlock, nextFocusBlockStep, endFocusBlock } = useAppStore()
   const subject = subjects.find(s => s.id === subjectId)
 
   // ── State ──
@@ -79,6 +80,15 @@ export default function TutorSession(): React.JSX.Element {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
   }, [messages, streamingContent])
+
+  // ── Focus Block Next/Finish prompt listener ──
+  useEffect(() => {
+    function onFocusBlockEndRequested() {
+      setShowEndModal(true)
+    }
+    window.addEventListener('focus-block:prompt-end-session', onFocusBlockEndRequested)
+    return () => window.removeEventListener('focus-block:prompt-end-session', onFocusBlockEndRequested)
+  }, [])
 
   // ── Load / init session ──
   useEffect(() => {
@@ -351,9 +361,10 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
   // ── Time-up handler ──
   useEffect(() => {
+    if (focusBlock?.isRunning) return
     if (!runtime.is_time_up || pageState !== 'awaiting_input') return
     setShowTimeUp(true)
-  }, [runtime.is_time_up, pageState])
+  }, [runtime.is_time_up, pageState, focusBlock?.isRunning])
 
   function handleAddTime(extraMinutes: number): void {
     const config = runtime.config
@@ -762,15 +773,52 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             )}
 
             <div className="flex gap-3 justify-center pt-2 flex-wrap">
-              <button onClick={() => navigate('/tutor')} className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors">
+              {focusBlock?.isRunning && focusBlock.activeIndex < focusBlock.items.length - 1 ? (
+                <button
+                  onClick={async () => {
+                    const nextIdx = focusBlock.activeIndex + 1
+                    const nextItem = focusBlock.items[nextIdx]
+                    nextFocusBlockStep()
+                    if (nextItem) {
+                      await navigateToFocusBlockItem(nextItem, navigate, user?.id)
+                    }
+                  }}
+                  className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md flex items-center gap-1.5"
+                >
+                  <span>Next Focus Step ({focusBlock.items[focusBlock.activeIndex + 1]?.estimated_minutes}m)</span>
+                  <span>→</span>
+                </button>
+              ) : focusBlock?.isRunning ? (
+                <button
+                  onClick={() => {
+                    endFocusBlock(true)
+                    navigate('/tutor')
+                  }}
+                  className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md flex items-center gap-1.5"
+                >
+                  <span>Finish Focus Block</span>
+                  <span>✓</span>
+                </button>
+              ) : null}
+              <button
+                onClick={() => {
+                  if (focusBlock?.isRunning) {
+                    endFocusBlock(true)
+                  }
+                  navigate('/tutor')
+                }}
+                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors"
+              >
                 Back to Tutor Hub
               </button>
               <button onClick={() => setShowCardReview(true)} className="px-5 py-2.5 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 rounded-xl text-xs font-bold transition-colors">
                 🃏 Generate Flashcards
               </button>
-              <button onClick={() => navigate(`/subject/${subjectId}`)} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md">
-                View Class
-              </button>
+              {!focusBlock?.isRunning && (
+                <button onClick={() => navigate(`/subject/${subjectId}`)} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md">
+                  View Class
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -790,75 +838,77 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   const currentPhaseIdx = phaseOrder.indexOf(sessionPhase)
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
-      {/* Top bar */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/tutor')}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M11 4l-5 5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          <div>
-            <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-              {subject?.name || 'Tutor Session'}
-            </h1>
-            <p className="text-xs text-slate-400 dark:text-slate-500">
-              {sessionPhase === 'complete' ? 'Session ended' : phaseLabels[sessionPhase]}
-              {sessionConfig?.material_name ? ` · 📄 ${sessionConfig.material_name}` : (currentModule && ` · ${currentModule.title}`)}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {/* Phase progress dots */}
-          <div className="flex items-center gap-1.5">
-            {phaseOrder.map((phase, idx) => (
-              <div
-                key={phase}
-                className={`w-2 h-2 rounded-full transition-colors ${
-                  idx < currentPhaseIdx ? 'bg-emerald-400' :
-                  idx === currentPhaseIdx ? 'bg-violet-500' :
-                  'bg-slate-200 dark:bg-slate-700'
-                }`}
-                title={phaseLabels[phase]}
-              />
-            ))}
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
+      {/* Top bar - hidden when in Focus Block */}
+      {!focusBlock?.isRunning && (
+        <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate('/tutor')}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M11 4l-5 5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+            <div>
+              <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                {subject?.name || 'Tutor Session'}
+              </h1>
+              <p className="text-xs text-slate-400 dark:text-slate-500">
+                {sessionPhase === 'complete' ? 'Session ended' : phaseLabels[sessionPhase]}
+                {sessionConfig?.material_name ? ` · 📄 ${sessionConfig.material_name}` : (currentModule && ` · ${currentModule.title}`)}
+              </p>
+            </div>
           </div>
 
-          {/* Timer display */}
-          {runtime.config.duration_minutes !== null && !runtime.is_time_up && (
-            <div className={`text-xs font-medium px-2 py-1 rounded-md ${
-              runtime.time_remaining_seconds < 60
-                ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
-                : runtime.time_remaining_seconds < 300
-                  ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20'
-                  : 'text-slate-400 dark:text-slate-500'
-            }`}>
-              ⏱️ {Math.floor(runtime.time_remaining_seconds / 60)}:{(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}
+          <div className="flex items-center gap-3">
+            {/* Phase progress dots */}
+            <div className="flex items-center gap-1.5">
+              {phaseOrder.map((phase, idx) => (
+                <div
+                  key={phase}
+                  className={`w-2 h-2 rounded-full transition-colors ${
+                    idx < currentPhaseIdx ? 'bg-emerald-400' :
+                    idx === currentPhaseIdx ? 'bg-violet-500' :
+                    'bg-slate-200 dark:bg-slate-700'
+                  }`}
+                  title={phaseLabels[phase]}
+                />
+              ))}
             </div>
-          )}
-          {runtime.config.duration_minutes === null && (
-            <div className="text-xs text-slate-400 dark:text-slate-500 px-2 py-1">
-              ♾️ No time limit
-            </div>
-          )}
 
-          <button
-            onClick={handleOpenEndModal}
-            disabled={sending || endingSession}
-            className="text-xs text-slate-400 hover:text-red-400 dark:hover:text-red-400 transition-colors px-2 py-1 font-medium"
-          >
-            End Session
-          </button>
+            {/* Timer display */}
+            {runtime.config.duration_minutes !== null && !runtime.is_time_up && (
+              <div className={`text-xs font-medium px-2 py-1 rounded-md ${
+                runtime.time_remaining_seconds < 60
+                  ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
+                  : runtime.time_remaining_seconds < 300
+                    ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20'
+                    : 'text-slate-400 dark:text-slate-500'
+              }`}>
+                ⏱️ {Math.floor(runtime.time_remaining_seconds / 60)}:{(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}
+              </div>
+            )}
+            {runtime.config.duration_minutes === null && (
+              <div className="text-xs text-slate-400 dark:text-slate-500 px-2 py-1">
+                ♾️ No time limit
+              </div>
+            )}
+
+            <button
+              onClick={handleOpenEndModal}
+              disabled={sending || endingSession}
+              className="text-xs text-slate-400 hover:text-red-400 dark:hover:text-red-400 transition-colors px-2 py-1 font-medium"
+            >
+              End Session
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto" ref={chatContainerRef}>
+      <div className="flex-1 min-h-0 overflow-y-auto" ref={chatContainerRef}>
         <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
           {/* Module context banner */}
           {currentModule && (
@@ -971,21 +1021,23 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
       {/* Input bar */}
       {pageState !== 'phase_transition' && !showTimeUp && (
-        <ChatInput
-          onSend={handleSend}
-          onAttachFile={handleAttachFile}
-          onSelectFromLibrary={handleSelectFromLibrary}
-          disabled={sending || sessionEnded}
-          refocusKey={focusKey}
-          attachedFile={attachedFile?.name || null}
-          onClearAttachment={() => setAttachedFile(null)}
-          placeholder={
-            sending ? 'Waiting for tutor...' :
-            sessionPhase === 'structured_qa' ? 'Type your answer...' :
-            sessionPhase === 'socratic' ? 'Share your thoughts...' :
-            'Any final questions?'
-          }
-        />
+        <div className="flex-shrink-0">
+          <ChatInput
+            onSend={handleSend}
+            onAttachFile={handleAttachFile}
+            onSelectFromLibrary={handleSelectFromLibrary}
+            disabled={sending || sessionEnded}
+            refocusKey={focusKey}
+            attachedFile={attachedFile?.name || null}
+            onClearAttachment={() => setAttachedFile(null)}
+            placeholder={
+              sending ? 'Waiting for tutor...' :
+              sessionPhase === 'structured_qa' ? 'Type your answer...' :
+              sessionPhase === 'socratic' ? 'Share your thoughts...' :
+              'Any final questions?'
+            }
+          />
+        </div>
       )}
 
       {/* End Session Modal */}

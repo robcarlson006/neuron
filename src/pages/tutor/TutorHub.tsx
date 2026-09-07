@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
 import SessionConfigModal from '../../components/tutor/SessionConfigModal'
 import PostLecturePromptModal from '../../components/tutor/PostLecturePromptModal'
+import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 import type { DailyPlan, SyllabusModule, CalendarScheduleContext } from '../../types'
 
 type HubState = 'loading' | 'loaded' | 'error'
@@ -118,30 +119,13 @@ export default function TutorHub(): React.JSX.Element {
     }
   }
 
-  function handleStartSprint(stepIndex = 0): void {
-    const incomplete = dailyPlans.filter(p => !p.is_completed)
-    const listToUse = incomplete.length > 0 ? incomplete : dailyPlans
-    if (listToUse.length === 0) return
+  async function handleStartSprint(stepIndex = 0): Promise<void> {
+    if (dailyPlans.length === 0) return
+    const target = dailyPlans[stepIndex]
+    if (!target) return
 
-    startFocusBlock(listToUse, stepIndex)
-    const target = listToUse[stepIndex]
-    if (target.action_type === 'flashcards') {
-      navigate(`/study/${target.subject_id}`)
-    } else if (target.action_type === 'tutor_drill') {
-      if (target.target_topic) {
-        setShowConfigModal({
-          subjectId: target.subject_id,
-          subjectName: target.subject_name,
-          initialTopic: target.target_topic
-        })
-      } else {
-        navigate(`/tutor/${target.subject_id}`)
-      }
-    } else if (target.action_type === 'syllabus_read') {
-      navigate(`/subject/${target.subject_id}`)
-    } else {
-      setShowConfigModal({ subjectId: target.subject_id, subjectName: target.subject_name })
-    }
+    startFocusBlock(dailyPlans, stepIndex)
+    await navigateToFocusBlockItem(target, navigate, user?.id)
   }
 
   async function handleCompletePlan(planId: number): Promise<void> {
@@ -212,7 +196,6 @@ export default function TutorHub(): React.JSX.Element {
 
   // ── Main hub view ──
   const incompletePlans = dailyPlans.filter(p => !p.is_completed)
-  const completedPlans = dailyPlans.filter(p => p.is_completed)
 
   return (
     <div className="p-8 max-w-5xl page-enter">
@@ -419,15 +402,22 @@ export default function TutorHub(): React.JSX.Element {
               )}
             </button>
 
-            {incompletePlans.length > 0 && (
+            {incompletePlans.length > 0 ? (
               <button
-                onClick={() => handleStartSprint(0)}
+                onClick={() => {
+                  const firstIncomplete = dailyPlans.findIndex(p => !p.is_completed)
+                  handleStartSprint(firstIncomplete !== -1 ? firstIncomplete : 0)
+                }}
                 className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm ml-1"
               >
                 <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M4 2.5l7 4.5-7 4.5V2.5z"/></svg>
                 Start Focus Block
               </button>
-            )}
+            ) : dailyPlans.length > 0 ? (
+              <span className="px-3 py-1.5 bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-700/50 rounded-xl text-xs font-semibold flex items-center gap-1.5 ml-1">
+                <span>✓</span> All Steps Completed
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -475,120 +465,136 @@ export default function TutorHub(): React.JSX.Element {
           </div>
         ) : (
           <div className="space-y-3">
-            {incompletePlans.map((plan, idx) => (
-              <div
-                key={plan.id}
-                className="bg-slate-50/70 dark:bg-slate-750/70 hover:bg-slate-50 dark:hover:bg-slate-750 rounded-xl border border-slate-200/80 dark:border-slate-700/80 p-4 transition-all"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    {/* Step number badge */}
-                    <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                      {idx + 1}
-                    </div>
+            {dailyPlans.map((plan, idx) => {
+              const isCompleted = Boolean(plan.is_completed)
 
-                    <div className="flex-1 min-w-0">
-                      {/* Tags & Badges */}
-                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                          {plan.subject_name}
-                        </span>
-                        <span className="text-xs text-slate-400 dark:text-slate-500 font-mono">
-                          · {plan.estimated_minutes} min
-                        </span>
-
-                        {plan.action_type === 'flashcards' && (
-                          <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-700/40 flex items-center gap-1">
-                            ⚡ Due Flashcards
-                          </span>
-                        )}
-                        {plan.action_type === 'tutor_drill' && (
-                          <span className="text-[10px] font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded-full border border-violet-200 dark:border-violet-700/40 flex items-center gap-1">
-                            🎯 Weak Spot Drill
-                          </span>
-                        )}
-                        {plan.action_type === 'syllabus_read' && (
-                          <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-900/30 px-2 py-0.5 rounded-full border border-sky-200 dark:border-sky-700/40 flex items-center gap-1">
-                            📖 Syllabus Progress
-                          </span>
-                        )}
-                        {plan.priority === 1 && (
-                          <span className="text-[10px] font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded-full">
-                            High Yield
-                          </span>
-                        )}
+              return (
+                <div
+                  key={plan.id}
+                  className={`rounded-xl border p-4 transition-all ${
+                    isCompleted
+                      ? 'bg-violet-50/90 dark:bg-violet-950/40 border-violet-300 dark:border-violet-700/80 shadow-xs'
+                      : 'bg-slate-50/70 dark:bg-slate-750/70 hover:bg-slate-50 dark:hover:bg-slate-750 border-slate-200/80 dark:border-slate-700/80'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                      {/* Step number badge */}
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
+                          isCompleted
+                            ? 'bg-violet-600 text-white shadow-xs'
+                            : 'bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300'
+                        }`}
+                      >
+                        {isCompleted ? '✓' : idx + 1}
                       </div>
 
-                      {/* Main Title */}
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        {plan.suggested_action}
-                      </p>
-
-                      {/* Learning Objective / Subtext */}
-                      {plan.learning_objective && (
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                          🎯 <span className="italic">{plan.learning_objective}</span>
-                        </p>
-                      )}
-
-                      {/* Action Links */}
-                      <div className="flex items-center gap-3 mt-3">
-                        <button
-                          onClick={() => handleCompletePlan(plan.id)}
-                          className="text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 font-medium transition-colors"
-                        >
-                          ✓ Done
-                        </button>
-                        <button
-                          onClick={() => handleDismissPlan(plan.id)}
-                          className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Launch Step Button */}
-                  <div className="flex-shrink-0 self-center">
-                    <button
-                      onClick={() => handleStartSprint(idx)}
-                      className="px-3.5 py-2 bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/30 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-700/50 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
-                    >
-                      {plan.action_type === 'flashcards' ? 'Start Flashcards' :
-                       plan.action_type === 'tutor_drill' ? 'Launch Tutor Drill' :
-                       plan.action_type === 'syllabus_read' ? 'Open Chapter' : 'Start Step'}
-                      <span className="text-xs">→</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            {/* Completed section */}
-            {completedPlans.length > 0 && (
-              <details className="group pt-2">
-                <summary className="text-xs text-slate-400 dark:text-slate-500 cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 transition-colors py-1">
-                  ✓ {completedPlans.length} step{completedPlans.length > 1 ? 's' : ''} completed today
-                </summary>
-                <div className="mt-2 space-y-2">
-                  {completedPlans.map(plan => (
-                    <div key={plan.id} className="bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200/50 dark:border-slate-700/50 p-3 flex items-start gap-3 opacity-60">
-                      <div className="w-1.5 h-full min-h-[2rem] rounded-full flex-shrink-0 mt-0.5 bg-emerald-400" />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-sm font-medium text-slate-500 dark:text-slate-400 line-through">
+                        {/* Tags & Badges */}
+                        <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                          <span className={`text-xs font-semibold ${isCompleted ? 'text-violet-950 dark:text-violet-100' : 'text-slate-800 dark:text-slate-200'}`}>
                             {plan.subject_name}
                           </span>
-                          <span className="text-xs text-slate-400 dark:text-slate-500">· {plan.estimated_minutes} min</span>
+                          <span className="text-xs text-slate-400 dark:text-slate-500 font-mono">
+                            · {plan.estimated_minutes} min
+                          </span>
+
+                          {isCompleted && (
+                            <span className="text-[10px] font-bold text-violet-700 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/50 px-2 py-0.5 rounded-full border border-violet-300 dark:border-violet-700/60 flex items-center gap-1">
+                              ✓ Completed
+                            </span>
+                          )}
+
+                          {plan.action_type === 'flashcards' && (
+                            <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-700/40 flex items-center gap-1">
+                              ⚡ Due Flashcards
+                            </span>
+                          )}
+                          {plan.action_type === 'tutor_drill' && (
+                            <span className="text-[10px] font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded-full border border-violet-200 dark:border-violet-700/40 flex items-center gap-1">
+                              🎯 Weak Spot Drill
+                            </span>
+                          )}
+                          {plan.action_type === 'syllabus_read' && (
+                            <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-900/30 px-2 py-0.5 rounded-full border border-sky-200 dark:border-sky-700/40 flex items-center gap-1">
+                              📖 Syllabus Progress
+                            </span>
+                          )}
+                          {plan.priority === 1 && !isCompleted && (
+                            <span className="text-[10px] font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded-full">
+                              High Yield
+                            </span>
+                          )}
                         </div>
-                        <p className="text-xs text-slate-400 dark:text-slate-500 line-through">{plan.suggested_action}</p>
+
+                        {/* Main Title */}
+                        <p className={`text-sm font-semibold ${isCompleted ? 'text-violet-950 dark:text-violet-100' : 'text-slate-900 dark:text-slate-100'}`}>
+                          {plan.suggested_action}
+                        </p>
+
+                        {/* Learning Objective / Subtext */}
+                        {plan.learning_objective && (
+                          <p className={`text-xs mt-1 leading-relaxed ${isCompleted ? 'text-violet-700/80 dark:text-violet-300/80' : 'text-slate-500 dark:text-slate-400'}`}>
+                            🎯 <span className="italic">{plan.learning_objective}</span>
+                          </p>
+                        )}
+
+                        {/* Action Links */}
+                        <div className="flex items-center gap-3 mt-3">
+                          {!isCompleted ? (
+                            <button
+                              onClick={() => handleCompletePlan(plan.id)}
+                              className="text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 font-medium transition-colors"
+                            >
+                              ✓ Done
+                            </button>
+                          ) : (
+                            <span className="text-xs text-violet-600 dark:text-violet-400 font-medium flex items-center gap-1">
+                              ✓ Finished
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handleDismissPlan(plan.id)}
+                            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
+
+                    {/* Launch / Completed Button */}
+                    <div className="flex-shrink-0 self-center">
+                      {isCompleted ? (
+                        <div className="flex items-center gap-2">
+                          <span className="px-3.5 py-2 bg-violet-600 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-xs">
+                            <span>✓</span> Completed
+                          </span>
+                          <button
+                            onClick={() => handleStartSprint(idx)}
+                            className="p-1 text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 font-medium hover:underline"
+                            title="Review this step"
+                          >
+                            Review
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleStartSprint(idx)}
+                          className="px-3.5 py-2 bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/30 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-700/50 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
+                        >
+                          {plan.action_type === 'flashcards' ? 'Start Flashcards' :
+                           plan.action_type === 'tutor_drill' ? 'Launch Tutor Drill' :
+                           plan.action_type === 'syllabus_read' ? 'Open Chapter' : 'Start Step'}
+                          <span className="text-xs">→</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </details>
-            )}
+              )
+            })}
           </div>
         )}
       </div>

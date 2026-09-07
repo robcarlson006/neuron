@@ -1,8 +1,12 @@
 import React, { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
+import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 
 export default function FocusBlockTimerBanner(): React.JSX.Element | null {
+  const navigate = useNavigate()
   const {
+    user,
     focusBlock,
     tickFocusBlock,
     pauseFocusBlock,
@@ -41,8 +45,35 @@ export default function FocusBlockTimerBanner(): React.JSX.Element | null {
 
   const isLastStep = focusBlock.activeIndex === focusBlock.items.length - 1
 
+  async function handleNextOrFinish(): Promise<void> {
+    if (!focusBlock) return
+    const isTutorPage = window.location.pathname.startsWith('/tutor/') && !window.location.pathname.includes('/general')
+    if (currentItem.action_type === 'tutor_drill' && isTutorPage) {
+      // Prompt tutor session to show the End Session modal with flashcards option
+      window.dispatchEvent(new CustomEvent('focus-block:prompt-end-session', { detail: { isLastStep } }))
+      return
+    }
+
+    if (isLastStep) {
+      endFocusBlock(true)
+      navigate('/tutor')
+    } else {
+      const nextIndex = focusBlock.activeIndex + 1
+      const nextItem = focusBlock.items[nextIndex]
+      nextFocusBlockStep()
+      if (nextItem) {
+        await navigateToFocusBlockItem(nextItem, navigate, user?.id)
+      }
+    }
+  }
+
+  function handleEndEarly(): void {
+    endFocusBlock(true)
+    navigate('/tutor')
+  }
+
   return (
-    <aside aria-label="Focus block timer" className="sticky top-0 z-40 w-full bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md text-white border-b border-violet-500/30 shadow-lg px-4 py-2.5 transition-all">
+    <aside aria-label="Focus block timer" className="sticky top-0 z-40 w-full flex-shrink-0 bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md text-white border-b border-violet-500/30 shadow-lg pl-20 pr-4 py-2.5 transition-all">
       <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
         {/* Step info & title */}
         <div className="flex items-center gap-3 min-w-0">
@@ -103,7 +134,7 @@ export default function FocusBlockTimerBanner(): React.JSX.Element | null {
 
           {/* Next Step */}
           <button
-            onClick={nextFocusBlockStep}
+            onClick={handleNextOrFinish}
             className="px-2.5 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors flex items-center gap-1"
             title={isLastStep ? 'Finish Focus Block' : 'Next Step'}
           >
@@ -113,7 +144,7 @@ export default function FocusBlockTimerBanner(): React.JSX.Element | null {
 
           {/* End Block early */}
           <button
-            onClick={endFocusBlock}
+            onClick={handleEndEarly}
             className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
             title="End Focus Block"
           >
