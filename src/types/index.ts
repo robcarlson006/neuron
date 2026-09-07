@@ -15,6 +15,7 @@ export interface Subject {
   total_chapters?: number
   time_commitment_minutes?: number
   syllabus_generated?: number
+  color?: string
   created_at: string
 }
 

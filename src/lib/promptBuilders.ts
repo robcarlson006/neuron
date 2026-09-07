@@ -25,8 +25,8 @@ CONTENT:
 ${extractedText}
 
 Generate the following in valid JSON:
-1. "flashcards": An array of at least ${minCards} flashcards. Each has "front" (term/concept) and "back" (definition/explanation). Make them precise, clear, and educational. Do not generate trivial or redundant cards.
-2. "active_recall": An array of at least ${minQuestions} active recall questions. Each has "question" (open-ended, requires understanding) and "model_answer" (a complete, correct answer a student should give).
+1. "flashcards": An array of exactly ${minCards} flashcards. Each has "front" (term/concept) and "back" (definition/explanation). Make them precise, clear, and educational. Do not generate trivial or redundant cards.
+2. "active_recall": An array of exactly ${minQuestions} active recall questions. Each has "question" (open-ended, requires understanding) and "model_answer" (a complete, correct answer a student should give).
 
 Prioritize depth over quantity — every card must earn its place. Cover all major topics in the material.
 
@@ -222,7 +222,7 @@ Return valid JSON with this exact structure:
    - Include the most frequent student misconception in "common_mistake".
 
 ## GENERATION TARGETS
-- Generate at least ${minCards} flashcards and ${minQuestions} active recall questions.
+- Generate exactly ${minCards} flashcards and ${minQuestions} active recall questions.
 - Distribute evenly across all major concepts in the source material.${dedupSection}
 
 Return ONLY valid JSON. No markdown fences. No preamble.`
@@ -295,7 +295,7 @@ Return valid JSON with this exact structure:
 4. **Rich Semantic Hooks**:
    - Provide high-value "concrete_example", "common_mistake", and "mnemonic" fields for every card to facilitate multi-modal encoding.
 
-5. **Generate at least ${minCards} flashcards** — Cover all distinct concepts, definitions, and mechanisms evenly.
+5. **Generate exactly ${minCards} flashcards** (do not generate more or fewer) — Cover all distinct concepts, definitions, and mechanisms evenly.
 
 6. **NO active recall questions.** Flashcards only.${dedupSection}
 
@@ -371,7 +371,7 @@ Return valid JSON with this exact structure:
 5. **Self-Containment**:
    - Every question must be fully understandable without external pointers or vague references.
 
-6. **Generate at least ${minQuestions} active recall questions** — Covering all major topics in depth.
+6. **Generate exactly ${minQuestions} active recall questions** (do not generate more or fewer) — Covering all major topics in depth.
 
 7. **NO flashcards.** Active recall questions only.${dedupSection}
 
