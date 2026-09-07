@@ -701,6 +701,14 @@ export interface DailyPlan {
   action_type?: 'flashcards' | 'tutor_drill' | 'syllabus_read' | 'custom'
   learning_objective?: string
   target_topic?: string
+  is_dismissed?: number
+}
+
+export interface CompletedTaskStats {
+  completedTasksCount: number
+  completedTopicsCount: number
+  completedSessionsCount: number
+  totalCompleted: number
 }
 
 export type FocusBlockItem = DailyPlan & { subject_name: string }

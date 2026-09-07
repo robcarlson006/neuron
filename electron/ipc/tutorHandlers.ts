@@ -24,6 +24,11 @@ let db: Database.Database
 
 export function setTutorDatabase(database: Database.Database): void {
   db = database
+  try {
+    db.prepare('ALTER TABLE daily_plans ADD COLUMN is_dismissed INTEGER DEFAULT 0').run()
+  } catch {
+    // already exists
+  }
 }
 
 /**
@@ -1318,7 +1323,7 @@ PEDAGOGICAL METHOD — Session Summary Phase:
       SELECT p.*, s.name as subject_name
       FROM daily_plans p
       JOIN subjects s ON s.id = p.subject_id
-      WHERE p.user_id = ? AND p.plan_date = ?
+      WHERE p.user_id = ? AND p.plan_date = ? AND (p.is_dismissed = 0 OR p.is_dismissed IS NULL)
       ORDER BY p.priority DESC, p.estimated_minutes DESC
     `).all(userId, planDate)
   })
@@ -1330,7 +1335,7 @@ PEDAGOGICAL METHOD — Session Summary Phase:
       SELECT p.*, s.name as subject_name
       FROM daily_plans p
       JOIN subjects s ON s.id = p.subject_id
-      WHERE p.user_id = ? AND p.plan_date = ?
+      WHERE p.user_id = ? AND p.plan_date = ? AND (p.is_dismissed = 0 OR p.is_dismissed IS NULL)
       ORDER BY p.priority DESC, p.estimated_minutes DESC
     `).all(userId, planDate)
   })
@@ -1757,7 +1762,7 @@ Rules:
       SELECT p.*, s.name as subject_name
       FROM daily_plans p
       JOIN subjects s ON s.id = p.subject_id
-      WHERE p.user_id = ? AND p.plan_date = ?
+      WHERE p.user_id = ? AND p.plan_date = ? AND (p.is_dismissed = 0 OR p.is_dismissed IS NULL)
       ORDER BY p.is_completed ASC, p.priority ASC, p.id ASC
     `).all(userId, date)
   })
@@ -1768,8 +1773,47 @@ Rules:
   })
 
   ipcMain.handle('plan:dismissAction', (_event, planId: number) => {
-    db.prepare('DELETE FROM daily_plans WHERE id = ?').run(planId)
+    try {
+      db.prepare('UPDATE daily_plans SET is_dismissed = 1 WHERE id = ?').run(planId)
+    } catch {
+      db.prepare('DELETE FROM daily_plans WHERE id = ?').run(planId)
+    }
     return { success: true }
+  })
+
+  ipcMain.handle('plan:getCompletedTaskStats', (_event, userId: number) => {
+    try {
+      const plansRow = db.prepare(`
+        SELECT COUNT(*) as count FROM daily_plans WHERE user_id = ? AND is_completed = 1
+      `).get(userId) as { count: number } | undefined
+
+      const topicsRow = db.prepare(`
+        SELECT COUNT(*) as count FROM module_topic_study_log WHERE user_id = ?
+      `).get(userId) as { count: number } | undefined
+
+      const sessionsRow = db.prepare(`
+        SELECT COUNT(*) as count FROM tutor_sessions WHERE user_id = ? AND (ended_at IS NOT NULL OR phase = 'complete')
+      `).get(userId) as { count: number } | undefined
+
+      const completedTasksCount = plansRow?.count || 0
+      const completedTopicsCount = topicsRow?.count || 0
+      const completedSessionsCount = sessionsRow?.count || 0
+
+      return {
+        completedTasksCount,
+        completedTopicsCount,
+        completedSessionsCount,
+        totalCompleted: completedTasksCount + completedTopicsCount
+      }
+    } catch (err) {
+      console.error('Error fetching completed task stats:', err)
+      return {
+        completedTasksCount: 0,
+        completedTopicsCount: 0,
+        completedSessionsCount: 0,
+        totalCompleted: 0
+      }
+    }
   })
 
   ipcMain.handle('plan:addPlanItem', (_event, item: {

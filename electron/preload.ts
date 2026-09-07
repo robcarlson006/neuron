@@ -366,6 +366,10 @@ const electronAPI = {
     ipcRenderer.invoke('plan:completeAction', planId),
   planDismissAction: (planId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('plan:dismissAction', planId),
+  planGetCompletedTaskStats: (userId: number): Promise<{ completedTasksCount: number; completedTopicsCount: number; completedSessionsCount: number; totalCompleted: number }> =>
+    ipcRenderer.invoke('plan:getCompletedTaskStats', userId),
+  getCompletedTaskStats: (userId: number): Promise<{ completedTasksCount: number; completedTopicsCount: number; completedSessionsCount: number; totalCompleted: number }> =>
+    ipcRenderer.invoke('plan:getCompletedTaskStats', userId),
   planAddPlanItem: (item: { user_id: number; plan_date: string; subject_id: number; suggested_action: string; estimated_minutes?: number; priority?: number }): Promise<DailyPlan & { subject_name: string }> =>
     ipcRenderer.invoke('plan:addPlanItem', item),
 

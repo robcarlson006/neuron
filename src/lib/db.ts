@@ -390,6 +390,7 @@ export const DB_SCHEMA = `
     action_type TEXT DEFAULT 'custom',
     learning_objective TEXT,
     target_topic TEXT,
+    is_dismissed INTEGER DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
   );
@@ -530,6 +531,7 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE daily_plans ADD COLUMN action_type TEXT DEFAULT 'custom'",
   "ALTER TABLE daily_plans ADD COLUMN learning_objective TEXT",
   "ALTER TABLE daily_plans ADD COLUMN target_topic TEXT",
+  "ALTER TABLE daily_plans ADD COLUMN is_dismissed INTEGER DEFAULT 0",
   // V3.4: Calendar Sources & Events
   "CREATE TABLE IF NOT EXISTS calendar_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('ical', 'manual', 'google_oauth')), url TEXT, color TEXT DEFAULT '#8b5cf6', last_synced_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
   "CREATE TABLE IF NOT EXISTS calendar_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, source_id INTEGER, external_id TEXT, title TEXT NOT NULL, description TEXT, location TEXT, start_time TEXT NOT NULL, end_time TEXT NOT NULL, all_day INTEGER NOT NULL DEFAULT 0, recurrence_rule TEXT, subject_id INTEGER, event_type TEXT NOT NULL DEFAULT 'lecture' CHECK(event_type IN ('lecture', 'seminar', 'lab', 'workshop', 'study', 'personal')), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (source_id) REFERENCES calendar_sources(id) ON DELETE CASCADE, FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL)",

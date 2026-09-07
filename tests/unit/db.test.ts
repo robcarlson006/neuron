@@ -51,6 +51,11 @@ describe('Database Schema', () => {
     expect(DB_SCHEMA).toContain('CREATE TABLE IF NOT EXISTS app_meta')
   })
 
+  it('contains daily_plans with is_dismissed column', () => {
+    expect(DB_SCHEMA).toContain('CREATE TABLE IF NOT EXISTS daily_plans')
+    expect(DB_SCHEMA).toContain('is_dismissed INTEGER DEFAULT 0')
+  })
+
   it('uses IF NOT EXISTS to be safe on re-runs', () => {
     const tables = DB_SCHEMA.match(/CREATE TABLE IF NOT EXISTS/g) || []
     expect(tables.length).toBeGreaterThanOrEqual(8)

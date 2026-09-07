@@ -471,12 +471,29 @@ export default function TutorHub(): React.JSX.Element {
               return (
                 <div
                   key={plan.id}
-                  className={`rounded-xl border p-4 transition-all ${
+                  className={`rounded-xl border p-4 transition-all relative group ${
                     isCompleted
                       ? 'bg-violet-50/90 dark:bg-violet-950/40 border-violet-300 dark:border-violet-700/80 shadow-xs'
                       : 'bg-slate-50/70 dark:bg-slate-750/70 hover:bg-slate-50 dark:hover:bg-slate-750 border-slate-200/80 dark:border-slate-700/80'
                   }`}
                 >
+                  {/* Top-right "x" dismiss button for completed items */}
+                  {isCompleted && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDismissPlan(plan.id)
+                      }}
+                      className="absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-violet-100/80 dark:hover:bg-violet-900/60 transition-all z-10"
+                      title="Dismiss completed item"
+                      aria-label="Dismiss completed item"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <path d="M2 2l8 8M10 2l-8 8" />
+                      </svg>
+                    </button>
+                  )}
+
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                       {/* Step number badge */}
@@ -556,9 +573,10 @@ export default function TutorHub(): React.JSX.Element {
                           )}
                           <button
                             onClick={() => handleDismissPlan(plan.id)}
-                            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors flex items-center gap-1"
+                            title="Dismiss from focus block"
                           >
-                            Dismiss
+                            <span className="text-[10px] font-bold">✕</span> Dismiss
                           </button>
                         </div>
                       </div>
@@ -567,7 +585,7 @@ export default function TutorHub(): React.JSX.Element {
                     {/* Launch / Completed Button */}
                     <div className="flex-shrink-0 self-center">
                       {isCompleted ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 mr-5">
                           <span className="px-3.5 py-2 bg-violet-600 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-xs">
                             <span>✓</span> Completed
                           </span>

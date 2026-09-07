@@ -67,6 +67,8 @@ const mockElectronAPI = {
   planGenerateFocusBlock: jest.fn().mockResolvedValue([]),
   planCompleteAction: jest.fn().mockResolvedValue({ success: true }),
   planDismissAction: jest.fn().mockResolvedValue({ success: true }),
+  planGetCompletedTaskStats: jest.fn().mockResolvedValue({ completedTasksCount: 0, completedTopicsCount: 0, completedSessionsCount: 0, totalCompleted: 0 }),
+  getCompletedTaskStats: jest.fn().mockResolvedValue({ completedTasksCount: 0, completedTopicsCount: 0, completedSessionsCount: 0, totalCompleted: 0 }),
   planAddPlanItem: jest.fn().mockResolvedValue({ id: 1, subject_name: 'Test' }),
 
   // Syllabus
