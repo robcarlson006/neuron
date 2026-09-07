@@ -15,6 +15,9 @@ import {
   DB_SCHEMA,
   MIGRATIONS_SQL,
   deleteSubjectCascade,
+  deleteCardCascade,
+  deleteCardsCascade,
+  CARD_CHILD_TABLES,
   SUBJECT_CASCADE_COVERED_TABLES
 } from '../../src/lib/db'
 
@@ -164,3 +167,66 @@ describe('subject cascade covers every NO-ACTION foreign key', () => {
     db.close()
   })
 })
+
+describe('deleteCardCascade & deleteCardsCascade', () => {
+  function seedCardWithAllChildren(db: any, userId: number, subjectId: number, front = 'Question 1'): number {
+    const cardId = insert(
+      db,
+      'INSERT INTO cards (subject_id, type, front, back, is_manual) VALUES (?, ?, ?, ?, ?)',
+      subjectId,
+      'flashcard',
+      front,
+      'Answer 1',
+      1
+    )
+
+    insert(db, 'INSERT INTO card_schedule (card_id, user_id, interval, repetitions, ease_factor, due_date) VALUES (?, ?, ?, ?, ?, ?)', cardId, userId, 1, 1, 2.5, '2026-01-01')
+    insert(db, 'INSERT INTO review_log (card_id, user_id, quality, was_correct) VALUES (?, ?, ?, ?)', cardId, userId, 4, 1)
+    insert(db, 'INSERT INTO mc_review_log (card_id, user_id, was_correct) VALUES (?, ?, ?)', cardId, userId, 1)
+    insert(db, 'INSERT INTO review_undo_log (user_id, card_id, previous_schedule_json) VALUES (?, ?, ?)', userId, cardId, '{"interval":1}')
+
+    return cardId
+  }
+
+  it('deletes a single card with review_undo_log and all child tables without FK errors', () => {
+    const db = createFreshDatabase()
+    const userId = insert(db, 'INSERT INTO users (name) VALUES (?)', 'Alice')
+    const subjectId = insert(db, 'INSERT INTO subjects (user_id, name, status) VALUES (?, ?, ?)', userId, 'Biology', 'active')
+    const cardId = seedCardWithAllChildren(db, userId, subjectId)
+
+    expect(() => deleteCardCascade(db, cardId)).not.toThrow()
+
+    expect(db.prepare('SELECT COUNT(*) AS c FROM cards WHERE id = ?').get(cardId).c).toBe(0)
+
+    for (const table of CARD_CHILD_TABLES) {
+      const count = db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE card_id = ?`).get(cardId).c
+      expect(count).toBe(0)
+    }
+
+    db.close()
+  })
+
+  it('deletes multiple cards in bulk without FK errors', () => {
+    const db = createFreshDatabase()
+    const userId = insert(db, 'INSERT INTO users (name) VALUES (?)', 'Alice')
+    const subjectId = insert(db, 'INSERT INTO subjects (user_id, name, status) VALUES (?, ?, ?)', userId, 'Chemistry', 'active')
+
+    const cardIds = [
+      seedCardWithAllChildren(db, userId, subjectId, 'Card 1'),
+      seedCardWithAllChildren(db, userId, subjectId, 'Card 2'),
+      seedCardWithAllChildren(db, userId, subjectId, 'Card 3')
+    ]
+
+    expect(() => deleteCardsCascade(db, cardIds)).not.toThrow()
+
+    for (const cardId of cardIds) {
+      expect(db.prepare('SELECT COUNT(*) AS c FROM cards WHERE id = ?').get(cardId).c).toBe(0)
+      for (const table of CARD_CHILD_TABLES) {
+        expect(db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE card_id = ?`).get(cardId).c).toBe(0)
+      }
+    }
+
+    db.close()
+  })
+})
+

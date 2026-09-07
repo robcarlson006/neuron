@@ -11,6 +11,7 @@ const mockElectronAPI = {
   getCards: jest.fn().mockResolvedValue([]),
   saveCard: jest.fn().mockResolvedValue({ id: 1 }),
   deleteCard: jest.fn().mockResolvedValue({ success: true }),
+  deleteCards: jest.fn().mockResolvedValue({ success: true, count: 1 }),
   saveManyCards: jest.fn().mockResolvedValue([]),
   getSchedule: jest.fn().mockResolvedValue(null),
   updateSchedule: jest.fn().mockResolvedValue({ success: true }),

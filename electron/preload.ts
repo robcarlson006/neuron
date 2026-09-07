@@ -24,6 +24,7 @@ const electronAPI = {
   getCards: (subjectId: number): Promise<Card[]> => ipcRenderer.invoke('db:getCards', subjectId),
   saveCard: (card: Partial<Card>): Promise<Card> => ipcRenderer.invoke('db:saveCard', card),
   deleteCard: (cardId: number): Promise<{ success: boolean }> => ipcRenderer.invoke('db:deleteCard', cardId),
+  deleteCards: (cardIds: number[]): Promise<{ success: boolean; count?: number }> => ipcRenderer.invoke('db:deleteCards', cardIds),
   saveManyCards: (cards: Partial<Card>[], userId: number): Promise<Card[]> => ipcRenderer.invoke('db:saveManyCards', cards, userId),
 
   // Schedule

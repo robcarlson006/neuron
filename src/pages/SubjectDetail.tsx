@@ -418,10 +418,20 @@ export default function SubjectDetail(): React.JSX.Element {
                 setSelectedCardForDetail(card)
               }}
               onDeleteCards={async (cardIds) => {
-                for (const id of cardIds) {
-                  await window.electronAPI.deleteCard(id)
+                try {
+                  if (window.electronAPI?.deleteCards) {
+                    await window.electronAPI.deleteCards(cardIds)
+                  } else {
+                    for (const id of cardIds) {
+                      await window.electronAPI.deleteCard(id)
+                    }
+                  }
+                  setCards((prev) => prev.filter((c) => !cardIds.includes(c.id)))
+                  loadData()
+                } catch (err: any) {
+                  console.error('Failed to delete cards:', err)
+                  loadData()
                 }
-                loadData()
               }}
               onMoveCards={async (cardIds, folderId) => {
                 for (const id of cardIds) {

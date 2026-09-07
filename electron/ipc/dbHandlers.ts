@@ -13,7 +13,7 @@ import {
   type FSRSMemory
 } from '../../src/lib/fsrs'
 import { bktUpdate } from '../../src/lib/bkt'
-import { deleteSubjectCascade } from '../../src/lib/db'
+import { deleteSubjectCascade, deleteCardCascade, deleteCardsCascade } from '../../src/lib/db'
 import { getOrCreateMaterialFolder, syncCardsToMaterialFolders } from './materialFolderHelper'
 import type {
   User,
@@ -145,11 +145,20 @@ export function registerDbHandlers(): void {
   })
 
   ipcMain.handle('db:deleteCard', (_event, cardId: number) => {
-    db.prepare('DELETE FROM card_schedule WHERE card_id = ?').run(cardId)
-    db.prepare('DELETE FROM review_log WHERE card_id = ?').run(cardId)
-    db.prepare('DELETE FROM mc_review_log WHERE card_id = ?').run(cardId)
-    db.prepare('DELETE FROM cards WHERE id = ?').run(cardId)
+    const runDelete = db.transaction((id: number) => {
+      deleteCardCascade(db, id)
+    })
+    runDelete(cardId)
     return { success: true }
+  })
+
+  ipcMain.handle('db:deleteCards', (_event, cardIds: number[]) => {
+    if (!cardIds || cardIds.length === 0) return { success: true, count: 0 }
+    const runDeleteMany = db.transaction((ids: number[]) => {
+      return deleteCardsCascade(db, ids)
+    })
+    const count = runDeleteMany(cardIds)
+    return { success: true, count }
   })
 
   ipcMain.handle('db:saveManyCards', (_event, cards: Partial<Card>[], userId: number) => {

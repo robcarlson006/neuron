@@ -633,3 +633,28 @@ export function deleteSubjectCascade(db: CascadeDB, subjectId: number): void {
   // 6. The subject itself.
   db.prepare('DELETE FROM subjects WHERE id = ?').run(subjectId)
 }
+
+/** Delete a single card and every row that references it directly. */
+export function deleteCardCascade(db: CascadeDB, cardId: number): void {
+  for (const table of CARD_CHILD_TABLES) {
+    db.prepare(`DELETE FROM ${table} WHERE card_id = ?`).run(cardId)
+  }
+  db.prepare('DELETE FROM cards WHERE id = ?').run(cardId)
+}
+
+/** Delete multiple cards and every row that references them directly in chunks. */
+export function deleteCardsCascade(db: CascadeDB, cardIds: number[]): number {
+  if (!cardIds || cardIds.length === 0) return 0
+  const chunkSize = 500
+  let totalDeleted = 0
+  for (let i = 0; i < cardIds.length; i += chunkSize) {
+    const chunk = cardIds.slice(i, i + chunkSize)
+    const placeholders = chunk.map(() => '?').join(',')
+    for (const table of CARD_CHILD_TABLES) {
+      db.prepare(`DELETE FROM ${table} WHERE card_id IN (${placeholders})`).run(...chunk)
+    }
+    const res = db.prepare(`DELETE FROM cards WHERE id IN (${placeholders})`).run(...chunk) as { changes?: number }
+    totalDeleted += res?.changes ?? chunk.length
+  }
+  return totalDeleted
+}

@@ -133,10 +133,10 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
     [filtered, page]
   )
 
-  // Selection
+  // Selection (select all covers all currently filtered cards)
   const targetIds = useMemo(
-    () => (viewMode === 'list' ? paged.map((c) => c.id) : filtered.map((c) => c.id)),
-    [viewMode, paged, filtered]
+    () => filtered.map((c) => c.id),
+    [filtered]
   )
   const isAllSelected = targetIds.length > 0 && targetIds.every((id) => selected.has(id))
 
@@ -167,11 +167,24 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
 
   const handleDeleteSelected = useCallback(() => {
     if (selected.size === 0) return
-    if (window.confirm(`Delete ${selected.size} card(s)?`)) {
+    if (window.confirm(`Delete ${selected.size} card${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) {
       onDeleteCards?.(Array.from(selected))
       setSelected(new Set())
     }
   }, [selected, onDeleteCards])
+
+  // Clean up selected IDs when cards prop changes
+  React.useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev
+      const currentIds = new Set(cards.map((c) => c.id))
+      const next = new Set<number>()
+      for (const id of prev) {
+        if (currentIds.has(id)) next.add(id)
+      }
+      return next.size === prev.size ? prev : next
+    })
+  }, [cards])
 
   const handleMoveSelected = useCallback(
     (folderId: number | null) => {
@@ -452,16 +465,25 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
 
       {/* Bulk Actions */}
       {selected.size > 0 && (
-        <div className="flex items-center justify-between p-3 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded-xl shadow-xs">
-          <span className="text-sm font-semibold text-violet-800 dark:text-violet-300">
-            {selected.size} card{selected.size !== 1 ? 's' : ''} selected
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded-xl shadow-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-violet-800 dark:text-violet-300">
+              {selected.size} card{selected.size !== 1 ? 's' : ''} selected
+            </span>
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-xs text-violet-600 dark:text-violet-400 hover:underline font-medium cursor-pointer"
+            >
+              Deselect all
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handleDeleteSelected}
-              className="px-3 py-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors shadow-2xs"
+              className="px-3 py-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
             >
-              Delete Selected
+              <span>🗑️</span>
+              <span>Delete Selected ({selected.size})</span>
             </button>
             <select
               onChange={(e) => {
@@ -495,9 +517,11 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
             type="checkbox"
             checked={isAllSelected}
             onChange={handleSelectAll}
-            className="rounded border-gray-300 dark:border-gray-600 text-violet-600 focus:ring-violet-500"
+            className="rounded border-gray-300 dark:border-gray-600 text-violet-600 focus:ring-violet-500 cursor-pointer"
           />
-          Select all {viewMode === 'list' ? `on this page (${paged.length})` : `cards (${filtered.length})`}
+          {isAllSelected
+            ? `Deselect all cards (${filtered.length})`
+            : `Select all cards (${filtered.length})`}
         </label>
         <span>
           Showing {filtered.length} of {cards.length} card{cards.length !== 1 ? 's' : ''}
