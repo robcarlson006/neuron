@@ -218,7 +218,7 @@ export default function SubjectDetail(): React.JSX.Element {
   }
 
   return (
-    <div className="p-8 max-w-5xl page-enter">
+    <div className="p-8 w-full page-enter">
       {/* Back navigation */}
       <div className="mb-5">
         <button

@@ -141,7 +141,7 @@ export default function TutorHub(): React.JSX.Element {
   // ── Loading State ──
   if (state === 'loading') {
     return (
-      <div className="p-8 max-w-5xl page-enter">
+      <div className="p-8 w-full page-enter">
         <div className="flex items-center justify-center min-h-[60vh]">
           <div className="flex flex-col items-center gap-3">
             <span className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
@@ -155,7 +155,7 @@ export default function TutorHub(): React.JSX.Element {
   // ── Error State ──
   if (state === 'error') {
     return (
-      <div className="p-8 max-w-5xl page-enter">
+      <div className="p-8 w-full page-enter">
         <div className="flex flex-col items-center justify-center min-h-[60vh]">
           <div className="text-4xl mb-4">⚠️</div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">Something went wrong</h2>
@@ -169,7 +169,7 @@ export default function TutorHub(): React.JSX.Element {
   // ── Empty State (no subjects) ──
   if (activeSubjects.length === 0) {
     return (
-      <div className="p-8 max-w-5xl page-enter">
+      <div className="p-8 w-full page-enter">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">AI Tutor</h1>
@@ -198,7 +198,7 @@ export default function TutorHub(): React.JSX.Element {
   const incompletePlans = dailyPlans.filter(p => !p.is_completed)
 
   return (
-    <div className="p-8 max-w-5xl page-enter">
+    <div className="p-8 w-full page-enter">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

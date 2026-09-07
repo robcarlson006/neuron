@@ -165,7 +165,7 @@ export default function ClassOverview(): React.JSX.Element {
   const completedModules = modules.filter(m => m.status === 'completed').length
 
   return (
-    <div className="p-8 max-w-4xl mx-auto page-enter">
+    <div className="p-8 w-full page-enter">
       {/* Class Header */}
       <div className="mb-8">
         <div className="flex items-start justify-between gap-4">

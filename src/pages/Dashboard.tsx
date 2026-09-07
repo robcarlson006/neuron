@@ -142,7 +142,7 @@ export default function Dashboard({
   const firstName = user?.name?.split(' ')[0] ?? 'there'
 
   return (
-    <div className="p-8 max-w-6xl page-enter">
+    <div className="p-8 w-full page-enter">
       {/* Header */}
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>

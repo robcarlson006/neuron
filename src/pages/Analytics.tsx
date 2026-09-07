@@ -326,7 +326,7 @@ export default function Analytics(): React.JSX.Element {
   const thisWeekReviews = reviewData.slice(-7).reduce((a, b) => a + b.reviews, 0)
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 w-full max-w-6xl page-enter mx-auto min-w-0 overflow-x-hidden">
+    <div className="p-4 sm:p-6 lg:p-8 w-full page-enter min-w-0 overflow-x-hidden">
       {/* Header & Tab Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 pb-5 border-b border-slate-100 dark:border-slate-800 min-w-0">
         <div className="min-w-0">

@@ -74,7 +74,7 @@ export default function FocusBlockTimerBanner(): React.JSX.Element | null {
 
   return (
     <aside aria-label="Focus block timer" className="sticky top-0 z-40 w-full flex-shrink-0 bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md text-white border-b border-violet-500/30 shadow-lg pl-20 pr-4 py-2.5 transition-all">
-      <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+      <div className="w-full flex items-center justify-between gap-4">
         {/* Step info & title */}
         <div className="flex items-center gap-3 min-w-0">
           <span className="flex-shrink-0 text-[11px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-md bg-violet-600/40 text-violet-300 border border-violet-500/40">
