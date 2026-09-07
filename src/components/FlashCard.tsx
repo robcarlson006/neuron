@@ -37,12 +37,15 @@ export default function FlashCard({
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const tag = (e.target as HTMLElement).tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA') {
-      // Allow typing; only intercept Ctrl+Enter to reveal
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && phase === 'front') {
+    if (tag === 'TEXTAREA') {
+      // Enter (without Shift) reveals the card; Shift+Enter inserts a newline normally
+      if (e.key === 'Enter' && !e.shiftKey && phase === 'front') {
         e.preventDefault()
         reveal()
       }
+      return
+    }
+    if (tag === 'INPUT') {
       return
     }
 
@@ -130,8 +133,8 @@ export default function FlashCard({
               onChange={e => setAnswer(e.target.value)}
             />
           </div>
-          <p className="text-xs text-slate-300 dark:text-slate-600 mt-1.5 text-center">
-            <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <kbd>Space</kbd> to reveal
+          <p className="text-xs text-slate-400 dark:text-slate-500 mt-1.5 text-center">
+            <kbd>Enter</kbd> to reveal · <kbd>Shift</kbd>+<kbd>Enter</kbd> for new line
           </p>
         </div>
       )}

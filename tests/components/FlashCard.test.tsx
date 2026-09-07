@@ -104,4 +104,26 @@ describe('FlashCard Component', () => {
     )
     expect(screen.getByText('3 / 10')).toBeInTheDocument()
   })
+
+  it('reveals the card when Enter is pressed in the answer textarea', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    const textarea = screen.getByPlaceholderText(/write your answer here/i)
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
+    expect(screen.getByText(/How did you do\?/i)).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/write your answer here/i)).not.toBeInTheDocument()
+  })
+
+  it('does not reveal the card when Shift+Enter is pressed in the answer textarea', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    const textarea = screen.getByPlaceholderText(/write your answer here/i)
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
+    expect(screen.queryByText(/How did you do\?/i)).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/write your answer here/i)).toBeInTheDocument()
+  })
+
+  it('reveals the card when Enter is pressed outside inputs', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    fireEvent.keyDown(window, { key: 'Enter' })
+    expect(screen.getByText(/How did you do\?/i)).toBeInTheDocument()
+  })
 })
