@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Card } from '../types'
 import LatexText from './LatexText'
 
@@ -22,6 +22,7 @@ export default function FlashCard({
   const [phase, setPhase] = useState<Phase>('front')
   const [answer, setAnswer] = useState('')
   const [flipped, setFlipped] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Reset when card changes
   useEffect(() => {
@@ -29,6 +30,13 @@ export default function FlashCard({
     setAnswer('')
     setFlipped(false)
   }, [card.id])
+
+  // Automatically focus the textarea so the user can type immediately
+  useEffect(() => {
+    if (phase === 'front') {
+      textareaRef.current?.focus()
+    }
+  }, [card.id, phase])
 
   function reveal(): void {
     setFlipped(true)
@@ -126,6 +134,8 @@ export default function FlashCard({
         <div className="w-full">
           <div className="relative">
             <textarea
+              ref={textareaRef}
+              autoFocus
               className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-colors text-sm resize-none"
               rows={2}
               placeholder="Optional: write your answer here before revealing... (or just think it / say it aloud)"

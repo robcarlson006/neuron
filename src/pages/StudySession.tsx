@@ -689,6 +689,7 @@ export default function StudySession(): React.JSX.Element {
           <div ref={cardContainerRef} className="w-full max-w-2xl">
             {currentCard.type === 'cloze' ? (
               <ClozeCard
+                key={currentCard.id}
                 card={currentCard}
                 onResult={(quality) => processReview(quality)}
                 onSkip={phase === 'studying' ? handleSkip : undefined}
@@ -697,6 +698,7 @@ export default function StudySession(): React.JSX.Element {
               />
             ) : currentCard.type === 'active_recall' ? (
               <ActiveRecallCard
+                key={currentCard.id}
                 card={currentCard}
                 onResult={processReview}
                 onSkip={phase === 'studying' ? handleSkip : undefined}
@@ -705,6 +707,7 @@ export default function StudySession(): React.JSX.Element {
               />
             ) : (
               <FlashCard
+                key={currentCard.id}
                 card={currentCard}
                 onResult={processReview}
                 onSkip={phase === 'studying' ? handleSkip : undefined}

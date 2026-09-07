@@ -126,4 +126,21 @@ describe('FlashCard Component', () => {
     fireEvent.keyDown(window, { key: 'Enter' })
     expect(screen.getByText(/How did you do\?/i)).toBeInTheDocument()
   })
+
+  it('automatically focuses the answer textarea on render and card changes', () => {
+    const { rerender } = render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    const textarea = screen.getByPlaceholderText(/write your answer here/i)
+    expect(document.activeElement).toBe(textarea)
+
+    // Simulate advancing to the next card
+    const nextCard: Card = {
+      ...mockCard,
+      id: 2,
+      front: 'What is the capital of Italy?',
+      back: 'Rome'
+    }
+    rerender(<FlashCard card={nextCard} onResult={mockOnResult} />)
+    const nextTextarea = screen.getByPlaceholderText(/write your answer here/i)
+    expect(document.activeElement).toBe(nextTextarea)
+  })
 })
