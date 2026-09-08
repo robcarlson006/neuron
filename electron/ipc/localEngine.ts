@@ -1,11 +1,12 @@
 import { ipcMain, app, BrowserWindow } from 'electron'
-import { createWriteStream, existsSync, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, unlinkSync, renameSync, statSync, chmodSync, readdirSync } from 'fs'
 import { join } from 'path'
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, exec, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
 import type { LocalModelInfo, DownloadProgress, LocalEngineStatus } from '../../src/types'
 import { getHardwareProfile } from './localHardware'
+import { saveAIConfig } from './aiConfigStore'
 
 export const MODEL_CATALOG: Omit<LocalModelInfo, 'status' | 'isRecommended' | 'localPath'>[] = [
   {
@@ -187,6 +188,9 @@ export function downloadLocalModel(modelId: string): Promise<{ success: boolean;
       cancelled: false
     }
 
+    // Ensure engine binary is downloaded in background while model is downloading
+    ensureLocalEngineBinary().catch(() => {})
+
     const win = getWindow()
 
     function emitProgress(bytesDownloaded: number, totalBytes: number, percent: number, status: DownloadProgress['status'], error?: string): void {
@@ -302,6 +306,151 @@ export function downloadLocalModel(modelId: string): Promise<{ success: boolean;
   })
 }
 
+// ── Helper: Download File with Redirects ────────────────────────────────────
+
+function downloadFileWithRedirects(u: string, destPath: string, redirectCount = 0): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 10) {
+      reject(new Error('Too many redirects'))
+      return
+    }
+
+    const isHttps = u.startsWith('https:')
+    const lib = isHttps ? https : http
+
+    const req = lib.get(u, { headers: { 'User-Agent': 'Neuron-App' } }, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
+        if (res.headers.location) {
+          downloadFileWithRedirects(res.headers.location, destPath, redirectCount + 1)
+            .then(resolve)
+            .catch(reject)
+          return
+        }
+      }
+
+      if (res.statusCode !== 200) {
+        reject(new Error(`Download failed with HTTP ${res.statusCode}`))
+        return
+      }
+
+      const fileStream = createWriteStream(destPath)
+      res.pipe(fileStream)
+
+      fileStream.on('finish', () => {
+        fileStream.close(() => resolve())
+      })
+
+      fileStream.on('error', (err) => {
+        try { unlinkSync(destPath) } catch {}
+        reject(err)
+      })
+
+      res.on('error', (err) => {
+        fileStream.destroy()
+        reject(err)
+      })
+    })
+
+    req.on('error', reject)
+  })
+}
+
+// ── Binary Management ──────────────────────────────────────────────────────
+
+export function getEngineBinaryPath(): string | null {
+  const binDir = getBinDir()
+  const exeName = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server'
+
+  // 1. Direct path in binDir
+  const directPath = join(binDir, exeName)
+  if (existsSync(directPath)) return directPath
+
+  // 2. Extracted subfolder inside binDir (e.g. binDir/llama-b10864/llama-server)
+  try {
+    const entries = readdirSync(binDir)
+    for (const entry of entries) {
+      const subPath = join(binDir, entry, exeName)
+      if (existsSync(subPath)) return subPath
+    }
+  } catch {}
+
+  // 3. Fallback standard system locations (e.g. Homebrew on macOS)
+  if (process.platform === 'darwin') {
+    if (existsSync('/opt/homebrew/bin/llama-server')) return '/opt/homebrew/bin/llama-server'
+    if (existsSync('/usr/local/bin/llama-server')) return '/usr/local/bin/llama-server'
+  }
+
+  return null
+}
+
+export async function ensureLocalEngineBinary(
+  onStatus?: (msg: string) => void
+): Promise<{ success: boolean; binaryPath?: string; error?: string }> {
+  const existing = getEngineBinaryPath()
+  if (existing) {
+    return { success: true, binaryPath: existing }
+  }
+
+  onStatus?.('Downloading local inference engine (~11 MB)...')
+  const binDir = getBinDir()
+
+  let archiveUrl = ''
+  let isTarGz = true
+
+  if (process.platform === 'darwin') {
+    if (process.arch === 'arm64') {
+      archiveUrl = 'https://github.com/ggml-org/llama.cpp/releases/download/b10864/llama-b10864-bin-macos-arm64.tar.gz'
+    } else {
+      archiveUrl = 'https://github.com/ggml-org/llama.cpp/releases/download/b10864/llama-b10864-bin-macos-x64.tar.gz'
+    }
+  } else if (process.platform === 'win32') {
+    archiveUrl = 'https://github.com/ggml-org/llama.cpp/releases/download/b10864/llama-b10864-bin-win-cpu-x64.zip'
+    isTarGz = false
+  } else {
+    archiveUrl = 'https://github.com/ggml-org/llama.cpp/releases/download/b10864/llama-b10864-bin-ubuntu-x64.tar.gz'
+  }
+
+  const archivePath = join(binDir, isTarGz ? 'engine.tar.gz' : 'engine.zip')
+
+  try {
+    await downloadFileWithRedirects(archiveUrl, archivePath)
+    onStatus?.('Extracting engine binary...')
+
+    await new Promise<void>((resolve, reject) => {
+      const extractCmd = isTarGz
+        ? `tar -xzf "${archivePath}" -C "${binDir}"`
+        : `tar -xf "${archivePath}" -C "${binDir}"`
+
+      exec(extractCmd, (err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+
+    try { unlinkSync(archivePath) } catch {}
+
+    const binPath = getEngineBinaryPath()
+    if (!binPath) {
+      return { success: false, error: 'Failed to locate extracted llama-server binary.' }
+    }
+
+    if (process.platform !== 'win32') {
+      try {
+        chmodSync(binPath, 0o755)
+      } catch {}
+      if (process.platform === 'darwin') {
+        try {
+          exec(`xattr -rd com.apple.quarantine "${binDir}" 2>/dev/null`, () => {})
+        } catch {}
+      }
+    }
+
+    return { success: true, binaryPath: binPath }
+  } catch (err) {
+    return { success: false, error: `Failed to set up local engine: ${(err as Error).message}` }
+  }
+}
+
 // ── Process Supervisor ─────────────────────────────────────────────────────
 
 let engineProcess: ChildProcess | null = null
@@ -324,36 +473,38 @@ export function stopEngine(): { success: boolean } {
   return { success: true }
 }
 
-export function startEngine(modelId: string, port = 8080): Promise<{ success: boolean; error?: string; port?: number }> {
+export async function startEngine(modelId: string, port = 8080): Promise<{ success: boolean; error?: string; port?: number }> {
+  if (engineStatus.isRunning && engineStatus.activeModelId === modelId) {
+    return { success: true, port: engineStatus.port }
+  }
+
+  if (engineStatus.isRunning) {
+    stopEngine()
+  }
+
+  const model = MODEL_CATALOG.find((m) => m.id === modelId)
+  if (!model) {
+    return { success: false, error: 'Model not found' }
+  }
+
+  const modelsDir = getModelsDir()
+  const modelPath = join(modelsDir, model.filename)
+
+  if (!existsSync(modelPath)) {
+    return { success: false, error: `Model file ${model.filename} is not downloaded yet.` }
+  }
+
+  // Ensure llama-server binary is present (downloads in seconds if missing)
+  const binaryRes = await ensureLocalEngineBinary()
+  if (!binaryRes.success || !binaryRes.binaryPath) {
+    return {
+      success: false,
+      error: binaryRes.error || 'Failed to initialize local inference engine.'
+    }
+  }
+  const executable = binaryRes.binaryPath
+
   return new Promise((resolve) => {
-    if (engineStatus.isRunning && engineStatus.activeModelId === modelId) {
-      resolve({ success: true, port: engineStatus.port })
-      return
-    }
-
-    if (engineStatus.isRunning) {
-      stopEngine()
-    }
-
-    const model = MODEL_CATALOG.find((m) => m.id === modelId)
-    if (!model) {
-      resolve({ success: false, error: 'Model not found' })
-      return
-    }
-
-    const modelsDir = getModelsDir()
-    const modelPath = join(modelsDir, model.filename)
-
-    if (!existsSync(modelPath)) {
-      resolve({ success: false, error: `Model file ${model.filename} is not downloaded yet.` })
-      return
-    }
-
-    // Check if llama-server is installed in local-ai/bin or PATH
-    const binDir = getBinDir()
-    const localBin = join(binDir, process.platform === 'win32' ? 'llama-server.exe' : 'llama-server')
-    const executable = existsSync(localBin) ? localBin : 'llama-server'
-
     try {
       const proc = spawn(
         executable,
@@ -363,7 +514,10 @@ export function startEngine(modelId: string, port = 8080): Promise<{ success: bo
           '--host', '127.0.0.1',
           '-c', '2048'
         ],
-        { stdio: ['ignore', 'pipe', 'pipe'] }
+        {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          cwd: join(executable, '..')
+        }
       )
 
       engineProcess = proc
@@ -371,10 +525,15 @@ export function startEngine(modelId: string, port = 8080): Promise<{ success: bo
 
       proc.stdout?.on('data', (data: Buffer) => {
         const str = data.toString()
-        if (str.includes('HTTP server listening') || str.includes('listening at')) {
+        if (str.includes('HTTP server listening') || str.includes('listening at') || str.includes('all slots are idle')) {
           if (!resolved) {
             resolved = true
             engineStatus = { isRunning: true, port, activeModelId: modelId }
+            saveAIConfig({
+              provider: 'openai-compatible',
+              baseUrl: `http://127.0.0.1:${port}`,
+              model: model.name
+            })
             resolve({ success: true, port })
           }
         }
@@ -382,10 +541,15 @@ export function startEngine(modelId: string, port = 8080): Promise<{ success: bo
 
       proc.stderr?.on('data', (data: Buffer) => {
         const str = data.toString()
-        if (str.includes('HTTP server listening') || str.includes('listening at')) {
+        if (str.includes('HTTP server listening') || str.includes('listening at') || str.includes('all slots are idle')) {
           if (!resolved) {
             resolved = true
             engineStatus = { isRunning: true, port, activeModelId: modelId }
+            saveAIConfig({
+              provider: 'openai-compatible',
+              baseUrl: `http://127.0.0.1:${port}`,
+              model: model.name
+            })
             resolve({ success: true, port })
           }
         }
@@ -397,7 +561,7 @@ export function startEngine(modelId: string, port = 8080): Promise<{ success: bo
           engineStatus = { isRunning: false, error: err.message }
           resolve({
             success: false,
-            error: `Could not launch local inference engine: ${err.message}. Make sure llama-server is installed or run with Ollama.`
+            error: `Could not launch local inference engine: ${err.message}.`
           })
         }
       })
@@ -407,23 +571,27 @@ export function startEngine(modelId: string, port = 8080): Promise<{ success: bo
         engineProcess = null
         if (!resolved) {
           resolved = true
-          resolve({ success: false, error: `Engine exited unexpectedly with code ${code}` })
+          resolve({ success: false, error: `Engine exited with code ${code}` })
         }
       })
 
-      // Timeout fallback after 20 seconds
+      // Timeout fallback after 30 seconds
       setTimeout(() => {
         if (!resolved) {
           resolved = true
-          // If the process is still running, it might have started without the specific string
           if (engineProcess && !engineProcess.killed) {
             engineStatus = { isRunning: true, port, activeModelId: modelId }
+            saveAIConfig({
+              provider: 'openai-compatible',
+              baseUrl: `http://127.0.0.1:${port}`,
+              model: model.name
+            })
             resolve({ success: true, port })
           } else {
             resolve({ success: false, error: 'Engine startup timed out.' })
           }
         }
-      }, 20000)
+      }, 30000)
     } catch (err) {
       resolve({ success: false, error: (err as Error).message })
     }

@@ -109,9 +109,7 @@ export default function LocalAISection({
         const updatedStatus = await window.electronAPI.getLocalEngineStatus()
         setEngineStatus(updatedStatus)
       } else if (res.error) {
-        // Even if built-in llama-server wasn't spawned, offer to select it for local runner (Ollama / LM Studio)
-        setActionError(`${res.error} You can still use this model with Ollama or LM Studio.`)
-        onSelectModel?.('http://127.0.0.1:11434', model.name)
+        setActionError(res.error)
       }
     } catch (err) {
       setActionError((err as Error).message)
@@ -282,7 +280,16 @@ export default function LocalAISection({
                             : 'bg-violet-600 text-white hover:bg-violet-700'
                         }`}
                       >
-                        {startingModelId === model.id ? 'Starting...' : isCurrentActive ? '✓ Active Model' : 'Use Model'}
+                        {startingModelId === model.id ? (
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Starting...
+                          </span>
+                        ) : isCurrentActive ? (
+                          '✓ Active Model'
+                        ) : (
+                          'Use Model'
+                        )}
                       </button>
                       <button
                         type="button"
