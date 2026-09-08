@@ -7,7 +7,8 @@ import type {
   FocusModeSettings, PublishedDeck, StudyGroup, StudyGroupMember,
   AnkiConnectNote, PluginEndpoint, AccessibilitySettings, OnboardingData,
   ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult,
-  TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult
+  TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
+  HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus
 } from '../src/types'
 
 const electronAPI = {
@@ -475,6 +476,29 @@ const electronAPI = {
       ipcRenderer.invoke('calendar:deleteEvent', eventId),
     detectCurrentContext: (userId: number): Promise<import('../src/types').CalendarScheduleContext | null> =>
       ipcRenderer.invoke('calendar:detectCurrentContext', userId),
+  },
+
+  // ── Local AI & Hardware ──
+  getHardwareProfile: (): Promise<HardwareProfile> =>
+    ipcRenderer.invoke('local-ai:get-hardware-profile'),
+  listLocalModels: (): Promise<LocalModelInfo[]> =>
+    ipcRenderer.invoke('local-ai:list-models'),
+  downloadLocalModel: (modelId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('local-ai:download-model', modelId),
+  cancelModelDownload: (modelId: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('local-ai:cancel-download', modelId),
+  deleteLocalModel: (modelId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('local-ai:delete-model', modelId),
+  getLocalEngineStatus: (): Promise<LocalEngineStatus> =>
+    ipcRenderer.invoke('local-ai:get-engine-status'),
+  startLocalEngine: (modelId: string, port?: number): Promise<{ success: boolean; error?: string; port?: number }> =>
+    ipcRenderer.invoke('local-ai:start-engine', modelId, port),
+  stopLocalEngine: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('local-ai:stop-engine'),
+  onLocalDownloadProgress: (cb: (progress: DownloadProgress) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: DownloadProgress): void => cb(data)
+    ipcRenderer.on('local-ai:download-progress', handler)
+    return () => { ipcRenderer.removeListener('local-ai:download-progress', handler) }
   },
 }
 

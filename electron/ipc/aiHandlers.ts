@@ -5,7 +5,15 @@ import {
   parseCardGenerationResponse,
   parseEvaluationResponse
 } from '../../src/lib/promptBuilders'
-import { getApiKey, getAIConfig, saveAIConfig, saveApiKey, testAIConnection } from './aiConfigStore'
+import {
+  getApiKey,
+  getAIConfig,
+  saveAIConfig,
+  saveApiKey,
+  testAIConnection,
+  normalizeBaseUrl,
+  isLocalEndpoint
+} from './aiConfigStore'
 
 /** Default request timeout. Card generation/evaluation can be slow, so be generous. */
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -57,17 +65,23 @@ async function callAI(
       return text
     }
 
-    // OpenAI-compatible API (DeepSeek, OpenAI, etc.)
-    const baseUrl = config.baseUrl || 'https://api.deepseek.com'
+    // OpenAI-compatible API (DeepSeek, OpenAI, Ollama, etc.)
+    const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
     const model = config.model || 'deepseek-chat'
-    const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+    const url = `${baseUrl}/v1/chat/completions`
+    const isLocal = isLocalEndpoint(baseUrl)
+    const authKey = config.apiKey || (isLocal ? 'ollama' : '')
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    }
+    if (authKey) {
+      headers['Authorization'] = `Bearer ${authKey}`
+    }
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`
-      },
+      headers,
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: prompt }],
@@ -93,6 +107,14 @@ async function callAI(
   } catch (err) {
     if (controller.signal.aborted) {
       throw new Error('AI request timed out. Please check your connection and try again.')
+    }
+    if (isLocalEndpoint(config.baseUrl)) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch failed')) {
+        throw new Error(
+          `Could not connect to local AI server at ${config.baseUrl}. Make sure your local model runner is active (e.g. run "ollama run ${config.model || 'qwen2.5:3b'}" in Terminal).`
+        )
+      }
     }
     throw err
   } finally {
@@ -147,7 +169,9 @@ export function registerAIHandlers(): void {
 
     // Mask the API key for display (same masking as old gemini:getApiKey)
     let maskedKey = apiKey || ''
-    if (maskedKey.length > 8) {
+    if (isLocalEndpoint(config.baseUrl) && maskedKey === 'ollama') {
+      maskedKey = ''
+    } else if (maskedKey.length > 8) {
       maskedKey = maskedKey.substring(0, 8) + '...' + maskedKey.substring(maskedKey.length - 4)
     }
 
@@ -185,11 +209,12 @@ export function registerAIHandlers(): void {
   ipcMain.handle('ai:testConnection', async () => {
     const config = getAIConfig()
     const apiKey = getApiKey()
-    if (!apiKey) {
+    const isLocal = isLocalEndpoint(config.baseUrl)
+    if (!apiKey && !isLocal) {
       return { success: false, message: 'No API key configured. Save your API key first.' }
     }
 
-    return testAIConnection({ ...config, apiKey })
+    return testAIConnection({ ...config, apiKey: apiKey || (isLocal ? 'ollama' : '') })
   })
 }
 
@@ -208,9 +233,11 @@ export async function* streamAI(
   signal?: AbortSignal
 ): AsyncGenerator<string, void, unknown> {
   // Only supports OpenAI-compatible format for streaming
-  const baseUrl = config.baseUrl || 'https://api.deepseek.com'
+  const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
   const model = config.model || 'deepseek-chat'
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+  const url = `${baseUrl}/v1/chat/completions`
+  const isLocal = isLocalEndpoint(baseUrl)
+  const authKey = config.apiKey || (isLocal ? 'ollama' : '')
 
   // Fallback timeout so a hung connection is aborted even when the caller
   // does not supply its own cancellation signal.
@@ -222,13 +249,17 @@ export async function* streamAI(
     effectiveSignal = controller.signal
   }
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream'
+  }
+  if (authKey) {
+    headers['Authorization'] = `Bearer ${authKey}`
+  }
+
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream'
-    },
+    headers,
     body: JSON.stringify({
       model,
       messages,
@@ -290,9 +321,11 @@ export async function callAIMessages(
   config: { provider: string; baseUrl: string; model: string; apiKey: string },
   responseFormat?: { type: 'json_object' | 'text' }
 ): Promise<string> {
-  const baseUrl = config.baseUrl || 'https://api.deepseek.com'
+  const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
   const model = config.model || 'deepseek-chat'
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+  const url = `${baseUrl}/v1/chat/completions`
+  const isLocal = isLocalEndpoint(baseUrl)
+  const authKey = config.apiKey || (isLocal ? 'ollama' : '')
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
@@ -308,12 +341,16 @@ export async function callAIMessages(
       body.response_format = responseFormat
     }
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    }
+    if (authKey) {
+      headers['Authorization'] = `Bearer ${authKey}`
+    }
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal
     })
@@ -328,6 +365,14 @@ export async function callAIMessages(
   } catch (err) {
     if (controller.signal.aborted) {
       throw new Error('AI request timed out. Please try again.')
+    }
+    if (isLocalEndpoint(config.baseUrl)) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch failed')) {
+        throw new Error(
+          `Could not connect to local AI server at ${config.baseUrl}. Make sure your local model runner is active (e.g. run "ollama run ${config.model || 'qwen2.5:3b'}" in Terminal).`
+        )
+      }
     }
     throw err
   } finally {

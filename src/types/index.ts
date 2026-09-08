@@ -834,3 +834,49 @@ export interface CalendarScheduleContext {
   minutesSinceEnd?: number
 }
 
+// ── Local AI & Hardware Types ─────────────────────────────────────────────
+
+export type HardwareTier = 'light' | 'balanced' | 'high' | 'unsupported'
+
+export interface HardwareProfile {
+  totalMemoryGb: number
+  freeMemoryGb: number
+  cpuModel: string
+  cpuCores: number
+  arch: string
+  platform: string
+  tier: HardwareTier
+  recommendedModelId: string
+  tierReason: string
+}
+
+export interface LocalModelInfo {
+  id: string
+  name: string
+  description: string
+  filename: string
+  downloadUrl: string
+  sizeBytes: number
+  sizeDisplay: string
+  ramRequirementDisplay: string
+  status: 'not_downloaded' | 'downloading' | 'ready'
+  isRecommended?: boolean
+  localPath?: string
+}
+
+export interface DownloadProgress {
+  modelId: string
+  bytesDownloaded: number
+  totalBytes: number
+  percent: number
+  status: 'downloading' | 'completed' | 'error' | 'cancelled'
+  error?: string
+}
+
+export interface LocalEngineStatus {
+  isRunning: boolean
+  port?: number
+  activeModelId?: string
+  error?: string
+}
+

@@ -14,6 +14,7 @@ import { registerSyllabusHandlers, setSyllabusDatabase } from './ipc/syllabusHan
 import { registerCardGenerationHandlers, setCardGenerationDatabase } from './ipc/cardGenHandlers'
 import { registerClassHandlers, setClassDatabase } from './ipc/classHandlers'
 import { registerCalendarHandlers, setCalendarDatabase } from './ipc/calendarHandlers'
+import { registerLocalEngineHandlers, setLocalEngineWindowGetter, stopEngine } from './ipc/localEngine'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -198,6 +199,8 @@ app.whenReady().then(async () => {
   setCalendarDatabase(db)
   registerCalendarHandlers()
   registerUpdaterHandlers(() => mainWindow)
+  setLocalEngineWindowGetter(() => mainWindow)
+  registerLocalEngineHandlers()
   createWindow()
 
   app.on('activate', function () {
@@ -209,5 +212,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('will-quit', () => {
+  stopEngine()
 })
 

@@ -87,6 +87,27 @@ const mockElectronAPI = {
   librarySaveFile: jest.fn().mockResolvedValue({ id: 1 }),
   libraryGetFiles: jest.fn().mockResolvedValue([]),
   libraryGetFileContent: jest.fn().mockResolvedValue(null),
+
+  // Local AI & Hardware
+  getHardwareProfile: jest.fn().mockResolvedValue({
+    totalMemoryGb: 8,
+    freeMemoryGb: 4,
+    cpuModel: 'Apple M2',
+    cpuCores: 8,
+    arch: 'arm64',
+    platform: 'darwin',
+    tier: 'balanced',
+    recommendedModelId: 'qwen-2.5-3b',
+    tierReason: '8–12 GB RAM detected.'
+  }),
+  listLocalModels: jest.fn().mockResolvedValue([]),
+  downloadLocalModel: jest.fn().mockResolvedValue({ success: true }),
+  cancelModelDownload: jest.fn().mockResolvedValue({ success: true }),
+  deleteLocalModel: jest.fn().mockResolvedValue({ success: true }),
+  getLocalEngineStatus: jest.fn().mockResolvedValue({ isRunning: false }),
+  startLocalEngine: jest.fn().mockResolvedValue({ success: true, port: 8080 }),
+  stopLocalEngine: jest.fn().mockResolvedValue({ success: true }),
+  onLocalDownloadProgress: jest.fn().mockReturnValue(() => {}),
 }
 
 Object.defineProperty(window, 'electronAPI', {

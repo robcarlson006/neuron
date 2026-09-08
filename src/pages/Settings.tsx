@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../store/appStore'
 import ExportModal from '../components/ExportModal'
+import LocalAISection from '../components/LocalAISection'
 import { ACHIEVEMENT_DEFS } from '../lib/achievements'
 
 // ── Pomodoro config modal ────────────────────────────────────────────────────
@@ -299,6 +300,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [aiConnectionMessage, setAiConnectionMessage] = useState('')
   const [aiConnectionLatency, setAiConnectionLatency] = useState<number | undefined>()
   const [aiSaved, setAiSaved] = useState(false)
+  const [copiedCommand, setCopiedCommand] = useState(false)
   const [currentVersion, setCurrentVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle')
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
@@ -459,6 +461,13 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     setAiConnectionMessage('')
     setAiConnectionLatency(undefined)
     try {
+      // Save current input values first so testAIConnection uses active form inputs
+      await window.electronAPI.saveAIConfig({
+        provider: aiProvider,
+        baseUrl: aiBaseUrl,
+        model: aiModel,
+        apiKey: aiApiKey
+      })
       const result = await window.electronAPI.testAIConnection()
       setAiConnectionStatus(result.success ? 'success' : 'error')
       setAiConnectionMessage(result.message)
@@ -675,6 +684,18 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           </div>
         </section>
 
+        {/* Local AI & Hardware Section */}
+        <LocalAISection
+          onSelectModel={(url, model) => {
+            setAiProvider('openai-compatible')
+            setAiBaseUrl(url)
+            setAiModel(model)
+            setAiConnectionStatus('idle')
+          }}
+          currentBaseUrl={aiBaseUrl}
+          currentModel={aiModel}
+        />
+
         {/* AI Provider section */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">AI Provider</h2>
@@ -682,32 +703,151 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
             Configure your AI provider for card generation and answer evaluation. Compatible with any OpenAI API.
           </p>
 
+          {/* Preset Buttons */}
+          <div className="mb-5">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
+              Configuration Preset
+            </label>
+            <div className="grid grid-cols-3 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setAiProvider('openai-compatible')
+                  setAiBaseUrl('http://127.0.0.1:11434')
+                  setAiModel('qwen2.5:3b')
+                  setAiConnectionStatus('idle')
+                }}
+                className={`p-3 rounded-xl text-xs font-medium border text-left transition-all ${
+                  aiBaseUrl.includes('11434') && aiModel.includes('qwen')
+                    ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-500 text-violet-700 dark:text-violet-300 shadow-sm ring-1 ring-violet-500'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className="font-semibold flex items-center justify-between">
+                  <span>🖥️ Local Qwen</span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.5 rounded-full font-medium">Offline</span>
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Ollama · 3B (~2.2 GB RAM)</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAiProvider('openai-compatible')
+                  setAiBaseUrl('https://api.deepseek.com')
+                  setAiModel('deepseek-chat')
+                  setAiConnectionStatus('idle')
+                }}
+                className={`p-3 rounded-xl text-xs font-medium border text-left transition-all ${
+                  aiBaseUrl.includes('deepseek')
+                    ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-500 text-violet-700 dark:text-violet-300 shadow-sm ring-1 ring-violet-500'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className="font-semibold flex items-center justify-between">
+                  <span>☁️ DeepSeek</span>
+                  <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 px-1.5 py-0.5 rounded-full font-medium">Cloud</span>
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Cloud API · deepseek-chat</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAiProvider('openai-compatible')
+                  setAiBaseUrl('http://127.0.0.1:1234')
+                  setAiModel('qwen2.5-3b-instruct')
+                  setAiConnectionStatus('idle')
+                }}
+                className={`p-3 rounded-xl text-xs font-medium border text-left transition-all ${
+                  aiBaseUrl.includes('1234')
+                    ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-500 text-violet-700 dark:text-violet-300 shadow-sm ring-1 ring-violet-500'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className="font-semibold flex items-center justify-between">
+                  <span>🧪 LM Studio</span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.5 rounded-full font-medium">Offline</span>
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Local Server :1234</div>
+              </button>
+            </div>
+          </div>
+
+          {/* Local setup guidance banner */}
+          {(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
+            <div className="mb-5 p-4 rounded-xl bg-violet-50/70 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-xs">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">
+                  ⚡ 100% Offline & Private
+                </span>
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Apple Silicon M2 (~2.2 GB RAM)</span>
+              </div>
+              <p className="text-slate-600 dark:text-slate-300 mb-3 leading-relaxed">
+                Neuron runs inference directly on your Mac using Metal acceleration. Cards, active recall grading, and tutor sessions all work completely without WiFi.
+              </p>
+              <div className="bg-slate-900 dark:bg-slate-950 text-slate-100 rounded-lg p-3 font-mono text-[11px]">
+                <div className="text-slate-400 dark:text-slate-500 mb-1 font-sans text-[10px] uppercase tracking-wider font-semibold">
+                  Step 1: Start Qwen in Terminal
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-violet-300">ollama run qwen2.5:3b</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText('ollama run qwen2.5:3b')
+                      setCopiedCommand(true)
+                      setTimeout(() => setCopiedCommand(false), 2000)
+                    }}
+                    className="text-violet-400 hover:text-violet-300 font-sans text-xs px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors ml-2"
+                  >
+                    {copiedCommand ? '✓ Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+              <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-2">
+                Step 2: Click <strong className="text-slate-600 dark:text-slate-300">Test Connection</strong> below to verify Ollama is ready.
+              </p>
+            </div>
+          )}
+
           {/* Provider dropdown */}
           <div className="mb-4">
             <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
-              Provider
+              Provider Protocol
             </label>
             <select
               value={aiProvider}
               onChange={e => setAiProvider(e.target.value)}
               className="input w-full"
             >
-              <option value="openai-compatible">OpenAI-Compatible</option>
-              <option value="gemini">Gemini</option>
+              <option value="openai-compatible">OpenAI-Compatible (Ollama, DeepSeek, LM Studio, vLLM)</option>
+              <option value="gemini">Google Gemini</option>
             </select>
           </div>
 
           {/* API key */}
           <div className="mb-4">
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
-              API Key
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                API Key
+              </label>
+              {(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  ✓ Optional for local models
+                </span>
+              )}
+            </div>
             <input
               type="password"
               className="input w-full"
               value={aiApiKey}
               onChange={e => setAiApiKey(e.target.value)}
-              placeholder={aiConfigLoaded ? 'Enter your API key' : 'Loading...'}
+              placeholder={
+                aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')
+                  ? 'Not required for local Ollama / LM Studio (leave blank)'
+                  : (aiConfigLoaded ? 'Enter your API key' : 'Loading...')
+              }
             />
           </div>
 
@@ -721,8 +861,11 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               className="input w-full font-mono text-sm"
               value={aiBaseUrl}
               onChange={e => setAiBaseUrl(e.target.value)}
-              placeholder="https://api.deepseek.com"
+              placeholder="http://127.0.0.1:11434"
             />
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+              For Ollama use <code className="font-mono text-slate-600 dark:text-slate-300">http://127.0.0.1:11434</code>. For DeepSeek use <code className="font-mono text-slate-600 dark:text-slate-300">https://api.deepseek.com</code>.
+            </p>
           </div>
 
           {/* Model */}
@@ -735,8 +878,11 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               className="input w-full font-mono text-sm"
               value={aiModel}
               onChange={e => setAiModel(e.target.value)}
-              placeholder="deepseek-chat"
+              placeholder="qwen2.5:3b"
             />
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+              Recommended for 8GB M2 Mac: <code className="font-mono text-slate-600 dark:text-slate-300">qwen2.5:3b</code> (fast, accurate JSON) or <code className="font-mono text-slate-600 dark:text-slate-300">llama3.2:3b</code>.
+            </p>
           </div>
 
           {/* Connection test result */}

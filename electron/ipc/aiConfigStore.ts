@@ -19,7 +19,23 @@ export function setAIDatabase(database: Database.Database): void {
   loadApiKey()
 }
 
-// ── API Key (safeStorage) ──────────────────────────────────────────────────────
+export function normalizeBaseUrl(url?: string): string {
+  if (!url) return ''
+  return url.trim().replace(/\/+$/, '').replace(/\/v1$/, '')
+}
+
+export function isLocalEndpoint(baseUrl?: string): boolean {
+  if (!baseUrl) return false
+  const lower = baseUrl.toLowerCase().trim()
+  return (
+    lower.includes('localhost') ||
+    lower.includes('127.0.0.1') ||
+    lower.includes('0.0.0.0') ||
+    lower.includes('::1') ||
+    lower.includes('.local:') ||
+    lower.endsWith('.local')
+  )
+}
 
 let encryptedApiKey: Buffer | null = null
 let cachedApiKey: string | null = null
@@ -30,10 +46,17 @@ export function getApiKey(): string {
   if (encryptedApiKey && safeStorage.isEncryptionAvailable()) {
     try {
       cachedApiKey = safeStorage.decryptString(encryptedApiKey)
-      return cachedApiKey
+      if (cachedApiKey) return cachedApiKey
     } catch {
       // fall through
     }
+  }
+
+  // If the configured base URL is a local endpoint and no user key was set,
+  // return a default dummy key so local model runners (Ollama, LM Studio) work out of the box.
+  const currentBaseUrl = readMeta('ai_base_url')
+  if (isLocalEndpoint(currentBaseUrl || '')) {
+    return 'ollama'
   }
 
   return ''
@@ -137,16 +160,22 @@ export async function testAIConnection(config: {
     }
 
     // OpenAI-compatible API
-    const baseUrl = config.baseUrl || DEFAULT_BASE_URL
+    const baseUrl = normalizeBaseUrl(config.baseUrl || DEFAULT_BASE_URL)
     const model = config.model || DEFAULT_MODEL
-    const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+    const url = `${baseUrl}/v1/chat/completions`
+    const isLocal = isLocalEndpoint(baseUrl)
+    const authKey = config.apiKey || (isLocal ? 'ollama' : '')
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    }
+    if (authKey) {
+      headers['Authorization'] = `Bearer ${authKey}`
+    }
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`
-      },
+      headers,
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: 'Say "OK" in one word.' }]
@@ -171,6 +200,13 @@ export async function testAIConnection(config: {
       return {
         success: false,
         message: 'Connection timed out. Please check your network and try again.',
+        latencyMs: Date.now() - startTime
+      }
+    }
+    if (isLocalEndpoint(config.baseUrl)) {
+      return {
+        success: false,
+        message: `Could not connect to local AI server at ${config.baseUrl}. Make sure your local model runner is active (e.g. run "ollama run ${config.model || 'qwen2.5:3b'}" in Terminal).`,
         latencyMs: Date.now() - startTime
       }
     }
