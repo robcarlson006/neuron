@@ -309,4 +309,138 @@ describe('CardImportModal', () => {
     // Button should be disabled when text is empty
     expect(generateBtn).toBeDisabled()
   })
+
+  it('selects Auto (AI Decides) and generates cards with autoCount: true', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          folders={mockFolders}
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Fill source text
+    const textarea = screen.getByPlaceholderText(/paste lecture notes/i)
+    fireEvent.change(textarea, { target: { value: 'Neurotransmitters cross the synaptic cleft.' } })
+
+    // Click Auto (AI Decides) button
+    const autoBtn = screen.getByRole('button', { name: /auto \(ai decides\)/i })
+    fireEvent.click(autoBtn)
+
+    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+    expect(screen.getByText(/ai auto-sizing active/i)).toBeInTheDocument()
+
+    // Click Generate button
+    const generateBtn = screen.getByRole('button', { name: /generate flashcards \(ai decides\)/i })
+    await React.act(async () => {
+      fireEvent.click(generateBtn)
+    })
+
+    expect(window.electronAPI.cardsGenerateFromText).toHaveBeenCalledWith(
+      10,
+      'Neurotransmitters cross the synaptic cleft.',
+      expect.objectContaining({
+        type: 'flashcard',
+        autoCount: true
+      })
+    )
+
+    expect(mockOnSuccess).toHaveBeenCalledWith(15, 'generate')
+    expect(mockOnClose).toHaveBeenCalled()
+  })
+
+  it('preloads material when initialMaterialId and initialAutoCount are passed', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          subjects={[mockSubject]}
+          folders={mockFolders}
+          userId={1}
+          initialMaterialId={101}
+          initialAutoCount={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Wait for material to be selected
+    await waitFor(() => {
+      expect(screen.getByText(/using: lecture_03_action_potentials\.pdf/i)).toBeInTheDocument()
+    })
+
+    // Verify Auto is active
+    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+
+    // Generate button should have AI Decides label
+    const generateBtn = screen.getByRole('button', { name: /generate flashcards \(ai decides\)/i })
+    await React.act(async () => {
+      fireEvent.click(generateBtn)
+    })
+
+    expect(window.electronAPI.cardsGenerateFromText).toHaveBeenCalledWith(
+      10,
+      mockMaterials[0].content_text,
+      expect.objectContaining({
+        type: 'flashcard',
+        materialId: 101,
+        autoCount: true
+      })
+    )
+  })
+
+  it('switches back to fixed count when clicking a preset chip after selecting Auto', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          folders={mockFolders}
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Select Auto
+    const autoBtn = screen.getByRole('button', { name: /auto \(ai decides\)/i })
+    fireEvent.click(autoBtn)
+    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+
+    // Click preset 30
+    const preset30 = screen.getByRole('button', { name: '30' })
+    fireEvent.click(preset30)
+
+    // Should no longer show AI Decides in badge
+    expect(screen.queryByText(/ai auto-sizing active/i)).toBeNull()
+
+    const textarea = screen.getByPlaceholderText(/paste lecture notes/i)
+    fireEvent.change(textarea, { target: { value: 'Synaptic plasticity mechanisms.' } })
+
+    const generateBtn = screen.getByRole('button', { name: /generate 30 flashcards/i })
+    await React.act(async () => {
+      fireEvent.click(generateBtn)
+    })
+
+    expect(window.electronAPI.cardsGenerateFromText).toHaveBeenCalledWith(
+      10,
+      'Synaptic plasticity mechanisms.',
+      expect.objectContaining({
+        type: 'flashcard',
+        count: 30,
+        autoCount: false
+      })
+    )
+  })
 })

@@ -148,6 +148,65 @@ describe('GenerateCardsModal', () => {
     expect(mockOnClose).toHaveBeenCalled()
   })
 
+  it('allows selecting Auto (AI Decides) and submits with autoCount: true', () => {
+    render(
+      <GenerateCardsModal
+        isOpen={true}
+        module={mockModule}
+        onClose={mockOnClose}
+        onGenerate={mockOnGenerate}
+      />
+    )
+
+    // Click Auto (AI Decides) button
+    const autoBtn = screen.getByRole('button', { name: /auto \(ai decides\)/i })
+    fireEvent.click(autoBtn)
+
+    // Check that badge shows AI Decides
+    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+    expect(screen.getByText(/ai auto-sizing active/i)).toBeInTheDocument()
+
+    // Submit
+    const generateBtn = screen.getByRole('button', { name: /generate cards \(ai decides\)/i })
+    fireEvent.click(generateBtn)
+
+    expect(mockOnGenerate).toHaveBeenCalledWith({
+      type: 'flashcard',
+      count: 15,
+      autoCount: true
+    })
+  })
+
+  it('switches back to fixed count when clicking a preset after selecting Auto', () => {
+    render(
+      <GenerateCardsModal
+        isOpen={true}
+        module={mockModule}
+        onClose={mockOnClose}
+        onGenerate={mockOnGenerate}
+      />
+    )
+
+    // First select Auto
+    const autoBtn = screen.getByRole('button', { name: /auto \(ai decides\)/i })
+    fireEvent.click(autoBtn)
+    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+
+    // Then click preset 10
+    const preset10 = screen.getByRole('button', { name: '10' })
+    fireEvent.click(preset10)
+
+    // Submit
+    const generateBtn = screen.getByRole('button', { name: /generate 10 cards/i })
+    fireEvent.click(generateBtn)
+
+    expect(mockOnGenerate).toHaveBeenCalledWith({
+      type: 'flashcard',
+      count: 10,
+      autoCount: false
+    })
+  })
+
   it('disables controls while generating', () => {
     render(
       <GenerateCardsModal

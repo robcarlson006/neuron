@@ -55,6 +55,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [newCardFolderId, setNewCardFolderId] = useState<number | null>(null)
   const [newCardImageUrl, setNewCardImageUrl] = useState('')
   const [showTextImport, setShowTextImport] = useState(false)
+  const [selectedImportMaterialId, setSelectedImportMaterialId] = useState<number | null>(null)
 
   // ── Curriculum state (from ClassOverview) ──
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
@@ -846,6 +847,17 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                     {new Date(mat.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </span>
                   <button
+                    onClick={() => {
+                      setSelectedImportMaterialId(mat.id)
+                      setShowTextImport(true)
+                    }}
+                    className="px-2 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors flex items-center gap-1 text-xs font-medium cursor-pointer"
+                    title={`Generate flashcards from ${mat.filename}`}
+                  >
+                    <span>✨</span>
+                    <span className="hidden sm:inline">Cards</span>
+                  </button>
+                  <button
                     onClick={() => setShowConfigModal({
                       subjectId: subject.id,
                       subjectName: subject.name,
@@ -1054,7 +1066,12 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           subjectName={subject?.name}
           folders={folders}
           userId={user?.id}
-          onClose={() => setShowTextImport(false)}
+          initialMaterialId={selectedImportMaterialId}
+          initialAutoCount={selectedImportMaterialId ? true : false}
+          onClose={() => {
+            setShowTextImport(false)
+            setSelectedImportMaterialId(null)
+          }}
           onSuccess={async (count, mode) => {
             await loadAllData()
             addToast({

@@ -143,7 +143,8 @@ export function buildAutoCardGenerationPrompt(
   existingCards?: { front: string; back?: string }[],
   minCards: number = 8,
   minQuestions: number = 4,
-  availableTopics?: string[]
+  availableTopics?: string[],
+  autoCount: boolean = false
 ): string {
   let contextSection = ''
   if (subjectName) contextSection += `\nSUBJECT: ${subjectName}`
@@ -222,8 +223,11 @@ Return valid JSON with this exact structure:
    - Include the most frequent student misconception in "common_mistake".
 
 ## GENERATION TARGETS
-- Generate exactly ${minCards} flashcards and ${minQuestions} active recall questions.
-- Distribute evenly across all major concepts in the source material.${dedupSection}
+${autoCount
+  ? `- Automatically evaluate the depth, density, and breadth of the source material to determine the optimal number of flashcards and active recall questions needed for comprehensive conceptual coverage without fluff or redundancy (e.g. 4-8 cards for brief material, 10-25+ cards for dense or multi-topic material).
+- Cover every key definition, mechanism, rule, and distinction without padding or omitting essentials.`
+  : `- Generate exactly ${minCards} flashcards and ${minQuestions} active recall questions.
+- Distribute evenly across all major concepts in the source material.`}${dedupSection}
 
 Return ONLY valid JSON. No markdown fences. No preamble.`
 }
@@ -237,7 +241,8 @@ export function buildFlashcardOnlyPrompt(
   moduleTitle?: string,
   minCards: number = 10,
   existingCards?: { front: string; back?: string }[],
-  availableTopics?: string[]
+  availableTopics?: string[],
+  autoCount: boolean = false
 ): string {
   let contextSection = ''
   if (subjectName) contextSection += `\nSUBJECT: ${subjectName}`
@@ -295,7 +300,9 @@ Return valid JSON with this exact structure:
 4. **Rich Semantic Hooks**:
    - Provide high-value "concrete_example", "common_mistake", and "mnemonic" fields for every card to facilitate multi-modal encoding.
 
-5. **Generate exactly ${minCards} flashcards** (do not generate more or fewer) — Cover all distinct concepts, definitions, and mechanisms evenly.
+5. ${autoCount
+  ? `**Dynamic Card Count (CRITICAL)**: Automatically determine the optimal number of flashcards needed to comprehensively cover the material without fluff, trivia, or redundancy. Analyze the material's depth and breadth: generate as few as 3-5 cards if the material is brief or focused, or as many as needed (typically 8-20+ cards for deeper material) to ensure complete conceptual coverage. Do NOT artificially pad with trivial cards, and do NOT truncate important concepts.`
+  : `**Generate exactly ${minCards} flashcards** (do not generate more or fewer) — Cover all distinct concepts, definitions, and mechanisms evenly.`}
 
 6. **NO active recall questions.** Flashcards only.${dedupSection}
 
@@ -311,7 +318,8 @@ export function buildActiveRecallOnlyPrompt(
   moduleTitle?: string,
   minQuestions: number = 6,
   existingCards?: { front: string; back?: string }[],
-  availableTopics?: string[]
+  availableTopics?: string[],
+  autoCount: boolean = false
 ): string {
   let contextSection = ''
   if (subjectName) contextSection += `\nSUBJECT: ${subjectName}`
@@ -371,7 +379,9 @@ Return valid JSON with this exact structure:
 5. **Self-Containment**:
    - Every question must be fully understandable without external pointers or vague references.
 
-6. **Generate exactly ${minQuestions} active recall questions** (do not generate more or fewer) — Covering all major topics in depth.
+6. ${autoCount
+  ? `**Dynamic Question Count (CRITICAL)**: Automatically determine the optimal number of active recall questions needed to comprehensively cover the core mechanisms, causal relationships, and reasoning without redundancy. Generate as few as 2-4 questions for brief material, or 6-12+ for deep material. Every question must test a distinct, high-impact concept.`
+  : `**Generate exactly ${minQuestions} active recall questions** (do not generate more or fewer) — Covering all major topics in depth.`}
 
 7. **NO flashcards.** Active recall questions only.${dedupSection}
 

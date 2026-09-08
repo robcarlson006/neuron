@@ -145,4 +145,24 @@ describe('enhanced prompt builders', () => {
     expect(prompt).toContain('Explain ATP synthesis')
     expect(prompt).toContain('10')
   })
+
+  it('buildFlashcardOnlyPrompt configures dynamic card count when autoCount is true', () => {
+    const prompt = buildFlashcardOnlyPrompt('source text', 'Subject', 'Module', 10, undefined, undefined, true)
+    expect(prompt).toContain('Dynamic Card Count (CRITICAL)')
+    expect(prompt).toContain('optimal number of flashcards needed to comprehensively cover the material')
+    expect(prompt).not.toContain('Generate exactly 10 flashcards')
+  })
+
+  it('buildActiveRecallOnlyPrompt configures dynamic question count when autoCount is true', () => {
+    const prompt = buildActiveRecallOnlyPrompt('source text', 'Subject', 'Module', 6, undefined, undefined, true)
+    expect(prompt).toContain('Dynamic Question Count (CRITICAL)')
+    expect(prompt).toContain('optimal number of active recall questions needed')
+    expect(prompt).not.toContain('Generate exactly 6 active recall questions')
+  })
+
+  it('buildAutoCardGenerationPrompt configures dynamic targets when autoCount is true', () => {
+    const prompt = buildAutoCardGenerationPrompt('source text', 'Subject', 'Module', undefined, undefined, 8, 4, undefined, true)
+    expect(prompt).toContain('Automatically evaluate the depth, density, and breadth')
+    expect(prompt).not.toContain('Generate exactly 8 flashcards and 4 active recall questions')
+  })
 })

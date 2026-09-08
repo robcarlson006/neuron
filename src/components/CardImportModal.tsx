@@ -10,6 +10,8 @@ interface CardImportModalProps {
   subjects?: Subject[]
   folders?: CardFolder[]
   userId?: number
+  initialMaterialId?: number | null
+  initialAutoCount?: boolean
   onSuccess?: (count: number, mode: 'generate' | 'import') => void
   onManualSave?: (cards: { type: 'flashcard' | 'active_recall'; front: string; back: string; folder_id?: number | null }[]) => Promise<void>
 }
@@ -24,6 +26,8 @@ export default function CardImportModal({
   subjects = [],
   folders: initialFolders = [],
   userId,
+  initialMaterialId,
+  initialAutoCount,
   onSuccess,
   onManualSave
 }: CardImportModalProps): React.JSX.Element | null {
@@ -41,6 +45,7 @@ export default function CardImportModal({
   const [sourceText, setSourceText] = useState('')
   const [cardType, setCardType] = useState<ModuleCardGenType>('flashcard')
   const [cardCount, setCardCount] = useState(15)
+  const [isAutoCount, setIsAutoCount] = useState<boolean>(initialAutoCount ?? false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [aiFolderId, setAiFolderId] = useState<number | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -187,6 +192,27 @@ export default function CardImportModal({
     setSourceText('')
   }
 
+  // Handle initialMaterialId and initialAutoCount when modal opens
+  useEffect(() => {
+    if (isOpen && initialMaterialId) {
+      setSelectedMaterialId(initialMaterialId)
+      setSourceMode('materials')
+      if (initialAutoCount !== false) {
+        setIsAutoCount(true)
+      }
+    }
+  }, [isOpen, initialMaterialId, initialAutoCount])
+
+  // Select material data once subjectMaterials loads if initialMaterialId is set
+  useEffect(() => {
+    if (selectedMaterialId && subjectMaterials.length > 0 && !sourceText) {
+      const mat = subjectMaterials.find(m => m.id === selectedMaterialId)
+      if (mat) {
+        handleSelectMaterial(mat)
+      }
+    }
+  }, [selectedMaterialId, subjectMaterials, sourceText])
+
   function handleSourceFileUpload(e: React.ChangeEvent<HTMLInputElement>): void {
     const file = e.target.files?.[0]
     if (!file) return
@@ -302,6 +328,7 @@ export default function CardImportModal({
       const options: ModuleCardGenOptions = {
         type: cardType,
         count: cardCount,
+        autoCount: isAutoCount,
         folderId: aiFolderId,
         materialId: selectedMaterialId || undefined,
         userId
@@ -905,21 +932,44 @@ export default function CardImportModal({
                   <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
                     3. How many cards do you want?
                   </label>
-                  <span className="text-xs font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded-full">
-                    {cardCount} {cardType === 'active_recall' ? 'questions' : 'cards'}
+                  <span className="text-xs font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    {isAutoCount ? (
+                      <>
+                        <span>✨</span>
+                        <span>AI Decides</span>
+                      </>
+                    ) : (
+                      `${cardCount} ${cardType === 'active_recall' ? 'questions' : 'cards'}`
+                    )}
                   </span>
                 </div>
 
-                {/* Preset Chips */}
+                {/* Preset Chips & Auto Option */}
                 <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setIsAutoCount(true)}
+                    disabled={isGenerating}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                      isAutoCount
+                        ? 'bg-violet-600 text-white border-violet-600 shadow-sm ring-2 ring-violet-500/30'
+                        : 'bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/60'
+                    }`}
+                  >
+                    <span>✨</span>
+                    <span>Auto (AI Decides)</span>
+                  </button>
                   {CARD_GEN_PRESETS.map(preset => (
                     <button
                       key={preset}
                       type="button"
-                      onClick={() => setCardCount(preset)}
+                      onClick={() => {
+                        setIsAutoCount(false)
+                        setCardCount(preset)
+                      }}
                       disabled={isGenerating}
                       className={`flex-1 min-w-[38px] py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                        cardCount === preset
+                        !isAutoCount && cardCount === preset
                           ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
                           : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-300 dark:hover:border-violet-700'
                       }`}
@@ -929,49 +979,68 @@ export default function CardImportModal({
                   ))}
                 </div>
 
-                {/* Stepper + Slider + Number Input */}
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setCardCount(prev => Math.max(1, prev - 1))}
-                    disabled={isGenerating || cardCount <= 1}
-                    className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed font-bold cursor-pointer"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="range"
-                    min="1"
-                    max={Math.max(100, cardCount)}
-                    step="1"
-                    value={cardCount}
-                    onChange={e => setCardCount(Math.max(1, Number(e.target.value)))}
-                    disabled={isGenerating}
-                    className="flex-1 accent-violet-600 cursor-pointer h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none"
-                  />
-                  <div className="flex items-center border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                {/* Dynamic Auto Explanation OR Stepper + Slider + Number Input */}
+                {isAutoCount ? (
+                  <div className="p-3 rounded-xl bg-violet-50/60 dark:bg-violet-950/30 border border-violet-100/80 dark:border-violet-900/40 flex items-start gap-2.5">
+                    <span className="text-sm">✨</span>
+                    <div className="text-xs text-violet-900 dark:text-violet-200 leading-relaxed">
+                      <span className="font-semibold">AI Auto-Sizing Active:</span> The AI will analyze the depth, density, and breadth of your material to generate as many cards as necessary for comprehensive coverage (e.g. 5 for brief summaries, 10–20+ for detailed material) without fluff or gaps.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAutoCount(false)
+                        setCardCount(prev => Math.max(1, prev - 1))
+                      }}
+                      disabled={isGenerating || cardCount <= 1}
+                      className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed font-bold cursor-pointer"
+                    >
+                      -
+                    </button>
                     <input
-                      type="number"
+                      type="range"
                       min="1"
+                      max={Math.max(100, cardCount)}
+                      step="1"
                       value={cardCount}
                       onChange={e => {
-                        const val = parseInt(e.target.value, 10)
-                        if (!isNaN(val)) setCardCount(Math.max(1, val))
-                        else if (e.target.value === '') setCardCount(1)
+                        setIsAutoCount(false)
+                        setCardCount(Math.max(1, Number(e.target.value)))
                       }}
                       disabled={isGenerating}
-                      className="w-14 text-center text-xs font-semibold py-1 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none"
+                      className="flex-1 accent-violet-600 cursor-pointer h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none"
                     />
+                    <div className="flex items-center border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                      <input
+                        type="number"
+                        min="1"
+                        value={cardCount}
+                        onChange={e => {
+                          setIsAutoCount(false)
+                          const val = parseInt(e.target.value, 10)
+                          if (!isNaN(val)) setCardCount(Math.max(1, val))
+                          else if (e.target.value === '') setCardCount(1)
+                        }}
+                        disabled={isGenerating}
+                        className="w-14 text-center text-xs font-semibold py-1 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAutoCount(false)
+                        setCardCount(prev => prev + 1)
+                      }}
+                      disabled={isGenerating}
+                      className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed font-bold cursor-pointer"
+                    >
+                      +
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setCardCount(prev => prev + 1)}
-                    disabled={isGenerating}
-                    className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed font-bold cursor-pointer"
-                  >
-                    +
-                  </button>
-                </div>
+                )}
               </div>
 
               {/* Target Folder Selector */}
@@ -1190,13 +1259,19 @@ export default function CardImportModal({
               {isGenerating ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Generating {cardCount} {cardType === 'active_recall' ? 'Questions' : 'Cards'}...</span>
+                  <span>
+                    {isAutoCount
+                      ? `Generating ${cardType === 'active_recall' ? 'Questions' : 'Cards'} (AI Deciding Count)...`
+                      : `Generating ${cardCount} ${cardType === 'active_recall' ? 'Questions' : 'Cards'}...`}
+                  </span>
                 </>
               ) : (
                 <>
                   <span>✨</span>
                   <span>
-                    Generate {cardCount} {cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'}
+                    {isAutoCount
+                      ? `Generate ${cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'} (AI Decides)`
+                      : `Generate ${cardCount} ${cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'}`}
                   </span>
                 </>
               )}

@@ -751,6 +751,7 @@ export type ModuleCardGenType = 'flashcard' | 'active_recall'
 export interface ModuleCardGenOptions {
   type: ModuleCardGenType
   count: number
+  autoCount?: boolean
   flashcardCount?: number
   activeRecallCount?: number
   folderId?: number | null
