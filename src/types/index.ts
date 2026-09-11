@@ -145,6 +145,8 @@ export interface EvaluationResult {
   correct: boolean
   score: number
   feedback: string
+  matched_concepts?: string[]
+  missing_concepts?: string[]
 }
 
 export interface SM2Result {

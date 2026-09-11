@@ -118,7 +118,8 @@ describe('CardImportModal', () => {
         count: 20,
         folderId: null,
         materialId: undefined,
-        userId: 1
+        userId: 1,
+        autoCount: false
       }
     )
 
@@ -333,7 +334,7 @@ describe('CardImportModal', () => {
     const autoBtn = screen.getByRole('button', { name: /auto \(ai decides\)/i })
     fireEvent.click(autoBtn)
 
-    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/ai decides/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/ai auto-sizing active/i)).toBeInTheDocument()
 
     // Click Generate button
@@ -379,7 +380,7 @@ describe('CardImportModal', () => {
     })
 
     // Verify Auto is active
-    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/ai decides/i).length).toBeGreaterThan(0)
 
     // Generate button should have AI Decides label
     const generateBtn = screen.getByRole('button', { name: /generate flashcards \(ai decides\)/i })
@@ -416,7 +417,7 @@ describe('CardImportModal', () => {
     // Select Auto
     const autoBtn = screen.getByRole('button', { name: /auto \(ai decides\)/i })
     fireEvent.click(autoBtn)
-    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/ai decides/i).length).toBeGreaterThan(0)
 
     // Click preset 30
     const preset30 = screen.getByRole('button', { name: '30' })

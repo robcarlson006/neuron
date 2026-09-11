@@ -80,7 +80,8 @@ describe('GenerateCardsModal', () => {
 
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'active_recall',
-      count: 30
+      count: 30,
+      autoCount: false
     })
   })
 
@@ -104,7 +105,8 @@ describe('GenerateCardsModal', () => {
 
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
-      count: 20
+      count: 20,
+      autoCount: false
     })
   })
 
@@ -128,7 +130,8 @@ describe('GenerateCardsModal', () => {
 
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
-      count: 75
+      count: 75,
+      autoCount: false
     })
   })
 
@@ -163,7 +166,7 @@ describe('GenerateCardsModal', () => {
     fireEvent.click(autoBtn)
 
     // Check that badge shows AI Decides
-    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/ai decides/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/ai auto-sizing active/i)).toBeInTheDocument()
 
     // Submit
@@ -190,7 +193,7 @@ describe('GenerateCardsModal', () => {
     // First select Auto
     const autoBtn = screen.getByRole('button', { name: /auto \(ai decides\)/i })
     fireEvent.click(autoBtn)
-    expect(screen.getByText(/ai decides/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/ai decides/i).length).toBeGreaterThan(0)
 
     // Then click preset 10
     const preset10 = screen.getByRole('button', { name: '10' })

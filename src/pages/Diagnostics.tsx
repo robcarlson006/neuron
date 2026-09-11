@@ -4,6 +4,8 @@ import { useAppStore } from '../store/appStore'
 import type { Card, CardSchedule, DiagnosticSummary, ConceptMastery } from '../types'
 import LatexText from '../components/LatexText'
 import PomodoroWidget from '../components/PomodoroWidget'
+import AutoGradeFeedback from '../components/AutoGradeFeedback'
+import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEvaluator'
 
 interface DiagCard extends Card {
   interval: number
@@ -59,11 +61,18 @@ export default function Diagnostics(): React.JSX.Element {
   const [conceptMastery, setConceptMastery] = useState<ConceptMastery[]>([])
   const [error, setError] = useState('')
   const [resumedFrom, setResumedFrom] = useState<number | null>(null)
+  const [autoGradeResult, setAutoGradeResult] = useState<AutoGradeResult | null>(null)
+  const [grading, setGrading] = useState(false)
 
   const sessionKey = `diag_session_${subjectId}`
 
   // Ref to always have latest phase + submitRating in event listener
-  const handlerRef = useRef<{ phase: Phase; onRate: (q: number) => void; onReveal: () => void }>({
+  const handlerRef = useRef<{
+    phase: Phase
+    onRate: (q: number) => void
+    onReveal: () => void
+    suggestedQuality?: number
+  }>({
     phase: 'loading',
     onRate: () => {},
     onReveal: () => {}
@@ -73,14 +82,31 @@ export default function Diagnostics(): React.JSX.Element {
     if (user && subjectId) loadCards()
   }, [user, subjectId])
 
+  const handleReveal = useCallback(async () => {
+    setPhase('revealed')
+    const currentCard = diagCards[currentIdx]
+    if (currentCard && answer.trim()) {
+      setGrading(true)
+      try {
+        const res = await evaluateStudentAnswer(currentCard.front, currentCard.back, answer)
+        setAutoGradeResult(res)
+      } catch {
+        // Fallback silently
+      } finally {
+        setGrading(false)
+      }
+    }
+  }, [diagCards, currentIdx, answer])
+
   // Keep a stable ref so the keydown listener (empty deps) always calls latest functions
   handlerRef.current.phase = phase
-  handlerRef.current.onReveal = () => setPhase('revealed')
+  handlerRef.current.onReveal = handleReveal
+  handlerRef.current.suggestedQuality = autoGradeResult?.diagnosticQuality
   // onRate will be pointed to submitRating after it's defined below
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const tag = (e.target as HTMLElement).tagName
-    const { phase: p, onRate, onReveal } = handlerRef.current
+    const { phase: p, onRate, onReveal, suggestedQuality } = handlerRef.current
 
     if (tag === 'TEXTAREA') {
       // Enter (without Shift) reveals the answer; Shift+Enter inserts a newline normally
@@ -94,8 +120,17 @@ export default function Diagnostics(): React.JSX.Element {
     if (p === 'question' && (e.key === ' ' || e.key === 'Enter')) {
       e.preventDefault()
       onReveal()
+      return
     }
+
     if (p === 'revealed') {
+      // Space or Enter accepts the auto-grader recommendation if available
+      if ((e.key === ' ' || e.key === 'Enter') && suggestedQuality !== undefined) {
+        e.preventDefault()
+        onRate(suggestedQuality)
+        return
+      }
+
       const idx = parseInt(e.key) - 1
       if (idx >= 0 && idx < RATING_OPTIONS.length) {
         e.preventDefault()
@@ -200,6 +235,8 @@ export default function Diagnostics(): React.JSX.Element {
     const newResults = [...results, result]
     setResults(newResults)
     setAnswer('')
+    setAutoGradeResult(null)
+    setGrading(false)
 
     const nextIdx = currentIdx + 1
     if (nextIdx >= diagCards.length) {
@@ -224,6 +261,8 @@ export default function Diagnostics(): React.JSX.Element {
     const newResults = [...results, { card, quality: 0, skipped: true }]
     setResults(newResults)
     setAnswer('')
+    setAutoGradeResult(null)
+    setGrading(false)
 
     const nextIdx = currentIdx + 1
     if (nextIdx >= diagCards.length) {
@@ -556,7 +595,7 @@ export default function Diagnostics(): React.JSX.Element {
                   Skip
                 </button>
                 <button
-                  onClick={() => setPhase('revealed')}
+                  onClick={handleReveal}
                   className="btn-primary flex-1 py-3"
                 >
                   Reveal Answer →
@@ -575,6 +614,24 @@ export default function Diagnostics(): React.JSX.Element {
                 </div>
               )}
 
+              {/* Auto-grade feedback if an answer was provided */}
+              {(answer.trim() || autoGradeResult || grading) && (
+                <AutoGradeFeedback
+                  result={autoGradeResult}
+                  loading={grading}
+                  suggestedLabel={
+                    autoGradeResult !== null
+                      ? RATING_OPTIONS.find(o => o.quality === autoGradeResult.diagnosticQuality)?.label
+                      : undefined
+                  }
+                  onAcceptSuggested={
+                    autoGradeResult !== null
+                      ? () => submitRating(autoGradeResult.diagnosticQuality)
+                      : undefined
+                  }
+                />
+              )}
+
               {/* Model answer */}
               <div className="bg-violet-50 dark:bg-violet-900/20 rounded-2xl border border-violet-200 dark:border-violet-800 p-6">
                 <span className="text-xs font-medium uppercase tracking-wide text-violet-500 dark:text-violet-400 block mb-2">
@@ -591,12 +648,22 @@ export default function Diagnostics(): React.JSX.Element {
                 <div className="grid grid-cols-5 gap-2">
                   {RATING_OPTIONS.map((opt, i) => {
                     const cls = ratingClasses[opt.color]
+                    const isSuggested = autoGradeResult?.diagnosticQuality === opt.quality
                     return (
                       <button
                         key={opt.quality}
                         onClick={() => submitRating(opt.quality)}
-                        className={`py-3 px-2 rounded-xl border font-medium text-xs transition-colors flex flex-col items-center gap-1.5 ${cls.btn}`}
+                        className={`py-3 px-2 rounded-xl border font-medium text-xs transition-all flex flex-col items-center gap-1.5 relative ${cls.btn} ${
+                          isSuggested
+                            ? 'ring-2 ring-violet-500 ring-offset-2 dark:ring-offset-slate-900 shadow-md border-violet-400'
+                            : ''
+                        }`}
                       >
+                        {isSuggested && (
+                          <span className="absolute -top-2.5 bg-violet-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-xs tracking-tight">
+                            Suggested
+                          </span>
+                        )}
                         <span className="font-mono text-base opacity-40">{i + 1}</span>
                         <span className="font-semibold text-center leading-tight">{opt.label}</span>
                         <span className="font-normal opacity-70 text-center leading-tight">{opt.sublabel}</span>
@@ -605,7 +672,11 @@ export default function Diagnostics(): React.JSX.Element {
                   })}
                 </div>
                 <p className="text-xs text-slate-400 dark:text-slate-500 text-center mt-2">
-                  Press <kbd>1</kbd>–<kbd>5</kbd> to rate
+                  {autoGradeResult ? (
+                    <>Press <kbd>Space</kbd> to accept suggested, or <kbd>1</kbd>–<kbd>5</kbd> to override</>
+                  ) : (
+                    <>Press <kbd>1</kbd>–<kbd>5</kbd> to rate</>
+                  )}
                 </p>
               </div>
             </>

@@ -32,6 +32,9 @@ interface AppState {
   pomodoroWorkMinutes: number
   pomodoroBreakMinutes: number
 
+  // Auto-grader setting (persisted to localStorage)
+  autoGradeEnabled: boolean
+
   // Pomodoro runtime state
   pomodoroPhase: PomodoroPhase
   pomodoroRunning: boolean
@@ -59,6 +62,9 @@ interface AppState {
   // Pomodoro actions
   setPomodoroEnabled: (enabled: boolean) => void
   setPomodoroSettings: (workMinutes: number, breakMinutes: number) => void
+
+  // Auto-grader actions
+  setAutoGradeEnabled: (enabled: boolean) => void
   startPomodoro: () => void
   resumePomodoro: () => void
   pausePomodoro: (secondsLeft: number) => void
@@ -110,6 +116,11 @@ export const useAppStore = create<AppState>((set, get) => {
     pomodoroWorkMinutes: pom.workMinutes,
     pomodoroBreakMinutes: pom.breakMinutes,
 
+    // Auto-grader setting
+    autoGradeEnabled: (() => {
+      try { return localStorage.getItem('auto_grade_enabled') !== 'false' } catch { return true }
+    })(),
+
     // Pomodoro runtime
     pomodoroPhase: 'idle',
     pomodoroRunning: false,
@@ -151,6 +162,12 @@ export const useAppStore = create<AppState>((set, get) => {
     },
     removeToast: (id) =>
       set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+
+    // Auto-grader actions
+    setAutoGradeEnabled: (enabled) => {
+      try { localStorage.setItem('auto_grade_enabled', String(enabled)) } catch {}
+      set({ autoGradeEnabled: enabled })
+    },
 
     // Pomodoro actions
     setPomodoroEnabled: (enabled) => {

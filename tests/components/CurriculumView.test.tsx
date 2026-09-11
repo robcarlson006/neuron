@@ -83,8 +83,7 @@ describe('CurriculumView', () => {
     expect(mockOnGenerateCards).toHaveBeenCalledWith(1, {
       type: 'active_recall',
       count: 15,
-      flashcardCount: undefined,
-      activeRecallCount: undefined
+      autoCount: false
     })
   })
 

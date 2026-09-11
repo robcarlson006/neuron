@@ -100,10 +100,18 @@ describe('Prompt Builders', () => {
       expect(result.score).toBe(1)
     })
 
-    it('strips markdown code fences', () => {
-      const json = '```json\n' + JSON.stringify({ correct: true, score: 5, feedback: 'Perfect' }) + '\n```'
+    it('strips markdown code fences and parses concepts', () => {
+      const json = '```json\n' + JSON.stringify({
+        correct: true,
+        score: 5,
+        feedback: 'Perfect',
+        matched_concepts: ['ATP', 'Mitochondria'],
+        missing_concepts: ['Oxidative']
+      }) + '\n```'
       const result = parseEvaluationResponse(json)
       expect(result.correct).toBe(true)
+      expect(result.matched_concepts).toEqual(['ATP', 'Mitochondria'])
+      expect(result.missing_concepts).toEqual(['Oxidative'])
     })
 
     it('throws on missing correct field', () => {

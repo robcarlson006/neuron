@@ -276,7 +276,17 @@ interface UpdateInfo {
 }
 
 export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Element {
-  const { user, setUser, theme, toggleTheme, pomodoroEnabled, pomodoroWorkMinutes, pomodoroBreakMinutes } = useAppStore()
+  const {
+    user,
+    setUser,
+    theme,
+    toggleTheme,
+    pomodoroEnabled,
+    pomodoroWorkMinutes,
+    pomodoroBreakMinutes,
+    autoGradeEnabled,
+    setAutoGradeEnabled
+  } = useAppStore()
   const [name, setName] = useState(user?.name || '')
   const [reminderTime, setReminderTime] = useState('09:00')
   const [reminderLoaded, setReminderLoaded] = useState(false)
@@ -679,6 +689,48 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                 className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
               >
                 Configure
+              </button>
+            </div>
+
+            {/* Flashcard Auto-Grader add-on */}
+            <div className="flex items-center justify-between p-4 rounded-xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40 hover:border-slate-200 dark:hover:border-slate-600 transition-colors">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0 ${
+                  autoGradeEnabled
+                    ? 'bg-violet-100 dark:bg-violet-900/40'
+                    : 'bg-slate-100 dark:bg-slate-800'
+                }`}>
+                  ✨
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Flashcard Auto-Grader</p>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                      autoGradeEnabled
+                        ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
+                    }`}>
+                      {autoGradeEnabled ? 'Enabled' : 'Off'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                    Automatically grade typed flashcard and diagnostic answers with AI recommendations and Space confirmation
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAutoGradeEnabled(!autoGradeEnabled)}
+                className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors ${
+                  autoGradeEnabled ? 'bg-violet-600' : 'bg-slate-200 dark:bg-slate-600'
+                }`}
+                role="switch"
+                aria-checked={autoGradeEnabled}
+              >
+                <span
+                  className={`inline-block w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform duration-200 ${
+                    autoGradeEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
               </button>
             </div>
           </div>

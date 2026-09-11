@@ -143,4 +143,29 @@ describe('FlashCard Component', () => {
     const nextTextarea = screen.getByPlaceholderText(/write your answer here/i)
     expect(document.activeElement).toBe(nextTextarea)
   })
+
+  it('runs auto-grader when an answer is typed and revealed on flashcard', async () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    const textarea = screen.getByPlaceholderText(/write your answer here/i)
+    fireEvent.change(textarea, { target: { value: 'Paris' } })
+
+    fireEvent.click(screen.getByTestId('flashcard'))
+
+    expect(await screen.findByTestId('autograde-feedback')).toBeInTheDocument()
+    expect(screen.getByText(/Suggested:/i)).toBeInTheDocument()
+  })
+
+  it('accepts suggested rating when pressing Space after reveal on flashcard', async () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    const textarea = screen.getByPlaceholderText(/write your answer here/i)
+    fireEvent.change(textarea, { target: { value: 'Paris' } })
+
+    fireEvent.click(screen.getByTestId('flashcard'))
+
+    await screen.findByTestId('autograde-feedback')
+
+    // Press Space to accept suggested rating
+    fireEvent.keyDown(window, { key: ' ' })
+    expect(mockOnResult).toHaveBeenCalledWith(5)
+  })
 })

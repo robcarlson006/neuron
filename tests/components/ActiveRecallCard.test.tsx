@@ -110,4 +110,33 @@ describe('ActiveRecallCard Component', () => {
     )
     expect(screen.getByText('2 / 5')).toBeInTheDocument()
   })
+
+  it('runs auto-grader when an answer is typed and revealed', async () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
+
+    const textarea = screen.getByTestId('answer-input')
+    fireEvent.change(textarea, { target: { value: 'Nationalism, imperialism, militarism and alliance systems' } })
+
+    fireEvent.click(screen.getByTestId('show-answer'))
+
+    expect(await screen.findByTestId('autograde-feedback')).toBeInTheDocument()
+    expect(screen.getByText(/Suggested:/i)).toBeInTheDocument()
+  })
+
+  it('accepts suggested rating when pressing Space after reveal', async () => {
+    render(<ActiveRecallCard card={mockCard} onResult={mockOnResult} />)
+
+    const textarea = screen.getByTestId('answer-input')
+    fireEvent.change(textarea, {
+      target: { value: 'Nationalism, imperialism, militarism, alliance system, assassination of Franz Ferdinand' }
+    })
+
+    fireEvent.click(screen.getByTestId('show-answer'))
+
+    await screen.findByTestId('autograde-feedback')
+
+    // Press Space to accept suggested rating
+    fireEvent.keyDown(window, { key: ' ' })
+    expect(mockOnResult).toHaveBeenCalledWith(5)
+  })
 })

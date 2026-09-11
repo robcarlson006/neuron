@@ -51,7 +51,9 @@ Evaluate the student's answer and respond in JSON:
 {
   "correct": true or false,
   "score": 0-5,
-  "feedback": "Specific, constructive feedback. What did they get right? What did they miss? What is the key concept they should understand?"
+  "feedback": "Specific, constructive feedback. What did they get right? What did they miss? What is the key concept they should understand?",
+  "matched_concepts": ["concept or keyword they successfully recalled"],
+  "missing_concepts": ["concept or keyword they missed or omitted"]
 }
 
 Be fair but academically rigorous. Partial credit answers that capture the core concept should be marked correct.
@@ -120,10 +122,20 @@ export function parseEvaluationResponse(responseText: string): EvaluationResult 
     throw new Error('Invalid evaluation response: missing feedback field')
   }
 
+  const matched_concepts = Array.isArray(parsed.matched_concepts)
+    ? parsed.matched_concepts.filter((c: unknown) => typeof c === 'string')
+    : undefined
+
+  const missing_concepts = Array.isArray(parsed.missing_concepts)
+    ? parsed.missing_concepts.filter((c: unknown) => typeof c === 'string')
+    : undefined
+
   return {
     correct: parsed.correct,
     score: parsed.score,
-    feedback: parsed.feedback
+    feedback: parsed.feedback,
+    matched_concepts,
+    missing_concepts
   }
 }
 

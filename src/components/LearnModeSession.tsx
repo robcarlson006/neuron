@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import LatexText from './LatexText'
+import { evaluateSemantically } from '../lib/semanticEvaluator'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,33 +80,6 @@ function clearProgress(storageKey: string): void {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function levenshtein(a: string, b: string): number {
-  const m = a.length
-  const n = b.length
-  const dp: number[][] = []
-  for (let i = 0; i <= m; i++) {
-    dp[i] = []
-    for (let j = 0; j <= n; j++) {
-      if (i === 0) {
-        dp[i][j] = j
-      } else if (j === 0) {
-        dp[i][j] = i
-      } else if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1]
-      } else {
-        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
-      }
-    }
-  }
-  return dp[m][n]
-}
-
-function stringSimilarity(a: string, b: string): number {
-  const max = Math.max(a.length, b.length)
-  if (max === 0) return 1
-  return (max - levenshtein(a, b)) / max
-}
-
 function buildChoices(card: LCard, allCards: LCard[]): Choice[] {
   const pool = allCards.filter(
     c => c.id !== card.id && c.back.trim() !== card.back.trim()
@@ -154,6 +128,7 @@ export default function LearnModeSession({
   const [writtenInput, setWrittenInput] = useState('')
   const [writtenAnswered, setWrittenAnswered] = useState(false)
   const [writtenResult, setWrittenResult] = useState<'correct' | 'incorrect' | null>(null)
+  const [writtenFeedback, setWrittenFeedback] = useState<string>('')
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -203,6 +178,7 @@ export default function LearnModeSession({
     setWrittenInput('')
     setWrittenAnswered(false)
     setWrittenResult(null)
+    setWrittenFeedback('')
     writtenAnsweredRef.current = false
     writtenResultRef.current = null
     writtenInputRef.current = ''
@@ -320,16 +296,18 @@ export default function LearnModeSession({
     const item = queueRef.current[currentIdxRef.current]
     if (!item || item.phase !== 2) return
 
-    const user = writtenInputRef.current.trim().toLowerCase()
-    const correct = item.card.back.trim().toLowerCase()
+    const user = writtenInputRef.current.trim()
+    const correct = item.card.back.trim()
 
-    let result: 'correct' | 'spelling' | 'incorrect'
-    if (user === correct) {
-      result = 'correct'
-    } else {
-      result = stringSimilarity(user, correct) >= 0.85 ? 'correct' : 'incorrect'
-    }
+    const evaluated = evaluateSemantically(user, correct)
+    const wasCorrect =
+      user.toLowerCase() === correct.toLowerCase() ||
+      evaluated.correct ||
+      evaluated.score >= 0.65
 
+    const result: 'correct' | 'incorrect' = wasCorrect ? 'correct' : 'incorrect'
+
+    setWrittenFeedback(evaluated.feedback)
     setWrittenResult(result)
     setWrittenAnswered(true)
     writtenAnsweredRef.current = true
@@ -598,6 +576,12 @@ export default function LearnModeSession({
                       {writtenResult === 'correct' && '✓ Correct!'}
                       {writtenResult === 'incorrect' && '✗ Incorrect'}
                     </p>
+
+                    {writtenFeedback && (
+                      <p className="text-xs text-slate-600 dark:text-slate-300 mb-2 leading-relaxed">
+                        {writtenFeedback}
+                      </p>
+                    )}
 
                     {writtenResult === 'incorrect' && (
                       <div className="mt-1.5">
