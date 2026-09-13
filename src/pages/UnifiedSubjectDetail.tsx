@@ -7,7 +7,7 @@ import CurriculumView from '../components/classes/CurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
 import CardImportModal from '../components/CardImportModal'
-import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material } from '../types'
+import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent } from '../types'
 
 type Tab = 'cards' | 'curriculum' | 'materials' | 'deadlines'
 
@@ -69,6 +69,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
    * the one-click "Update curriculum?" offer until acted on or dismissed. */
   const [pendingUpdateMaterial, setPendingUpdateMaterial] = useState<string | null>(null)
   const [updatingSyllabus, setUpdatingSyllabus] = useState(false)
+  const [syncingFolder, setSyncingFolder] = useState(false)
 
   // ── Deadlines state (from SubjectDetail) ──
   const [deadlines, setDeadlines] = useState<Deadline[]>([])
@@ -83,6 +84,29 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setEditName(subject?.name || '')
       setEditCode(subject?.course_code || '')
       setEditStatus(subject?.status || 'active')
+    }
+  }, [subjectId, user])
+
+  // ── Folder sync event listener ──
+  useEffect(() => {
+    if (!window.electronAPI?.onFolderSync) return
+
+    const unsubscribe = window.electronAPI.onFolderSync((event: FolderSyncEvent) => {
+      if (event.subjectId === subjectId) {
+        loadAllData()
+        const addedCount = event.added?.length || 0
+        const updatedCount = event.updated?.length || 0
+        const msg = `✨ Synced folder: ${addedCount} added, ${updatedCount} updated`
+        setToast({ message: msg, type: 'success' })
+        setTimeout(() => setToast(null), 4000)
+        addToast({ type: 'success', title: 'Folder Synced', message: msg })
+      }
+    })
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe()
+      }
     }
   }, [subjectId, user])
 
@@ -407,6 +431,135 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setToast({ message: `Deleted "${filename}"`, type: 'success' })
     } catch (err: any) {
       setToast({ message: `Failed to delete material: ${err.message}`, type: 'error' })
+    }
+  }
+
+  // ── Linked folder action handlers ──
+  function getFolderBaseName(folderPath: string): string {
+    const normalized = folderPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    const parts = normalized.split('/')
+    return parts[parts.length - 1] || folderPath
+  }
+
+  function formatLastSynced(timestamp?: string | null): string {
+    if (!timestamp) return 'Never'
+    try {
+      const date = new Date(timestamp)
+      const diffMs = Date.now() - date.getTime()
+      if (diffMs < 60_000) return 'Just now'
+      if (diffMs < 3600_000) {
+        const mins = Math.floor(diffMs / 60_000)
+        return `${mins}m ago`
+      }
+      return date.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      })
+    } catch {
+      return timestamp
+    }
+  }
+
+  async function handleLinkFolder(): Promise<void> {
+    try {
+      const folderPath = await window.electronAPI.selectFolderDialog()
+      if (!folderPath) return
+
+      setSyncingFolder(true)
+      const res = await window.electronAPI.linkFolderToClass(subjectId, folderPath)
+      if (res.success) {
+        if (subject) {
+          updateSubject({
+            ...subject,
+            linked_folder_path: folderPath,
+            folder_sync_status: 'idle',
+            folder_last_synced_at: new Date().toISOString()
+          })
+        }
+        await loadAllData()
+        const msg = `Linked folder "${getFolderBaseName(folderPath)}" (${res.addedCount} files added)`
+        setToast({ message: msg, type: 'success' })
+        setTimeout(() => setToast(null), 4000)
+        addToast({ type: 'success', title: 'Folder Linked', message: msg })
+      } else {
+        const errMsg = res.error || 'Failed to link folder'
+        setToast({ message: errMsg, type: 'error' })
+        setTimeout(() => setToast(null), 4000)
+        addToast({ type: 'error', title: 'Link Failed', message: errMsg })
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || 'Failed to link folder'
+      setToast({ message: errMsg, type: 'error' })
+      setTimeout(() => setToast(null), 4000)
+      addToast({ type: 'error', title: 'Link Failed', message: errMsg })
+    } finally {
+      setSyncingFolder(false)
+    }
+  }
+
+  async function handleSyncNow(): Promise<void> {
+    if (!subject) return
+    setSyncingFolder(true)
+    try {
+      const res = await window.electronAPI.syncClassFolder(subjectId)
+      if (res.success) {
+        if (subject) {
+          updateSubject({
+            ...subject,
+            folder_last_synced_at: new Date().toISOString()
+          })
+        }
+        await loadAllData()
+        const msg = `✨ Synced folder: ${res.addedCount} added, ${res.updatedCount} updated`
+        setToast({ message: msg, type: 'success' })
+        setTimeout(() => setToast(null), 4000)
+        addToast({ type: 'success', title: 'Folder Synced', message: msg })
+      } else {
+        const errMsg = res.error || 'Failed to sync folder'
+        setToast({ message: errMsg, type: 'error' })
+        setTimeout(() => setToast(null), 4000)
+        addToast({ type: 'error', title: 'Sync Failed', message: errMsg })
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || 'Failed to sync folder'
+      setToast({ message: errMsg, type: 'error' })
+      setTimeout(() => setToast(null), 4000)
+      addToast({ type: 'error', title: 'Sync Failed', message: errMsg })
+    } finally {
+      setSyncingFolder(false)
+    }
+  }
+
+  async function handleUnlinkFolder(): Promise<void> {
+    const confirmed = window.confirm(
+      'Unlink this folder? Previously imported materials and cards will remain intact.'
+    )
+    if (!confirmed) return
+
+    try {
+      const res = await window.electronAPI.unlinkFolderFromClass(subjectId)
+      if (res.success) {
+        if (subject) {
+          updateSubject({
+            ...subject,
+            linked_folder_path: null,
+            folder_sync_status: 'idle',
+            folder_last_synced_at: null
+          })
+        }
+        await loadAllData()
+        const msg = 'Folder unlinked'
+        setToast({ message: msg, type: 'success' })
+        setTimeout(() => setToast(null), 4000)
+        addToast({ type: 'info', title: 'Folder Unlinked', message: msg })
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || 'Failed to unlink folder'
+      setToast({ message: errMsg, type: 'error' })
+      setTimeout(() => setToast(null), 4000)
+      addToast({ type: 'error', title: 'Unlink Failed', message: errMsg })
     }
   }
 
@@ -816,18 +969,93 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             <span className="text-sm text-slate-500 dark:text-slate-400">
               {materials.length} material{materials.length !== 1 ? 's' : ''}
             </span>
-            <button
-              onClick={handleAddMaterial}
-              disabled={addingMaterial}
-              className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-              {addingMaterial ? 'Adding...' : 'Add Material'}
-            </button>
+            <div className="flex items-center gap-2">
+              {!subject?.linked_folder_path && (
+                <button
+                  onClick={handleLinkFolder}
+                  disabled={syncingFolder}
+                  className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  Link Folder
+                </button>
+              )}
+              <button
+                onClick={handleAddMaterial}
+                disabled={addingMaterial}
+                className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                  <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+                {addingMaterial ? 'Adding...' : 'Add Material'}
+              </button>
+            </div>
           </div>
+
+          {/* Linked Folder Bar */}
+          {subject?.linked_folder_path && (
+            <div className="mb-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="text-lg">📁</span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="font-medium text-sm text-slate-800 dark:text-slate-200 truncate"
+                      title={subject.linked_folder_path}
+                    >
+                      {getFolderBaseName(subject.linked_folder_path)}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Watching
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500">
+                    Last synced: {formatLastSynced(subject.folder_last_synced_at)}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSyncNow}
+                  disabled={syncingFolder}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  title="Sync now"
+                >
+                  <svg
+                    className={`w-3.5 h-3.5 ${syncingFolder ? 'animate-spin' : ''}`}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                  </svg>
+                  <span>{syncingFolder ? 'Syncing...' : 'Sync Now'}</span>
+                </button>
+                <button
+                  onClick={() => subject.linked_folder_path && window.electronAPI.openFolder(subject.linked_folder_path)}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
+                  title="Open in Finder / File Explorer"
+                >
+                  Open in Finder
+                </button>
+                <button
+                  onClick={handleUnlinkFolder}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  title="Unlink folder"
+                >
+                  Unlink
+                </button>
+              </div>
+            </div>
+          )}
 
           {materials.length > 0 ? (
             <div className="space-y-1.5">
@@ -837,9 +1065,19 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                   className="flex items-center gap-3 px-4 py-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
                 >
                   <span className="text-sm">📄</span>
-                  <span className="text-sm text-slate-700 dark:text-slate-300 truncate flex-1">
-                    {mat.filename}
-                  </span>
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span className="text-sm text-slate-700 dark:text-slate-300 truncate">
+                      {mat.filename}
+                    </span>
+                    {mat.relative_path && (mat.relative_path.includes('/') || mat.relative_path !== mat.filename) && (
+                      <span
+                        className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center gap-1 shrink-0"
+                        title={mat.relative_path}
+                      >
+                        📁 {mat.relative_path}
+                      </span>
+                    )}
+                  </div>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 uppercase">
                     {mat.file_type}
                   </span>
