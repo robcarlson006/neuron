@@ -108,6 +108,15 @@ const mockElectronAPI = {
   startLocalEngine: jest.fn().mockResolvedValue({ success: true, port: 8080 }),
   stopLocalEngine: jest.fn().mockResolvedValue({ success: true }),
   onLocalDownloadProgress: jest.fn().mockReturnValue(() => {}),
+
+  // Linked Class Folder Operations
+  selectFolderDialog: jest.fn().mockResolvedValue(null),
+  linkFolderToClass: jest.fn().mockResolvedValue({ success: true, addedCount: 0, updatedCount: 0 }),
+  unlinkFolderFromClass: jest.fn().mockResolvedValue({ success: true }),
+  syncClassFolder: jest.fn().mockResolvedValue({ success: true, addedCount: 0, updatedCount: 0 }),
+  openFolder: jest.fn().mockResolvedValue(undefined),
+  getFolderStatus: jest.fn().mockResolvedValue({ isWatching: false, status: 'idle' }),
+  onFolderSync: jest.fn().mockReturnValue(() => {}),
 }
 
 Object.defineProperty(window, 'electronAPI', {

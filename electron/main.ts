@@ -15,6 +15,8 @@ import { registerCardGenerationHandlers, setCardGenerationDatabase } from './ipc
 import { registerClassHandlers, setClassDatabase } from './ipc/classHandlers'
 import { registerCalendarHandlers, setCalendarDatabase } from './ipc/calendarHandlers'
 import { registerLocalEngineHandlers, setLocalEngineWindowGetter, stopEngine } from './ipc/localEngine'
+import { registerFolderHandlers, setFolderDatabase } from './ipc/folderHandlers'
+import { FolderSyncService } from './ipc/folderSyncService'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -201,7 +203,10 @@ app.whenReady().then(async () => {
   registerUpdaterHandlers(() => mainWindow)
   setLocalEngineWindowGetter(() => mainWindow)
   registerLocalEngineHandlers()
+  setFolderDatabase(db)
+  registerFolderHandlers()
   createWindow()
+  FolderSyncService.init(db, () => mainWindow)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -212,6 +217,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', () => {
+  FolderSyncService.stopAllWatchers()
 })
 
 app.on('will-quit', () => {

@@ -8,7 +8,8 @@ import type {
   AnkiConnectNote, PluginEndpoint, AccessibilitySettings, OnboardingData,
   ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult,
   TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
-  HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus
+  HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus,
+  FolderSyncResult, FolderSyncEvent
 } from '../src/types'
 
 const electronAPI = {
@@ -499,6 +500,25 @@ const electronAPI = {
     const handler = (_e: Electron.IpcRendererEvent, data: DownloadProgress): void => cb(data)
     ipcRenderer.on('local-ai:download-progress', handler)
     return () => { ipcRenderer.removeListener('local-ai:download-progress', handler) }
+  },
+
+  // ── Linked Class Folder Operations ──
+  selectFolderDialog: (): Promise<string | null> =>
+    ipcRenderer.invoke('folder:selectDialog'),
+  linkFolderToClass: (subjectId: number, folderPath: string): Promise<FolderSyncResult> =>
+    ipcRenderer.invoke('folder:link', subjectId, folderPath),
+  unlinkFolderFromClass: (subjectId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('folder:unlink', subjectId),
+  syncClassFolder: (subjectId: number): Promise<FolderSyncResult> =>
+    ipcRenderer.invoke('folder:syncNow', subjectId),
+  openFolder: (folderPath: string): Promise<void> =>
+    ipcRenderer.invoke('folder:openFolder', folderPath),
+  getFolderStatus: (subjectId: number): Promise<{ isWatching: boolean; status: string }> =>
+    ipcRenderer.invoke('folder:getStatus', subjectId),
+  onFolderSync: (callback: (event: FolderSyncEvent) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: FolderSyncEvent): void => callback(data)
+    ipcRenderer.on('folder:sync-event', handler)
+    return () => { ipcRenderer.removeListener('folder:sync-event', handler) }
   },
 }
 

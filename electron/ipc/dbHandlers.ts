@@ -14,6 +14,7 @@ import {
 } from '../../src/lib/fsrs'
 import { bktUpdate } from '../../src/lib/bkt'
 import { deleteSubjectCascade, deleteCardCascade, deleteCardsCascade } from '../../src/lib/db'
+import { FolderSyncService } from './folderSyncService'
 import { getOrCreateMaterialFolder, syncCardsToMaterialFolders } from './materialFolderHelper'
 import type {
   User,
@@ -84,6 +85,9 @@ export function registerDbHandlers(): void {
   })
 
   ipcMain.handle('db:deleteSubject', (_event, subjectId: number) => {
+    // Stop any active file watcher for this subject before deleting
+    FolderSyncService.stopWatching(subjectId)
+
     // Cascade delete everything related to this subject in dependency order.
     // Run inside a transaction so a mid-sequence failure cannot leave a
     // half-deleted subject behind. deleteSubjectCascade walks every table with a
