@@ -746,6 +746,7 @@ export interface ClassCreationData {
   materials: ClassCreationMaterial[]
   deadlines?: { label: string; deadline_date: string; deadline_type: string }[]
   syllabusOption: 'generate' | 'manual' | 'later'
+  linkedFolderPath?: string | null
 }
 
 export interface SyllabusGenerationResult {

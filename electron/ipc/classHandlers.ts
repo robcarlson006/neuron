@@ -5,6 +5,7 @@ import { getAIConfig, getApiKey } from './aiConfigStore'
 import { safeParseAIJson, safeParseAICards } from '../../src/lib/jsonRepair'
 import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
+import { FolderSyncService } from './folderSyncService'
 import type { ClassCreationData, Subject, Card } from '../../src/types'
 
 let db: Database.Database
@@ -21,8 +22,8 @@ export function registerClassHandlers(): void {
 
     // 1. Create the subject (extended with class metadata)
     const subjectResult = db.prepare(`
-      INSERT INTO subjects (user_id, name, status, course_code, subject_type, time_commitment_minutes, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO subjects (user_id, name, status, course_code, subject_type, time_commitment_minutes, linked_folder_path, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       userId,
       data.name.trim(),
@@ -30,11 +31,20 @@ export function registerClassHandlers(): void {
       data.courseCode || null,
       data.subjectType || 'class',
       data.timeCommitmentMinutes || 60,
+      data.linkedFolderPath || null,
       new Date().toISOString()
     )
 
     const subjectId = subjectResult.lastInsertRowid as number
     const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subjectId) as Subject
+
+    // Start watching linked folder and trigger sync if linked
+    if (data.linkedFolderPath) {
+      FolderSyncService.startWatching(subjectId, data.linkedFolderPath)
+      FolderSyncService.scanAndSync(db, subjectId, data.linkedFolderPath).catch(err => {
+        console.error('Initial folder sync error:', err)
+      })
+    }
 
     // 2. Save materials
     const savedMaterials: { id: number; filename: string; fileType: string }[] = []

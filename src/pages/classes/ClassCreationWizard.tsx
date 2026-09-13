@@ -48,12 +48,26 @@ export default function ClassCreationWizard({
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [parsedFiles, setParsedFiles] = useState<{ name: string; fileType: string; contentText: string }[]>([])
   const [parsingFiles, setParsingFiles] = useState(false)
+  const [linkedFolderPath, setLinkedFolderPath] = useState<string | null>(null)
 
   // Step 3: Deadlines
   const [deadlines, setDeadlines] = useState<DeadlineEntry[]>([])
 
   // Step 4: Syllabus
   const [syllabusOption, setSyllabusOption] = useState<'generate' | 'later'>('generate')
+
+  // ── Folder selection ──
+
+  async function handleSelectFolder(): Promise<void> {
+    try {
+      const folderPath = await window.electronAPI.selectFolderDialog()
+      if (folderPath) {
+        setLinkedFolderPath(folderPath)
+      }
+    } catch (err) {
+      console.error('Error selecting folder:', err)
+    }
+  }
 
   // ── File handling ──
 
@@ -115,7 +129,7 @@ export default function ClassCreationWizard({
   }
 
   function canProceedFromMaterials(): boolean {
-    return pendingFiles.length > 0
+    return pendingFiles.length > 0 || !!linkedFolderPath
   }
 
   // ── Create ──
@@ -148,7 +162,8 @@ export default function ClassCreationWizard({
           deadline_date: d.deadline_date,
           deadline_type: d.deadline_type
         })),
-        syllabusOption
+        syllabusOption,
+        linkedFolderPath: linkedFolderPath || null
       }
 
       const result = await window.electronAPI.classCreate(user.id, data)
@@ -283,6 +298,56 @@ export default function ClassCreationWizard({
             <span>⚠️ Files will be parsed when you create the class</span>
           </div>
         )}
+
+        {/* Linked Local Folder Section */}
+        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Or Link Local Folder (Live Sync)
+            </span>
+          </div>
+
+          {!linkedFolderPath ? (
+            <button
+              type="button"
+              onClick={handleSelectFolder}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 hover:border-emerald-500 dark:hover:border-emerald-500 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 text-sm font-medium transition-all"
+            >
+              📁 Link Local Folder
+            </button>
+          ) : (
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+              <div className="flex items-center gap-3 min-w-0 mr-3">
+                <span className="text-xl shrink-0">📁</span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">Linked Folder</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-200/60 dark:bg-emerald-800/50 text-emerald-800 dark:text-emerald-200 font-medium">Auto-sync</span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 truncate mt-0.5" title={linkedFolderPath}>
+                    {linkedFolderPath}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSelectFolder}
+                  className="px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 rounded hover:bg-emerald-100/50 dark:hover:bg-emerald-900/30 transition-colors"
+                >
+                  Change
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLinkedFolderPath(null)}
+                  className="px-2.5 py-1 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -432,6 +497,18 @@ export default function ClassCreationWizard({
             <p className="text-sm text-slate-400">No materials uploaded</p>
           )}
         </div>
+
+        {linkedFolderPath && (
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm">📁</span>
+              <p className="font-semibold text-slate-800 dark:text-slate-200 text-sm">Linked Folder</p>
+            </div>
+            <p className="text-sm text-slate-600 dark:text-slate-400 truncate" title={linkedFolderPath}>
+              {linkedFolderPath}
+            </p>
+          </div>
+        )}
 
         {deadlines.filter(d => d.label && d.deadline_date).length > 0 && (
           <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-2">
