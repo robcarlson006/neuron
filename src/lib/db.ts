@@ -17,6 +17,9 @@ export const DB_SCHEMA = `
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ongoing', 'archived')),
     course_code TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    linked_folder_path TEXT DEFAULT NULL,
+    folder_last_synced_at TEXT DEFAULT NULL,
+    folder_sync_status TEXT DEFAULT 'idle' CHECK (folder_sync_status IN ('idle', 'syncing', 'error')),
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
 
@@ -27,6 +30,9 @@ export const DB_SCHEMA = `
     file_type TEXT NOT NULL,
     content_text TEXT,
     uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+    file_mtime INTEGER DEFAULT NULL,
+    file_size INTEGER DEFAULT NULL,
+    relative_path TEXT DEFAULT NULL,
     FOREIGN KEY (subject_id) REFERENCES subjects(id)
   );
 
@@ -536,6 +542,13 @@ export const MIGRATIONS_SQL = [
   "CREATE TABLE IF NOT EXISTS calendar_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('ical', 'manual', 'google_oauth')), url TEXT, color TEXT DEFAULT '#8b5cf6', last_synced_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
   "CREATE TABLE IF NOT EXISTS calendar_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, source_id INTEGER, external_id TEXT, title TEXT NOT NULL, description TEXT, location TEXT, start_time TEXT NOT NULL, end_time TEXT NOT NULL, all_day INTEGER NOT NULL DEFAULT 0, recurrence_rule TEXT, subject_id INTEGER, event_type TEXT NOT NULL DEFAULT 'lecture' CHECK(event_type IN ('lecture', 'seminar', 'lab', 'workshop', 'study', 'personal')), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (source_id) REFERENCES calendar_sources(id) ON DELETE CASCADE, FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL)",
   "CREATE INDEX IF NOT EXISTS idx_calendar_events_user_time ON calendar_events (user_id, start_time, end_time)",
+  // V4.2: Linked class folders
+  "ALTER TABLE subjects ADD COLUMN linked_folder_path TEXT DEFAULT NULL",
+  "ALTER TABLE subjects ADD COLUMN folder_last_synced_at TEXT DEFAULT NULL",
+  "ALTER TABLE subjects ADD COLUMN folder_sync_status TEXT DEFAULT 'idle'",
+  "ALTER TABLE materials ADD COLUMN file_mtime INTEGER DEFAULT NULL",
+  "ALTER TABLE materials ADD COLUMN file_size INTEGER DEFAULT NULL",
+  "ALTER TABLE materials ADD COLUMN relative_path TEXT DEFAULT NULL",
 ]
 
 export const MASTERED_INTERVAL = 21

@@ -16,6 +16,9 @@ export interface Subject {
   time_commitment_minutes?: number
   syllabus_generated?: number
   color?: string
+  linked_folder_path?: string | null
+  folder_last_synced_at?: string | null
+  folder_sync_status?: 'idle' | 'syncing' | 'error'
   created_at: string
 }
 
@@ -26,6 +29,9 @@ export interface Material {
   file_type: 'pdf' | 'docx' | 'pptx'
   content_text: string
   uploaded_at: string
+  file_mtime?: number | null
+  file_size?: number | null
+  relative_path?: string | null
   /** Set to 1 once this material's content has been folded into the syllabus
    * (either at initial generation or by an incremental update). */
   syllabus_processed?: number
@@ -881,5 +887,21 @@ export interface LocalEngineStatus {
   port?: number
   activeModelId?: string
   error?: string
+}
+
+// ── Linked Class Folder Sync Types ────────────────────────────────────────
+
+export interface FolderSyncResult {
+  success: boolean
+  addedCount: number
+  updatedCount: number
+  error?: string
+}
+
+export interface FolderSyncEvent {
+  subjectId: number
+  added: string[]
+  updated: string[]
+  timestamp: string
 }
 

@@ -3,7 +3,7 @@
  * since the actual DB operations run in the main process
  */
 
-import { DB_SCHEMA, MASTERED_INTERVAL } from '../../src/lib/db'
+import { DB_SCHEMA, MASTERED_INTERVAL, MIGRATIONS_SQL } from '../../src/lib/db'
 
 describe('Database Schema', () => {
   it('contains users table definition', () => {
@@ -54,6 +54,27 @@ describe('Database Schema', () => {
   it('contains daily_plans with is_dismissed column', () => {
     expect(DB_SCHEMA).toContain('CREATE TABLE IF NOT EXISTS daily_plans')
     expect(DB_SCHEMA).toContain('is_dismissed INTEGER DEFAULT 0')
+  })
+
+  it('contains linked folder columns in subjects schema', () => {
+    expect(DB_SCHEMA).toContain('linked_folder_path TEXT DEFAULT NULL')
+    expect(DB_SCHEMA).toContain('folder_last_synced_at TEXT DEFAULT NULL')
+    expect(DB_SCHEMA).toContain('folder_sync_status TEXT DEFAULT')
+  })
+
+  it('contains folder sync columns in materials schema', () => {
+    expect(DB_SCHEMA).toContain('file_mtime INTEGER DEFAULT NULL')
+    expect(DB_SCHEMA).toContain('file_size INTEGER DEFAULT NULL')
+    expect(DB_SCHEMA).toContain('relative_path TEXT DEFAULT NULL')
+  })
+
+  it('contains linked folder migrations in MIGRATIONS_SQL', () => {
+    expect(MIGRATIONS_SQL).toContain('ALTER TABLE subjects ADD COLUMN linked_folder_path TEXT DEFAULT NULL')
+    expect(MIGRATIONS_SQL).toContain('ALTER TABLE subjects ADD COLUMN folder_last_synced_at TEXT DEFAULT NULL')
+    expect(MIGRATIONS_SQL).toContain("ALTER TABLE subjects ADD COLUMN folder_sync_status TEXT DEFAULT 'idle'")
+    expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN file_mtime INTEGER DEFAULT NULL')
+    expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN file_size INTEGER DEFAULT NULL')
+    expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN relative_path TEXT DEFAULT NULL')
   })
 
   it('uses IF NOT EXISTS to be safe on re-runs', () => {
