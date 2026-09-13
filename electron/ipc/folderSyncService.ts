@@ -317,7 +317,7 @@ export class FolderSyncService {
         addedCount: added.length,
         updatedCount: updated.length
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(`Scan and sync error for subject ${subjectId}:`, err)
       try {
         db.prepare("UPDATE subjects SET folder_sync_status = 'error' WHERE id = ?").run(subjectId)
@@ -326,7 +326,7 @@ export class FolderSyncService {
         success: false,
         addedCount: 0,
         updatedCount: 0,
-        error: err?.message || String(err)
+        error: err instanceof Error ? err.message : String(err)
       }
     }
   }

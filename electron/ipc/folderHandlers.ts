@@ -1,11 +1,11 @@
 import { ipcMain, dialog, shell } from 'electron'
 import type Database from 'better-sqlite3'
-import { FolderSyncService } from './folderSyncService'
+import { FolderSyncService, type SyncDatabase } from './folderSyncService'
 import type { FolderSyncResult } from '../../src/types'
 
-let db: Database.Database | any
+let db: Database.Database | SyncDatabase | null = null
 
-export function setFolderDatabase(database: Database.Database | any): void {
+export function setFolderDatabase(database: Database.Database | SyncDatabase): void {
   db = database
 }
 

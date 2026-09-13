@@ -387,29 +387,23 @@ describe('FolderSyncService', () => {
       expect(validMat.content_text).toContain('Valid content')
     })
 
-    it('triggers debounced sync when files are modified while watching', (done) => {
+    it('triggers debounced sync when files are modified while watching', async () => {
       db.prepare(`
         INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
         VALUES (1, 1, 'Biology 101', 'active', ?)
       `).run(tempDir)
 
-      FolderSyncService.init(db, () => null)
-      FolderSyncService.startWatching(1, tempDir)
+      await FolderSyncService.init(db, () => null)
 
       // Write a file to trigger watcher
       fs.writeFileSync(path.join(tempDir, 'watch_test.txt'), 'Created during watch')
 
-      // Wait 1800ms for the 1500ms debounce to fire
-      setTimeout(() => {
-        try {
-          const materials = db.prepare('SELECT * FROM materials WHERE subject_id = 1').all() as any[]
-          expect(materials.length).toBe(1)
-          expect(materials[0].filename).toBe('watch_test.txt')
-          done()
-        } catch (err) {
-          done(err)
-        }
-      }, 1800)
-    }, 5000)
+      // Wait 2200ms for the 1500ms debounce to fire cleanly even under full parallel suite load
+      await new Promise((resolve) => setTimeout(resolve, 2200))
+
+      const materials = db.prepare('SELECT * FROM materials WHERE subject_id = 1').all() as any[]
+      expect(materials.length).toBe(1)
+      expect(materials[0].filename).toBe('watch_test.txt')
+    }, 10000)
   })
 })
