@@ -9,7 +9,7 @@ import type {
   ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult,
   TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
   HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus,
-  FolderSyncResult, FolderSyncEvent
+  FolderSyncResult, FolderSyncEvent, Lecture
 } from '../src/types'
 
 const electronAPI = {
@@ -519,6 +519,42 @@ const electronAPI = {
     const handler = (_e: Electron.IpcRendererEvent, data: FolderSyncEvent): void => callback(data)
     ipcRenderer.on('folder:sync-event', handler)
     return () => { ipcRenderer.removeListener('folder:sync-event', handler) }
+  },
+
+  // ── Lecture Audio Recording & Notes ──
+  startLectureRecording: (
+    subjectId: number,
+    title?: string
+  ): Promise<{ sessionId: string; lectureId: number; audioPath: string }> =>
+    ipcRenderer.invoke('lecture:startRecording', subjectId, title),
+  sendLectureAudioChunk: (sessionId: string, chunk: ArrayBuffer): Promise<boolean> =>
+    ipcRenderer.invoke('lecture:writeChunk', sessionId, chunk),
+  stopLectureRecording: (
+    sessionId: string,
+    durationSeconds: number
+  ): Promise<{ lectureId: number; audioPath: string; fileSizeBytes: number }> =>
+    ipcRenderer.invoke('lecture:stopRecording', sessionId, durationSeconds),
+  abortLectureRecording: (sessionId: string): Promise<boolean> =>
+    ipcRenderer.invoke('lecture:abortRecording', sessionId),
+  listLectures: (subjectId: number): Promise<Lecture[]> =>
+    ipcRenderer.invoke('lecture:list', subjectId),
+  getLecture: (lectureId: number): Promise<Lecture | null> =>
+    ipcRenderer.invoke('lecture:get', lectureId),
+  deleteLecture: (lectureId: number, deleteAudioFile = true): Promise<boolean> =>
+    ipcRenderer.invoke('lecture:delete', lectureId, deleteAudioFile),
+  getLectureAudioUrl: (audioPath: string): Promise<string> =>
+    ipcRenderer.invoke('lecture:getAudioUrl', audioPath),
+  retryLectureTranscription: (lectureId: number): Promise<boolean> =>
+    ipcRenderer.invoke('lecture:retryTranscription', lectureId),
+  onLectureStatusUpdate: (
+    callback: (data: { lectureId: number; status: string; materialId?: number; error?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { lectureId: number; status: string; materialId?: number; error?: string }
+    ): void => callback(data)
+    ipcRenderer.on('lecture:status-update', handler)
+    return () => { ipcRenderer.removeListener('lecture:status-update', handler) }
   },
 }
 

@@ -1,5 +1,6 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, protocol, net } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Database from 'better-sqlite3'
 import { DB_SCHEMA, MIGRATIONS_SQL } from '../src/lib/db'
@@ -16,7 +17,22 @@ import { registerClassHandlers, setClassDatabase } from './ipc/classHandlers'
 import { registerCalendarHandlers, setCalendarDatabase } from './ipc/calendarHandlers'
 import { registerLocalEngineHandlers, setLocalEngineWindowGetter, stopEngine } from './ipc/localEngine'
 import { registerFolderHandlers, setFolderDatabase } from './ipc/folderHandlers'
+import { registerLectureHandlers, setLectureDatabase } from './ipc/lectureHandlers'
 import { FolderSyncService } from './ipc/folderSyncService'
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'neuron-audio',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+      bypassCSP: true
+    }
+  }
+])
 
 let mainWindow: BrowserWindow | null = null
 
@@ -205,6 +221,20 @@ app.whenReady().then(async () => {
   registerLocalEngineHandlers()
   setFolderDatabase(db)
   registerFolderHandlers()
+  setLectureDatabase(db)
+  registerLectureHandlers()
+
+  protocol.handle('neuron-audio', (request) => {
+    try {
+      const rawPath = request.url.replace(/^neuron-audio:\/\//, '')
+      const filePath = decodeURIComponent(rawPath)
+      return net.fetch(pathToFileURL(filePath).toString())
+    } catch (err) {
+      console.error('Failed to handle neuron-audio protocol request:', err)
+      return new Response('Audio file not found', { status: 404 })
+    }
+  })
+
   createWindow()
   FolderSyncService.init(db, () => mainWindow)
 
