@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useLectureRecordingStore } from '../../store/lectureRecordingStore'
 
 interface AudioDeviceSelectorProps {
@@ -14,10 +14,6 @@ export default function AudioDeviceSelector({
 }: AudioDeviceSelectorProps): React.JSX.Element {
   const { selectedDeviceId, setSelectedDeviceId, isRecording, audioLevel } = useLectureRecordingStore()
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
-  const [previewLevel, setPreviewLevel] = useState(0)
-  const previewStreamRef = useRef<MediaStream | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const animFrameRef = useRef<number | null>(null)
 
   const loadDevices = async () => {
     try {
@@ -39,82 +35,9 @@ export default function AudioDeviceSelector({
     }
   }, [])
 
-  // If not actively recording, run a lightweight preview level meter so user can see mic working
-  useEffect(() => {
-    if (isRecording || !showMeter) {
-      if (previewStreamRef.current) {
-        previewStreamRef.current.getTracks().forEach((t) => t.stop())
-        previewStreamRef.current = null
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {})
-        audioContextRef.current = null
-      }
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current)
-        animFrameRef.current = null
-      }
-      return
-    }
 
-    let isMounted = true
-
-    const startPreviewMeter = async () => {
-      try {
-        const constraints: MediaStreamConstraints = {
-          audio: selectedDeviceId && selectedDeviceId !== 'default' ? { deviceId: { exact: selectedDeviceId } } : true,
-          video: false
-        }
-        const stream = await navigator.mediaDevices.getUserMedia(constraints)
-        if (!isMounted) {
-          stream.getTracks().forEach((t) => t.stop())
-          return
-        }
-
-        previewStreamRef.current = stream
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
-        if (AudioCtx) {
-          const ctx = new AudioCtx()
-          audioContextRef.current = ctx
-          const source = ctx.createMediaStreamSource(stream)
-          const analyser = ctx.createAnalyser()
-          analyser.fftSize = 128
-          source.connect(analyser)
-
-          const data = new Uint8Array(analyser.frequencyBinCount)
-          const update = () => {
-            if (!isMounted) return
-            analyser.getByteFrequencyData(data)
-            let sum = 0
-            for (let i = 0; i < data.length; i++) sum += data[i]
-            const avg = sum / data.length
-            setPreviewLevel(Math.min(100, Math.round((avg / 128) * 100)))
-            animFrameRef.current = requestAnimationFrame(update)
-          }
-          update()
-        }
-      } catch {
-        // mic preview optional
-      }
-    }
-
-    startPreviewMeter()
-
-    return () => {
-      isMounted = false
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
-      if (previewStreamRef.current) {
-        previewStreamRef.current.getTracks().forEach((t) => t.stop())
-        previewStreamRef.current = null
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {})
-        audioContextRef.current = null
-      }
-    }
-  }, [selectedDeviceId, isRecording, showMeter])
-
-  const currentLevel = isRecording ? audioLevel : previewLevel
+  // Only show mic level when actually recording — never open the mic proactively.
+  const currentLevel = isRecording ? audioLevel : 0
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>

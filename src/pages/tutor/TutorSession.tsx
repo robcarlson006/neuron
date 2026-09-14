@@ -274,7 +274,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       addToast({ type: 'error', title: 'Request timed out', message: 'The AI took too long to respond.' })
       setError('Connection timed out. The AI server did not respond in time. Check your internet connection or AI configuration in Settings.')
       setPageState('error')
-    }, 45000)
+    }, 120000)
 
     try {
       await window.electronAPI.tutorStreamChat({

@@ -19,8 +19,8 @@ import {
 
 /** Default request timeout. Card generation/evaluation can be slow, so be generous. */
 const DEFAULT_TIMEOUT_MS = 120_000
-/** Initial connection timeout for streaming. */
-const CONNECT_TIMEOUT_MS = 45_000
+/** Initial connection timeout for streaming. DeepSeek can take 15–40 s on first token. */
+const CONNECT_TIMEOUT_MS = 120_000
 
 /**
  * Call an AI provider with a prompt using raw fetch (no SDK imports).
