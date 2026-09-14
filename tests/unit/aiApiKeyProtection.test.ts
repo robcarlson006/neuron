@@ -121,12 +121,16 @@ describe('API Key Protection & Recovery', () => {
   })
 
   describe('saveApiKey protection', () => {
-    it('saves a valid key to memory and db', () => {
+    it('saves valid key to both encrypted and fallback plain storage in db', () => {
       saveApiKey('sk-real-valid-api-key-12345')
       expect(getApiKey()).toBe('sk-real-valid-api-key-12345')
 
-      const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get('ai_api_key_encrypted') as { value: string }
-      expect(row).toBeDefined()
+      const encRow = db.prepare('SELECT value FROM app_meta WHERE key = ?').get('ai_api_key_encrypted') as { value: string }
+      expect(encRow).toBeDefined()
+
+      const plainRow = db.prepare('SELECT value FROM app_meta WHERE key = ?').get('ai_api_key_plain_fallback') as { value: string }
+      expect(plainRow).toBeDefined()
+      expect(Buffer.from(plainRow.value, 'base64').toString('utf-8')).toBe('sk-real-valid-api-key-12345')
     })
 
     it('refuses to overwrite a valid key with a masked key', () => {
@@ -139,17 +143,25 @@ describe('API Key Protection & Recovery', () => {
       // Key must remain unchanged
       expect(getApiKey()).toBe('sk-original-key-1234567890')
     })
-
-    it('deletes legacy deepseek_encrypted_key when a new key is saved', () => {
-      db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('deepseek_encrypted_key', 'old_zombie_key')
-      saveApiKey('sk-brand-new-key-123456789')
-
-      const legacyRow = db.prepare('SELECT value FROM app_meta WHERE key = ?').get('deepseek_encrypted_key')
-      expect(legacyRow).toBeUndefined()
-    })
   })
 
   describe('getApiKey self-healing recovery', () => {
+    it('recovers from ai_api_key_plain_fallback if safeStorage decryption throws an exception', () => {
+      // Simulate safeStorage failing / throwing
+      mockSafeStorage.decryptString.mockImplementationOnce(() => {
+        throw new Error('KeyChain decryption failed across app build updates')
+      })
+
+      const plainEnc = Buffer.from('sk-persisted-plain-fallback-key').toString('base64')
+      db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('ai_api_key_plain_fallback', plainEnc)
+      db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('ai_api_key_encrypted', 'invalid_buf')
+
+      setAIDatabase(db)
+
+      const recovered = getApiKey()
+      expect(recovered).toBe('sk-persisted-plain-fallback-key')
+    })
+
     it('recovers valid key from deepseek_encrypted_key if ai_api_key_encrypted was corrupted by a masked string', () => {
       // Suppose ai_api_key_encrypted contains an encrypted masked key
       const maskedEnc = Buffer.from('enc_sk-12345...3bee').toString('base64')

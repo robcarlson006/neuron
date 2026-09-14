@@ -159,44 +159,32 @@ export function saveApiKey(key: string): void {
     return
   }
   cachedApiKey = sanitized
-  if (safeStorage.isEncryptionAvailable()) {
-    try {
-      encryptedApiKey = safeStorage.encryptString(sanitized)
-      // Persist to database
-      if (db) {
-        db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
-          API_KEY_META_KEY,
-          encryptedApiKey.toString('base64')
-        )
-        // Clean up legacy fallback so it never resurrects an old/expired key
-        try {
-          db.prepare("DELETE FROM app_meta WHERE key = 'deepseek_encrypted_key'").run()
-          db.prepare("DELETE FROM app_meta WHERE key = 'ai_api_key_plain_fallback'").run()
-        } catch {
-          // ignore
-        }
-      }
-      return
-    } catch (err) {
-      console.error('safeStorage encryption failed, using fallback storage:', err)
-    }
-  }
 
-  // Fallback storage when safeStorage is unavailable or threw an error
   if (db) {
+    // 1. Always store base64 fallback in SQLite app_meta so key survives across binary updates or Keychain resets
     try {
       const encoded = Buffer.from(sanitized).toString('base64')
       db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
         'ai_api_key_plain_fallback',
         encoded
       )
-      try {
-        db.prepare("DELETE FROM app_meta WHERE key = 'deepseek_encrypted_key'").run()
-      } catch {
-        // ignore
+    } catch (err) {
+      console.error('Failed to save plain fallback API key:', err)
+    }
+  }
+
+  // 2. Also encrypt via safeStorage when available
+  if (safeStorage.isEncryptionAvailable()) {
+    try {
+      encryptedApiKey = safeStorage.encryptString(sanitized)
+      if (db) {
+        db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
+          API_KEY_META_KEY,
+          encryptedApiKey.toString('base64')
+        )
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error('safeStorage encryption failed, relying on fallback storage:', err)
     }
   }
 }
@@ -217,11 +205,11 @@ function loadApiKey(): void {
           return
         }
       } catch {
-        // fall through to recovery
+        // fall through to fallback storage
       }
     }
 
-    // Check fallback storage
+    // Check persistent fallback storage
     const fallbackPlain = db.prepare("SELECT value FROM app_meta WHERE key = 'ai_api_key_plain_fallback'").get() as
       | { value: string }
       | undefined
@@ -230,6 +218,18 @@ function loadApiKey(): void {
         const decoded = Buffer.from(fallbackPlain.value, 'base64').toString('utf-8')
         if (decoded && !isMaskedKey(decoded)) {
           cachedApiKey = decoded
+          // Re-encrypt to safeStorage if available
+          if (safeStorage.isEncryptionAvailable()) {
+            try {
+              encryptedApiKey = safeStorage.encryptString(decoded)
+              db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
+                API_KEY_META_KEY,
+                encryptedApiKey.toString('base64')
+              )
+            } catch {
+              // ignore
+            }
+          }
           return
         }
       } catch {
@@ -237,7 +237,7 @@ function loadApiKey(): void {
       }
     }
 
-    // Attempt recovery from fallback if row missing or corrupted
+    // Attempt recovery from legacy fallback if row missing or corrupted
     recoverApiKeyFromFallback()
   } catch {
     // silently fail if table doesn't exist or decryption fails

@@ -722,10 +722,11 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                       setSavingQuickKey(true)
                       try {
                         const cleanKey = quickApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
+                        const currentCfg = await window.electronAPI.getAIConfig().catch(() => null)
                         await window.electronAPI.saveAIConfig({
-                          provider: 'openai-compatible',
-                          baseUrl: 'https://api.deepseek.com',
-                          model: 'deepseek-chat',
+                          provider: currentCfg?.provider || 'openai-compatible',
+                          baseUrl: currentCfg?.baseUrl || 'https://api.deepseek.com',
+                          model: currentCfg?.model || 'deepseek-chat',
                           apiKey: cleanKey
                         })
                         addToast({ type: 'success', title: 'API Key Saved', message: 'Starting tutor session...' })
