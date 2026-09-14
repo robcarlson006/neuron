@@ -39,6 +39,44 @@ export interface Material {
   module_id?: number | null
 }
 
+export type LectureStatus = 'recording' | 'recorded' | 'transcribing' | 'ready' | 'failed'
+
+export interface Lecture {
+  id: number
+  subject_id: number
+  title: string
+  audio_path: string
+  audio_mime_type: string
+  duration_seconds: number
+  file_size_bytes: number
+  status: LectureStatus
+  raw_transcript?: string | null
+  error_message?: string | null
+  material_id?: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateLectureParams {
+  subject_id: number
+  title: string
+  audio_path: string
+  audio_mime_type?: string
+  duration_seconds?: number
+  file_size_bytes?: number
+  status?: LectureStatus
+}
+
+export interface UpdateLectureParams {
+  title?: string
+  duration_seconds?: number
+  file_size_bytes?: number
+  status?: LectureStatus
+  raw_transcript?: string | null
+  error_message?: string | null
+  material_id?: number | null
+}
+
 export interface Card {
   id: number
   subject_id: number

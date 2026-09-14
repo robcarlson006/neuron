@@ -3,6 +3,8 @@
  * The renderer process never imports better-sqlite3 directly
  */
 
+import type { Lecture, LectureStatus, CreateLectureParams, UpdateLectureParams } from '../types'
+
 export const DB_SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -467,6 +469,27 @@ export const DB_SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS idx_calendar_events_user_time
     ON calendar_events (user_id, start_time, end_time);
+
+  CREATE TABLE IF NOT EXISTS lectures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    audio_path TEXT NOT NULL,
+    audio_mime_type TEXT NOT NULL DEFAULT 'audio/webm',
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    file_size_bytes INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'recording' CHECK (status IN ('recording', 'recorded', 'transcribing', 'ready', 'failed')),
+    raw_transcript TEXT,
+    error_message TEXT,
+    material_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_lectures_subject
+    ON lectures (subject_id);
 `
 
 export const MIGRATIONS_SQL = [
@@ -549,6 +572,9 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE materials ADD COLUMN file_mtime INTEGER DEFAULT NULL",
   "ALTER TABLE materials ADD COLUMN file_size INTEGER DEFAULT NULL",
   "ALTER TABLE materials ADD COLUMN relative_path TEXT DEFAULT NULL",
+  // V4.3: Lecture audio recording & notes
+  "CREATE TABLE IF NOT EXISTS lectures (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL, audio_path TEXT NOT NULL, audio_mime_type TEXT NOT NULL DEFAULT 'audio/webm', duration_seconds INTEGER NOT NULL DEFAULT 0, file_size_bytes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'recording' CHECK(status IN ('recording', 'recorded', 'transcribing', 'ready', 'failed')), raw_transcript TEXT, error_message TEXT, material_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_lectures_subject ON lectures (subject_id)",
 ]
 
 export const MASTERED_INTERVAL = 21
@@ -671,3 +697,80 @@ export function deleteCardsCascade(db: CascadeDB, cardIds: number[]): number {
   }
   return totalDeleted
 }
+
+export function createLecture(
+  db: CascadeDB,
+  params: CreateLectureParams
+): Lecture {
+  const stmt = db.prepare(`
+    INSERT INTO lectures (
+      subject_id, title, audio_path, audio_mime_type, duration_seconds, file_size_bytes, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+  const info = stmt.run(
+    params.subject_id,
+    params.title,
+    params.audio_path,
+    params.audio_mime_type || 'audio/webm',
+    params.duration_seconds || 0,
+    params.file_size_bytes || 0,
+    params.status || 'recording'
+  ) as { lastInsertRowid: number | bigint }
+  const id = Number(info.lastInsertRowid)
+  return getLectureById(db, id)!
+}
+
+export function getLectureById(db: CascadeDB, id: number): Lecture | null {
+  const rows = db.prepare('SELECT * FROM lectures WHERE id = ?').all(id) as Lecture[]
+  return rows.length > 0 ? rows[0] : null
+}
+
+export function listLecturesBySubject(db: CascadeDB, subjectId: number): Lecture[] {
+  return db.prepare('SELECT * FROM lectures WHERE subject_id = ? ORDER BY created_at DESC').all(subjectId) as Lecture[]
+}
+
+export function updateLectureStatus(
+  db: CascadeDB,
+  id: number,
+  status: LectureStatus,
+  updates?: UpdateLectureParams
+): Lecture | null {
+  const fields: string[] = ['status = ?', "updated_at = datetime('now')"]
+  const values: unknown[] = [status]
+
+  if (updates) {
+    if (updates.title !== undefined) {
+      fields.push('title = ?')
+      values.push(updates.title)
+    }
+    if (updates.duration_seconds !== undefined) {
+      fields.push('duration_seconds = ?')
+      values.push(updates.duration_seconds)
+    }
+    if (updates.file_size_bytes !== undefined) {
+      fields.push('file_size_bytes = ?')
+      values.push(updates.file_size_bytes)
+    }
+    if (updates.raw_transcript !== undefined) {
+      fields.push('raw_transcript = ?')
+      values.push(updates.raw_transcript)
+    }
+    if (updates.error_message !== undefined) {
+      fields.push('error_message = ?')
+      values.push(updates.error_message)
+    }
+    if (updates.material_id !== undefined) {
+      fields.push('material_id = ?')
+      values.push(updates.material_id)
+    }
+  }
+
+  values.push(id)
+  db.prepare(`UPDATE lectures SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  return getLectureById(db, id)
+}
+
+export function deleteLecture(db: CascadeDB, id: number): void {
+  db.prepare('DELETE FROM lectures WHERE id = ?').run(id)
+}
+
