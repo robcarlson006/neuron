@@ -32,6 +32,8 @@ export default function TutorSession(): React.JSX.Element {
   const [sessionEvaluation, setSessionEvaluation] = useState<TutorSessionEvaluation | null>(null)
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [focusKey, setFocusKey] = useState(0)
+  const [quickApiKey, setQuickApiKey] = useState('')
+  const [savingQuickKey, setSavingQuickKey] = useState(false)
 
   // Syllabus context
   const [currentModule, setCurrentModule] = useState<SyllabusModule | null>(null)
@@ -62,6 +64,11 @@ export default function TutorSession(): React.JSX.Element {
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isNearBottom = useRef(true)
   const streamDoneRef = useRef(false) // guards against duplicate done events
+  const sessionIdRef = useRef<number | null>(null)
+  const sessionPhaseRef = useRef<SessionPhase>('structured_qa')
+
+  sessionIdRef.current = sessionId
+  sessionPhaseRef.current = sessionPhase
 
   // ── Smart scroll ──
   useEffect(() => {
@@ -156,7 +163,9 @@ export default function TutorSession(): React.JSX.Element {
         } : undefined
       ) as { id: number; phase: string }
       setSessionId(session.id)
+      sessionIdRef.current = session.id
       setSessionPhase(session.phase as SessionPhase)
+      sessionPhaseRef.current = session.phase as SessionPhase
 
       // Mark current module as in_progress if it was pending
       if (inProgressMod && inProgressMod.status === 'pending') {
@@ -233,8 +242,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error('Session init error:', errMsg)
-      if (errMsg.includes('API key') || errMsg.includes('not configured') || errMsg.includes('401') || errMsg.includes('Unauthorized')) {
-        setError('Failed to start tutor session. Make sure your API key is configured.')
+      if (errMsg.includes('API key') || errMsg.includes('not configured') || errMsg.includes('401') || errMsg.includes('Unauthorized') || errMsg.includes('Authentication failed')) {
+        setError('Authentication failed (401). Your API key is invalid or not configured.')
       } else if (errMsg.includes('SQLITE_CONSTRAINT') || errMsg.includes('FOREIGN KEY')) {
         setError('Database error: tutor session could not be created. Please restart the app.')
       } else {
@@ -263,7 +272,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       streamingRef.current = ''
       setStreamingContent('')
       addToast({ type: 'error', title: 'Request timed out', message: 'The AI took too long to respond.' })
-    }, 120000)
+      setError('Connection timed out. The AI server did not respond in time. Check your internet connection or AI configuration in Settings.')
+      setPageState('error')
+    }, 45000)
 
     try {
       await window.electronAPI.tutorStreamChat({
@@ -322,12 +333,15 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         setSending(false)
         setStreamingContent('')
         const errMsg = (err as Error).message || ''
-        if (errMsg.includes('401') || errMsg.includes('Unauthorized') || errMsg.includes('API key')) {
-          setError('API Key Invalid. Update your API key in Settings.')
+        if (errMsg.includes('401') || errMsg.includes('Unauthorized') || errMsg.includes('API key') || errMsg.includes('Authentication failed')) {
+          setError('API Key Invalid or Expired (401). Update your API key in Settings.')
+          setPageState('error')
+        } else if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('Rate limit')) {
+          setError('Quota or Rate Limit Exceeded (429). Check your API provider account or try again shortly.')
           setPageState('error')
         } else {
-          addToast({ type: 'error', title: 'Chat Error', message: errMsg || 'Something went wrong.' })
-          setPageState('awaiting_input')
+          setError(errMsg || 'Something went wrong while connecting to the AI.')
+          setPageState('error')
         }
       }
     } finally {
@@ -381,6 +395,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     setPageState('awaiting_input')
   }
 
+
   function calcPacingStatus(run: TutorSessionRuntime): PacingStatus {
     if (run.config.duration_minutes === null) return 'UNLIMITED'
     const elapsedMin = run.time_elapsed_seconds / 60
@@ -401,7 +416,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     return 'ON_TRACK'
   }
 
-  // ── Chunk listener ──
+  // ── Chunk listener (stable, bound once on mount) ──
   useEffect(() => {
     const cleanup = window.electronAPI.onTutorChunk((chunk) => {
       if (chunk.type === 'text') {
@@ -417,10 +432,11 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         streamingRef.current = ''
         setStreamingContent('')
 
-        if (finalContent) {
+        const activeSessionId = chunk.conversationId || sessionIdRef.current
+        if (finalContent && activeSessionId) {
           // Save assistant message
           window.electronAPI.tutorSaveMessage({
-            session_id: sessionId!,
+            session_id: activeSessionId,
             role: 'assistant',
             content: finalContent,
             content_type: 'text'
@@ -428,7 +444,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
           setMessages(prev => [...prev, {
             id: Date.now().toString(),
-            conversation_id: sessionId!,
+            conversation_id: activeSessionId,
             role: 'assistant',
             content: finalContent,
             content_type: 'text',
@@ -470,11 +486,12 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             (runtime.config.duration_minutes > 0 &&
               runtime.time_elapsed_seconds / (runtime.config.duration_minutes * 60) > 0.3)
 
-          if (sessionPhase === 'structured_qa' && suggestsDeepDive && canTransition) {
+          const curPhase = sessionPhaseRef.current
+          if (curPhase === 'structured_qa' && suggestsDeepDive && canTransition) {
             setPageState('phase_transition')
             return
           }
-          if (sessionPhase === 'socratic' && suggestsSummary && canTransition) {
+          if (curPhase === 'socratic' && suggestsSummary && canTransition) {
             setPageState('phase_transition')
             return
           }
@@ -491,7 +508,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       }
     })
     return () => { cleanup() }
-  }, [sessionId, sessionPhase])
+  }, [])
 
   // ── Send message ──
   async function handleSend(message: string): Promise<void> {
@@ -673,16 +690,74 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
   // ── Error state ──
   if (pageState === 'error') {
+    const isAuthError = error?.toLowerCase().includes('api key') ||
+      error?.toLowerCase().includes('401') ||
+      error?.toLowerCase().includes('unauthorized') ||
+      error?.toLowerCase().includes('authentication')
+
     return (
       <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
         <div className="flex items-center justify-center flex-1">
-          <div className="text-center max-w-sm px-6">
+          <div className="text-center max-w-md px-6 w-full">
             <div className="text-4xl mb-4">⚠️</div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">Session Error</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">{error || 'Something went wrong.'}</p>
-            <div className="flex gap-3 justify-center">
-              <button onClick={() => navigate('/tutor')} className="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors">Back to Tutor</button>
-              <button onClick={initSession} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors">Retry</button>
+
+            {isAuthError && (
+              <div className="mb-6 p-4 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 text-left">
+                <label className="block text-xs font-semibold text-violet-900 dark:text-violet-200 mb-1.5">
+                  Update API Key:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    placeholder="Enter valid API key (e.g. sk-...)"
+                    value={quickApiKey}
+                    onChange={e => setQuickApiKey(e.target.value)}
+                    className="input flex-1 font-mono text-xs"
+                  />
+                  <button
+                    disabled={!quickApiKey.trim() || savingQuickKey}
+                    onClick={async () => {
+                      setSavingQuickKey(true)
+                      try {
+                        const cleanKey = quickApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
+                        await window.electronAPI.saveAIConfig({
+                          provider: 'openai-compatible',
+                          baseUrl: 'https://api.deepseek.com',
+                          model: 'deepseek-chat',
+                          apiKey: cleanKey
+                        })
+                        addToast({ type: 'success', title: 'API Key Saved', message: 'Starting tutor session...' })
+                        setQuickApiKey('')
+                        initSession()
+                      } catch (e) {
+                        addToast({ type: 'error', title: 'Save Failed', message: (e as Error).message })
+                      } finally {
+                        setSavingQuickKey(false)
+                      }
+                    }}
+                    className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors whitespace-nowrap"
+                  >
+                    {savingQuickKey ? 'Saving...' : 'Save & Retry'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">
+                  Paste your active API key and click "Save & Retry" to launch immediately.
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-center flex-wrap">
+              <button onClick={() => navigate('/tutor')} className="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors">
+                Back to Tutor
+              </button>
+              <button onClick={() => navigate('/settings')} className="px-4 py-2 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 text-slate-700 dark:text-slate-200 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5">
+                <span>⚙️</span> Open Settings
+              </button>
+              <button onClick={initSession} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors">
+                Retry
+              </button>
             </div>
           </div>
         </div>

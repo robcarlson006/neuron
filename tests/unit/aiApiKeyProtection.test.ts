@@ -1,5 +1,6 @@
 import {
   isMaskedKey,
+  sanitizeApiKey,
   saveApiKey,
   getApiKey,
   setAIDatabase
@@ -99,6 +100,26 @@ describe('API Key Protection & Recovery', () => {
     })
   })
 
+  describe('sanitizeApiKey', () => {
+    it('strips surrounding single and double quotes', () => {
+      expect(sanitizeApiKey('"sk-my-api-key-12345"')).toBe('sk-my-api-key-12345')
+      expect(sanitizeApiKey("'sk-my-api-key-12345'")).toBe('sk-my-api-key-12345')
+      expect(sanitizeApiKey('`sk-my-api-key-12345`')).toBe('sk-my-api-key-12345')
+    })
+
+    it('strips Bearer prefix and whitespace', () => {
+      expect(sanitizeApiKey('Bearer sk-my-api-key-12345')).toBe('sk-my-api-key-12345')
+      expect(sanitizeApiKey('  Bearer   sk-my-api-key-12345  ')).toBe('sk-my-api-key-12345')
+      expect(sanitizeApiKey('bearer sk-my-api-key-12345')).toBe('sk-my-api-key-12345')
+    })
+
+    it('handles falsy or empty values gracefully', () => {
+      expect(sanitizeApiKey('')).toBe('')
+      expect(sanitizeApiKey(null)).toBe('')
+      expect(sanitizeApiKey(undefined)).toBe('')
+    })
+  })
+
   describe('saveApiKey protection', () => {
     it('saves a valid key to memory and db', () => {
       saveApiKey('sk-real-valid-api-key-12345')
@@ -117,6 +138,14 @@ describe('API Key Protection & Recovery', () => {
 
       // Key must remain unchanged
       expect(getApiKey()).toBe('sk-original-key-1234567890')
+    })
+
+    it('deletes legacy deepseek_encrypted_key when a new key is saved', () => {
+      db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('deepseek_encrypted_key', 'old_zombie_key')
+      saveApiKey('sk-brand-new-key-123456789')
+
+      const legacyRow = db.prepare('SELECT value FROM app_meta WHERE key = ?').get('deepseek_encrypted_key')
+      expect(legacyRow).toBeUndefined()
     })
   })
 

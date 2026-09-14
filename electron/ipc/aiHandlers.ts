@@ -13,13 +13,14 @@ import {
   testAIConnection,
   normalizeBaseUrl,
   isLocalEndpoint,
-  isMaskedKey
+  isMaskedKey,
+  sanitizeApiKey
 } from './aiConfigStore'
 
 /** Default request timeout. Card generation/evaluation can be slow, so be generous. */
 const DEFAULT_TIMEOUT_MS = 120_000
-/** Streaming tutor responses can legitimately run longer. */
-const STREAM_TIMEOUT_MS = 300_000
+/** Initial connection timeout for streaming. */
+const CONNECT_TIMEOUT_MS = 45_000
 
 /**
  * Call an AI provider with a prompt using raw fetch (no SDK imports).
@@ -200,11 +201,9 @@ export function registerAIHandlers(): void {
       }
     ) => {
       saveAIConfig({ provider: config.provider, baseUrl: config.baseUrl, model: config.model })
-      if (config.apiKey && config.apiKey.trim().length > 0) {
-        const trimmed = config.apiKey.trim()
-        if (!isMaskedKey(trimmed)) {
-          saveApiKey(trimmed)
-        }
+      const sanitized = sanitizeApiKey(config.apiKey)
+      if (sanitized && !isMaskedKey(sanitized)) {
+        saveApiKey(sanitized)
       }
       return { success: true }
     }
@@ -230,7 +229,8 @@ export function registerAIHandlers(): void {
       const model = overrideConfig?.model || savedConfig.model
       const isLocal = isLocalEndpoint(baseUrl)
 
-      let apiKey = overrideConfig?.apiKey?.trim()
+      const sanitizedOverride = sanitizeApiKey(overrideConfig?.apiKey)
+      let apiKey = sanitizedOverride
       if (!apiKey || isMaskedKey(apiKey)) {
         apiKey = savedApiKey
       }
@@ -239,12 +239,20 @@ export function registerAIHandlers(): void {
         return { success: false, message: 'No API key configured. Save your API key first.' }
       }
 
-      return testAIConnection({
+      const result = await testAIConnection({
         provider,
         baseUrl,
         model,
         apiKey: apiKey || (isLocal ? 'ollama' : '')
       })
+
+      // If the user entered an explicit valid key and the connection test succeeds, auto-save it!
+      if (result.success && sanitizedOverride && !isMaskedKey(sanitizedOverride)) {
+        saveAIConfig({ provider, baseUrl, model })
+        saveApiKey(sanitizedOverride)
+      }
+
+      return result
     }
   )
 }
@@ -263,21 +271,33 @@ export async function* streamAI(
   config: { provider: string; baseUrl: string; model: string; apiKey: string },
   signal?: AbortSignal
 ): AsyncGenerator<string, void, unknown> {
-  // Only supports OpenAI-compatible format for streaming
+  // Support Gemini provider
+  if (config.provider === 'gemini') {
+    const prompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')
+    const fullText = await callAI(prompt, config)
+    const chunks = fullText.match(/.{1,40}(\s+|$)/gs) || [fullText]
+    for (const chunk of chunks) {
+      yield chunk
+    }
+    return
+  }
+
+  // OpenAI-compatible format
   const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
   const model = config.model || 'deepseek-chat'
   const url = `${baseUrl}/v1/chat/completions`
   const isLocal = isLocalEndpoint(baseUrl)
   const authKey = config.apiKey || (isLocal ? 'ollama' : '')
 
-  // Fallback timeout so a hung connection is aborted even when the caller
-  // does not supply its own cancellation signal.
-  let effectiveSignal = signal
-  let fallbackTimer: ReturnType<typeof setTimeout> | undefined
-  if (!effectiveSignal) {
-    const controller = new AbortController()
-    fallbackTimer = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS)
-    effectiveSignal = controller.signal
+  // Bound initial connect time to 45 seconds so hangs are caught quickly
+  const connectController = new AbortController()
+  let connectTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    connectController.abort()
+  }, CONNECT_TIMEOUT_MS)
+
+  const onCallerAbort = (): void => connectController.abort()
+  if (signal) {
+    signal.addEventListener('abort', onCallerAbort)
   }
 
   const headers: Record<string, string> = {
@@ -288,24 +308,47 @@ export async function* streamAI(
     headers['Authorization'] = `Bearer ${authKey}`
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: true,
-      max_tokens: 4096,
-      temperature: 0.7
-    }),
-    signal: effectiveSignal
-  })
-
-  if (fallbackTimer) clearTimeout(fallbackTimer)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        max_tokens: 4096,
+        temperature: 0.7
+      }),
+      signal: connectController.signal
+    })
+  } catch (fetchErr) {
+    if (connectController.signal.aborted) {
+      if (signal?.aborted) {
+        throw new Error('AI request was cancelled.')
+      }
+      throw new Error(`AI request timed out while connecting to ${baseUrl}. Check your connection or provider settings.`)
+    }
+    throw fetchErr
+  } finally {
+    if (connectTimer) {
+      clearTimeout(connectTimer)
+      connectTimer = undefined
+    }
+    if (signal) {
+      signal.removeEventListener('abort', onCallerAbort)
+    }
+  }
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '')
-    throw new Error(`AI API error ${response.status}: ${errorBody || response.statusText}`)
+    if (response.status === 401) {
+      throw new Error(`Authentication failed (401). Your API key is invalid or expired. Please update your API key in Settings.`)
+    }
+    if (response.status === 429) {
+      throw new Error(`Rate limit or quota exceeded (429). Please check your account balance or try again shortly.`)
+    }
+    throw new Error(`AI API error ${response.status}: ${errorBody.substring(0, 200) || response.statusText}`)
   }
 
   const reader = response.body?.getReader()

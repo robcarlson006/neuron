@@ -313,6 +313,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [aiConnectionMessage, setAiConnectionMessage] = useState('')
   const [aiConnectionLatency, setAiConnectionLatency] = useState<number | undefined>()
   const [aiSaved, setAiSaved] = useState(false)
+  const [showApiKey, setShowApiKey] = useState(false)
   const [copiedCommand, setCopiedCommand] = useState(false)
   const [currentVersion, setCurrentVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle')
@@ -355,8 +356,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
       setAiProvider(cfg.provider || 'openai-compatible')
       setAiBaseUrl(cfg.baseUrl || 'https://api.deepseek.com')
       setAiModel(cfg.model || 'deepseek-chat')
-      setHasApiKey(Boolean(cfg.hasApiKey || (cfg.apiKey && cfg.apiKey.length > 0)))
-      setAiApiKey('')
+      const hasKey = Boolean(cfg.hasApiKey || (cfg.apiKey && cfg.apiKey.length > 0))
+      setHasApiKey(hasKey)
+      setAiApiKey(hasKey && cfg.apiKey ? cfg.apiKey : '')
       setApiKeyModified(false)
       setAiConfigLoaded(true)
     }).catch(() => {
@@ -475,16 +477,27 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     setAiConnectionStatus('testing')
     setAiConnectionMessage('')
     setAiConnectionLatency(undefined)
+    const cleanKey = aiApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
     try {
       const result = await window.electronAPI.testAIConnection({
         provider: aiProvider,
         baseUrl: aiBaseUrl,
         model: aiModel,
-        apiKey: apiKeyModified && aiApiKey.trim() ? aiApiKey.trim() : undefined
+        apiKey: apiKeyModified && cleanKey ? cleanKey : undefined
       })
       setAiConnectionStatus(result.success ? 'success' : 'error')
       setAiConnectionMessage(result.message)
       setAiConnectionLatency(result.latencyMs)
+      if (result.success && apiKeyModified && cleanKey) {
+        setHasApiKey(true)
+        setApiKeyModified(false)
+        const masked = cleanKey.length > 8
+          ? cleanKey.substring(0, 7) + '••••••••' + cleanKey.substring(cleanKey.length - 4)
+          : '••••••••••••'
+        setAiApiKey(masked)
+        setAiSaved(true)
+        setTimeout(() => setAiSaved(false), 2500)
+      }
     } catch (err) {
       setAiConnectionStatus('error')
       setAiConnectionMessage((err as Error).message ?? 'Connection test failed')
@@ -492,19 +505,23 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   }
 
   async function handleSaveAIConfig(): Promise<void> {
+    const cleanKey = aiApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
     await window.electronAPI.saveAIConfig({
       provider: aiProvider,
       baseUrl: aiBaseUrl,
       model: aiModel,
-      apiKey: apiKeyModified && aiApiKey.trim() ? aiApiKey.trim() : undefined
+      apiKey: apiKeyModified && cleanKey ? cleanKey : undefined
     })
-    if (apiKeyModified && aiApiKey.trim()) {
+    if (apiKeyModified && cleanKey) {
       setHasApiKey(true)
-      setAiApiKey('')
       setApiKeyModified(false)
+      const masked = cleanKey.length > 8
+        ? cleanKey.substring(0, 7) + '••••••••' + cleanKey.substring(cleanKey.length - 4)
+        : '••••••••••••'
+      setAiApiKey(masked)
     }
     setAiSaved(true)
-    setTimeout(() => setAiSaved(false), 1500)
+    setTimeout(() => setAiSaved(false), 2500)
   }
 
   return (
@@ -874,6 +891,75 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
             </div>
           )}
 
+          {/* Quick Setup Presets */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
+              Quick Setup Presets
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAiProvider('openai-compatible')
+                  setAiBaseUrl('https://api.deepseek.com')
+                  setAiModel('deepseek-chat')
+                }}
+                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
+                  aiBaseUrl === 'https://api.deepseek.com' && aiProvider === 'openai-compatible'
+                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
+                }`}
+              >
+                DeepSeek
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAiProvider('openai-compatible')
+                  setAiBaseUrl('https://api.openai.com')
+                  setAiModel('gpt-4o-mini')
+                }}
+                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
+                  aiBaseUrl === 'https://api.openai.com' && aiProvider === 'openai-compatible'
+                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
+                }`}
+              >
+                OpenAI (ChatGPT)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAiProvider('gemini')
+                  setAiBaseUrl('https://generativelanguage.googleapis.com')
+                  setAiModel('gemini-2.0-flash')
+                }}
+                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
+                  aiProvider === 'gemini'
+                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
+                }`}
+              >
+                Google Gemini
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAiProvider('openai-compatible')
+                  setAiBaseUrl('http://127.0.0.1:11434')
+                  setAiModel('qwen2.5:3b')
+                }}
+                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
+                  aiBaseUrl.includes('127.0.0.1:11434')
+                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
+                }`}
+              >
+                Local Ollama
+              </button>
+            </div>
+          </div>
+
           {/* Provider dropdown */}
           <div className="mb-4">
             <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
@@ -884,7 +970,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               onChange={e => setAiProvider(e.target.value)}
               className="input w-full"
             >
-              <option value="openai-compatible">OpenAI-Compatible (Ollama, DeepSeek, LM Studio, vLLM)</option>
+              <option value="openai-compatible">OpenAI-Compatible (Ollama, DeepSeek, OpenAI, LM Studio, vLLM)</option>
               <option value="gemini">Google Gemini</option>
             </select>
           </div>
@@ -908,22 +994,48 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                 )}
               </div>
             </div>
-            <input
-              type="password"
-              className="input w-full font-mono text-sm"
-              value={aiApiKey}
-              onChange={e => {
-                setAiApiKey(e.target.value)
-                setApiKeyModified(true)
-              }}
-              placeholder={
-                aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')
-                  ? 'Not required for local Ollama / LM Studio (leave blank)'
-                  : hasApiKey
-                    ? '•••••••••••••••• (API key configured — enter new key to replace)'
-                    : (aiConfigLoaded ? 'Enter your API key' : 'Loading...')
-              }
-            />
+            <div className="relative flex items-center">
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                className="input w-full font-mono text-sm pr-16"
+                value={aiApiKey}
+                onFocus={() => {
+                  if (!apiKeyModified && hasApiKey && aiApiKey.includes('••••')) {
+                    setAiApiKey('')
+                  }
+                }}
+                onChange={e => {
+                  setAiApiKey(e.target.value)
+                  setApiKeyModified(true)
+                }}
+                placeholder={
+                  aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')
+                    ? 'Not required for local Ollama / LM Studio (leave blank)'
+                    : hasApiKey
+                      ? '•••••••••••••••• (API key configured — enter new key to replace)'
+                      : (aiConfigLoaded ? 'Enter your API key' : 'Loading...')
+                }
+              />
+              {aiApiKey && (
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey(!showApiKey)}
+                  className="absolute right-2 px-2 py-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                >
+                  {showApiKey ? 'Hide' : 'Show'}
+                </button>
+              )}
+            </div>
+            {aiApiKey.startsWith('sk-proj-') && aiBaseUrl.includes('deepseek.com') && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5 flex items-center gap-1">
+                ℹ️ Detected OpenAI project key. Click "OpenAI" preset above to use https://api.openai.com.
+              </p>
+            )}
+            {aiApiKey.startsWith('AIza') && aiProvider !== 'gemini' && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5 flex items-center gap-1">
+                ℹ️ Detected Google Gemini key. Click "Google Gemini" preset above.
+              </p>
+            )}
           </div>
 
           {/* Base URL */}

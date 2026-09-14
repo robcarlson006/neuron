@@ -37,6 +37,18 @@ export function isLocalEndpoint(baseUrl?: string): boolean {
   )
 }
 
+export function sanitizeApiKey(key?: string | null): string {
+  if (!key) return ''
+  let cleaned = key.trim()
+  // Strip surrounding quotes
+  cleaned = cleaned.replace(/^["'`]|["'`]$/g, '').trim()
+  // Strip Bearer prefix
+  cleaned = cleaned.replace(/^Bearer\s+/i, '').trim()
+  // Strip any remaining surrounding quotes
+  cleaned = cleaned.replace(/^["'`]|["'`]$/g, '').trim()
+  return cleaned
+}
+
 export function isMaskedKey(key?: string | null): boolean {
   if (!key) return false
   const trimmed = key.trim()
@@ -109,6 +121,24 @@ export function getApiKey(): string {
     }
   }
 
+  // Check fallback storage if safeStorage unavailable
+  if (db) {
+    try {
+      const fallbackPlain = db.prepare("SELECT value FROM app_meta WHERE key = 'ai_api_key_plain_fallback'").get() as
+        | { value: string }
+        | undefined
+      if (fallbackPlain?.value) {
+        const decoded = Buffer.from(fallbackPlain.value, 'base64').toString('utf-8')
+        if (decoded && !isMaskedKey(decoded)) {
+          cachedApiKey = decoded
+          return cachedApiKey
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   // Attempt recovery if key is missing or corrupted by a masked placeholder
   const recovered = recoverApiKeyFromFallback()
   if (recovered) return recovered
@@ -124,23 +154,49 @@ export function getApiKey(): string {
 }
 
 export function saveApiKey(key: string): void {
-  const trimmed = key ? key.trim() : ''
-  if (!trimmed || isMaskedKey(trimmed)) {
+  const sanitized = sanitizeApiKey(key)
+  if (!sanitized || isMaskedKey(sanitized)) {
     return
   }
-  cachedApiKey = trimmed
+  cachedApiKey = sanitized
   if (safeStorage.isEncryptionAvailable()) {
-    encryptedApiKey = safeStorage.encryptString(trimmed)
-    // Persist to database
-    if (db) {
-      try {
+    try {
+      encryptedApiKey = safeStorage.encryptString(sanitized)
+      // Persist to database
+      if (db) {
         db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
           API_KEY_META_KEY,
           encryptedApiKey.toString('base64')
         )
-      } catch {
-        // silently fail if table doesn't exist
+        // Clean up legacy fallback so it never resurrects an old/expired key
+        try {
+          db.prepare("DELETE FROM app_meta WHERE key = 'deepseek_encrypted_key'").run()
+          db.prepare("DELETE FROM app_meta WHERE key = 'ai_api_key_plain_fallback'").run()
+        } catch {
+          // ignore
+        }
       }
+      return
+    } catch (err) {
+      console.error('safeStorage encryption failed, using fallback storage:', err)
+    }
+  }
+
+  // Fallback storage when safeStorage is unavailable or threw an error
+  if (db) {
+    try {
+      const encoded = Buffer.from(sanitized).toString('base64')
+      db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
+        'ai_api_key_plain_fallback',
+        encoded
+      )
+      try {
+        db.prepare("DELETE FROM app_meta WHERE key = 'deepseek_encrypted_key'").run()
+      } catch {
+        // ignore
+      }
+    } catch {
+      // ignore
     }
   }
 }
@@ -164,6 +220,23 @@ function loadApiKey(): void {
         // fall through to recovery
       }
     }
+
+    // Check fallback storage
+    const fallbackPlain = db.prepare("SELECT value FROM app_meta WHERE key = 'ai_api_key_plain_fallback'").get() as
+      | { value: string }
+      | undefined
+    if (fallbackPlain?.value) {
+      try {
+        const decoded = Buffer.from(fallbackPlain.value, 'base64').toString('utf-8')
+        if (decoded && !isMaskedKey(decoded)) {
+          cachedApiKey = decoded
+          return
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     // Attempt recovery from fallback if row missing or corrupted
     recoverApiKeyFromFallback()
   } catch {
