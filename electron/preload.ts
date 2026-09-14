@@ -85,12 +85,12 @@ const electronAPI = {
     ipcRenderer.invoke('ai:generateCards', text, minCards, minQuestions),
   evaluateAnswer: (question: string, modelAnswer: string, studentAnswer: string): Promise<EvaluationResult> =>
     ipcRenderer.invoke('ai:evaluateAnswer', question, modelAnswer, studentAnswer),
-  getAIConfig: (): Promise<{ provider: string; baseUrl: string; model: string; apiKey: string }> =>
+  getAIConfig: (): Promise<{ provider: string; baseUrl: string; model: string; apiKey: string; hasApiKey?: boolean }> =>
     ipcRenderer.invoke('ai:getConfig'),
-  saveAIConfig: (config: { provider: string; baseUrl: string; model: string; apiKey: string }): Promise<{ success: boolean }> =>
+  saveAIConfig: (config: { provider: string; baseUrl: string; model: string; apiKey?: string }): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('ai:saveConfig', config),
-  testAIConnection: (): Promise<{ success: boolean; message: string; latencyMs?: number }> =>
-    ipcRenderer.invoke('ai:testConnection'),
+  testAIConnection: (config?: { provider?: string; baseUrl?: string; model?: string; apiKey?: string }): Promise<{ success: boolean; message: string; latencyMs?: number }> =>
+    ipcRenderer.invoke('ai:testConnection', config),
 
   // Analytics
   getMasteryStats: (userId: number, subjectId?: number): Promise<{ subject_id: number; interval: number; ease_factor: number }[]> =>

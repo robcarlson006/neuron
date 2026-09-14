@@ -304,6 +304,8 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   // AI Provider state
   const [aiProvider, setAiProvider] = useState('openai-compatible')
   const [aiApiKey, setAiApiKey] = useState('')
+  const [hasApiKey, setHasApiKey] = useState(false)
+  const [apiKeyModified, setApiKeyModified] = useState(false)
   const [aiBaseUrl, setAiBaseUrl] = useState('https://api.deepseek.com')
   const [aiModel, setAiModel] = useState('deepseek-chat')
   const [aiConfigLoaded, setAiConfigLoaded] = useState(false)
@@ -353,7 +355,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
       setAiProvider(cfg.provider || 'openai-compatible')
       setAiBaseUrl(cfg.baseUrl || 'https://api.deepseek.com')
       setAiModel(cfg.model || 'deepseek-chat')
-      setAiApiKey(cfg.apiKey || '')
+      setHasApiKey(Boolean(cfg.hasApiKey || (cfg.apiKey && cfg.apiKey.length > 0)))
+      setAiApiKey('')
+      setApiKeyModified(false)
       setAiConfigLoaded(true)
     }).catch(() => {
       setAiConfigLoaded(true)
@@ -472,14 +476,12 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     setAiConnectionMessage('')
     setAiConnectionLatency(undefined)
     try {
-      // Save current input values first so testAIConnection uses active form inputs
-      await window.electronAPI.saveAIConfig({
+      const result = await window.electronAPI.testAIConnection({
         provider: aiProvider,
         baseUrl: aiBaseUrl,
         model: aiModel,
-        apiKey: aiApiKey
+        apiKey: apiKeyModified && aiApiKey.trim() ? aiApiKey.trim() : undefined
       })
-      const result = await window.electronAPI.testAIConnection()
       setAiConnectionStatus(result.success ? 'success' : 'error')
       setAiConnectionMessage(result.message)
       setAiConnectionLatency(result.latencyMs)
@@ -494,8 +496,13 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
       provider: aiProvider,
       baseUrl: aiBaseUrl,
       model: aiModel,
-      apiKey: aiApiKey
+      apiKey: apiKeyModified && aiApiKey.trim() ? aiApiKey.trim() : undefined
     })
+    if (apiKeyModified && aiApiKey.trim()) {
+      setHasApiKey(true)
+      setAiApiKey('')
+      setApiKeyModified(false)
+    }
     setAiSaved(true)
     setTimeout(() => setAiSaved(false), 1500)
   }
@@ -888,21 +895,33 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
                 API Key
               </label>
-              {(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
-                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                  ✓ Optional for local models
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {hasApiKey && !(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
+                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                    ✓ Key configured
+                  </span>
+                )}
+                {(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
+                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                    ✓ Optional for local models
+                  </span>
+                )}
+              </div>
             </div>
             <input
               type="password"
-              className="input w-full"
+              className="input w-full font-mono text-sm"
               value={aiApiKey}
-              onChange={e => setAiApiKey(e.target.value)}
+              onChange={e => {
+                setAiApiKey(e.target.value)
+                setApiKeyModified(true)
+              }}
               placeholder={
                 aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')
                   ? 'Not required for local Ollama / LM Studio (leave blank)'
-                  : (aiConfigLoaded ? 'Enter your API key' : 'Loading...')
+                  : hasApiKey
+                    ? '•••••••••••••••• (API key configured — enter new key to replace)'
+                    : (aiConfigLoaded ? 'Enter your API key' : 'Loading...')
               }
             />
           </div>

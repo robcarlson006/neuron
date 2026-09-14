@@ -12,7 +12,8 @@ import {
   saveApiKey,
   testAIConnection,
   normalizeBaseUrl,
-  isLocalEndpoint
+  isLocalEndpoint,
+  isMaskedKey
 } from './aiConfigStore'
 
 /** Default request timeout. Card generation/evaluation can be slow, so be generous. */
@@ -166,6 +167,7 @@ export function registerAIHandlers(): void {
   ipcMain.handle('ai:getConfig', () => {
     const config = getAIConfig()
     const apiKey = getApiKey()
+    const hasKey = Boolean(apiKey && apiKey.length > 0 && apiKey !== 'ollama' && !isMaskedKey(apiKey))
 
     // Mask the API key for display (same masking as old gemini:getApiKey)
     let maskedKey = apiKey || ''
@@ -179,7 +181,8 @@ export function registerAIHandlers(): void {
       provider: config.provider,
       baseUrl: config.baseUrl,
       model: config.model,
-      apiKey: maskedKey
+      apiKey: maskedKey,
+      hasApiKey: hasKey
     }
   })
 
@@ -193,12 +196,15 @@ export function registerAIHandlers(): void {
         provider: string
         baseUrl: string
         model: string
-        apiKey: string
+        apiKey?: string
       }
     ) => {
       saveAIConfig({ provider: config.provider, baseUrl: config.baseUrl, model: config.model })
       if (config.apiKey && config.apiKey.trim().length > 0) {
-        saveApiKey(config.apiKey.trim())
+        const trimmed = config.apiKey.trim()
+        if (!isMaskedKey(trimmed)) {
+          saveApiKey(trimmed)
+        }
       }
       return { success: true }
     }
@@ -206,16 +212,41 @@ export function registerAIHandlers(): void {
 
   // ── Test AI connection ──────────────────────────────────────────────────────
 
-  ipcMain.handle('ai:testConnection', async () => {
-    const config = getAIConfig()
-    const apiKey = getApiKey()
-    const isLocal = isLocalEndpoint(config.baseUrl)
-    if (!apiKey && !isLocal) {
-      return { success: false, message: 'No API key configured. Save your API key first.' }
-    }
+  ipcMain.handle(
+    'ai:testConnection',
+    async (
+      _event,
+      overrideConfig?: {
+        provider?: string
+        baseUrl?: string
+        model?: string
+        apiKey?: string
+      }
+    ) => {
+      const savedConfig = getAIConfig()
+      const savedApiKey = getApiKey()
+      const provider = overrideConfig?.provider || savedConfig.provider
+      const baseUrl = overrideConfig?.baseUrl || savedConfig.baseUrl
+      const model = overrideConfig?.model || savedConfig.model
+      const isLocal = isLocalEndpoint(baseUrl)
 
-    return testAIConnection({ ...config, apiKey: apiKey || (isLocal ? 'ollama' : '') })
-  })
+      let apiKey = overrideConfig?.apiKey?.trim()
+      if (!apiKey || isMaskedKey(apiKey)) {
+        apiKey = savedApiKey
+      }
+
+      if (!apiKey && !isLocal) {
+        return { success: false, message: 'No API key configured. Save your API key first.' }
+      }
+
+      return testAIConnection({
+        provider,
+        baseUrl,
+        model,
+        apiKey: apiKey || (isLocal ? 'ollama' : '')
+      })
+    }
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

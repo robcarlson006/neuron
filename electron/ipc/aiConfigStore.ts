@@ -37,20 +37,81 @@ export function isLocalEndpoint(baseUrl?: string): boolean {
   )
 }
 
+export function isMaskedKey(key?: string | null): boolean {
+  if (!key) return false
+  const trimmed = key.trim()
+  return (
+    trimmed.includes('...') ||
+    trimmed.includes('****') ||
+    trimmed.includes('••••') ||
+    /^\*+/.test(trimmed) ||
+    /^[a-zA-Z0-9_\-]{1,8}\.{3,}[a-zA-Z0-9_\-]{1,4}$/.test(trimmed)
+  )
+}
+
 let encryptedApiKey: Buffer | null = null
 let cachedApiKey: string | null = null
 
+function recoverApiKeyFromFallback(): string | null {
+  if (!db || !safeStorage.isEncryptionAvailable()) return null
+  try {
+    const fallbackRow = db.prepare("SELECT value FROM app_meta WHERE key = 'deepseek_encrypted_key'").get() as
+      | { value: string }
+      | undefined
+    if (fallbackRow?.value) {
+      const val = fallbackRow.value.trim()
+      const buffersToTry: Buffer[] = []
+      if (/^[0-9a-fA-F]+$/.test(val) && val.length % 2 === 0) {
+        buffersToTry.push(Buffer.from(val, 'hex'))
+      }
+      buffersToTry.push(Buffer.from(val, 'base64'))
+
+      for (const buf of buffersToTry) {
+        try {
+          const decrypted = safeStorage.decryptString(buf)
+          if (decrypted && !isMaskedKey(decrypted)) {
+            cachedApiKey = decrypted
+            encryptedApiKey = buf
+            // Self-heal: repair the canonical ai_api_key_encrypted in app_meta
+            try {
+              db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
+                API_KEY_META_KEY,
+                buf.toString('base64')
+              )
+            } catch {
+              // ignore
+            }
+            return decrypted
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
 export function getApiKey(): string {
-  if (cachedApiKey) return cachedApiKey
+  if (cachedApiKey && !isMaskedKey(cachedApiKey)) return cachedApiKey
 
   if (encryptedApiKey && safeStorage.isEncryptionAvailable()) {
     try {
-      cachedApiKey = safeStorage.decryptString(encryptedApiKey)
-      if (cachedApiKey) return cachedApiKey
+      const decrypted = safeStorage.decryptString(encryptedApiKey)
+      if (decrypted && !isMaskedKey(decrypted)) {
+        cachedApiKey = decrypted
+        return cachedApiKey
+      }
     } catch {
       // fall through
     }
   }
+
+  // Attempt recovery if key is missing or corrupted by a masked placeholder
+  const recovered = recoverApiKeyFromFallback()
+  if (recovered) return recovered
 
   // If the configured base URL is a local endpoint and no user key was set,
   // return a default dummy key so local model runners (Ollama, LM Studio) work out of the box.
@@ -63,13 +124,20 @@ export function getApiKey(): string {
 }
 
 export function saveApiKey(key: string): void {
-  cachedApiKey = key
+  const trimmed = key ? key.trim() : ''
+  if (!trimmed || isMaskedKey(trimmed)) {
+    return
+  }
+  cachedApiKey = trimmed
   if (safeStorage.isEncryptionAvailable()) {
-    encryptedApiKey = safeStorage.encryptString(key)
+    encryptedApiKey = safeStorage.encryptString(trimmed)
     // Persist to database
     if (db) {
       try {
-        db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(API_KEY_META_KEY, encryptedApiKey.toString('base64'))
+        db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
+          API_KEY_META_KEY,
+          encryptedApiKey.toString('base64')
+        )
       } catch {
         // silently fail if table doesn't exist
       }
@@ -84,9 +152,20 @@ function loadApiKey(): void {
       | { value: string }
       | undefined
     if (row?.value && safeStorage.isEncryptionAvailable()) {
-      encryptedApiKey = Buffer.from(row.value, 'base64')
-      cachedApiKey = null // Force re-decrypt on next getApiKey() call
+      const buf = Buffer.from(row.value, 'base64')
+      try {
+        const decrypted = safeStorage.decryptString(buf)
+        if (decrypted && !isMaskedKey(decrypted)) {
+          encryptedApiKey = buf
+          cachedApiKey = decrypted
+          return
+        }
+      } catch {
+        // fall through to recovery
+      }
     }
+    // Attempt recovery from fallback if row missing or corrupted
+    recoverApiKeyFromFallback()
   } catch {
     // silently fail if table doesn't exist or decryption fails
   }
