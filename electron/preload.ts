@@ -556,6 +556,35 @@ const electronAPI = {
     ipcRenderer.on('lecture:status-update', handler)
     return () => { ipcRenderer.removeListener('lecture:status-update', handler) }
   },
+
+  // ── Local Whisper Models ──
+  listWhisperModels: (): Promise<Array<{
+    id: string
+    name: string
+    description: string
+    filename: string
+    sizeBytes: number
+    sizeDisplay: string
+    status: 'not_downloaded' | 'downloading' | 'ready'
+    localPath?: string
+  }>> => ipcRenderer.invoke('whisper:listModels'),
+  downloadWhisperModel: (modelId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('whisper:downloadModel', modelId),
+  cancelWhisperDownload: (modelId: string): Promise<boolean> =>
+    ipcRenderer.invoke('whisper:cancelDownload', modelId),
+  deleteWhisperModel: (modelId: string): Promise<boolean> =>
+    ipcRenderer.invoke('whisper:deleteModel', modelId),
+  onWhisperDownloadProgress: (
+    callback: (data: { modelId: string; progress: number; status: string; error?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { modelId: string; progress: number; status: string; error?: string }
+    ): void => callback(data)
+    ipcRenderer.on('whisper:download-progress', handler)
+    return () => { ipcRenderer.removeListener('whisper:download-progress', handler) }
+  },
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('updater:openReleasePage', url),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

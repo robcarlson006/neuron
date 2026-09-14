@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../store/appStore'
 import ExportModal from '../components/ExportModal'
 import LocalAISection from '../components/LocalAISection'
+import LectureSettingsSection from '../components/LectureSettingsSection'
 import { ACHIEVEMENT_DEFS } from '../lib/achievements'
 
 // ── Pomodoro config modal ────────────────────────────────────────────────────
@@ -747,6 +748,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           currentBaseUrl={aiBaseUrl}
           currentModel={aiModel}
         />
+
+        {/* Lecture Recording & Transcription Section */}
+        <LectureSettingsSection />
 
         {/* AI Provider section */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">

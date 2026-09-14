@@ -259,6 +259,21 @@ class LocalWhisperServiceManager {
     }
     return false
   }
+
+  public deleteModel(modelId: string): boolean {
+    const model = WHISPER_MODELS.find((m) => m.id === modelId)
+    if (!model) return false
+    const fullPath = join(this.getModelsDir(), model.filename)
+    if (existsSync(fullPath)) {
+      try {
+        unlinkSync(fullPath)
+        return true
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
 }
 
 export const LocalWhisperService = new LocalWhisperServiceManager()

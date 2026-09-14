@@ -20,6 +20,7 @@ import { registerFolderHandlers, setFolderDatabase } from './ipc/folderHandlers'
 import { registerLectureHandlers, setLectureDatabase, setOnRecordingFinalized } from './ipc/lectureHandlers'
 import { LectureNotesService } from './ipc/lectureNotesService'
 import { LocalWhisperService } from './ipc/localWhisperService'
+import { TranscriptionService } from './ipc/transcriptionService'
 import { FolderSyncService } from './ipc/folderSyncService'
 
 protocol.registerSchemesAsPrivileged([
@@ -225,6 +226,7 @@ app.whenReady().then(async () => {
   registerFolderHandlers()
   setLectureDatabase(db)
   registerLectureHandlers()
+  TranscriptionService.setDatabase(db)
   LectureNotesService.init(db)
   LectureNotesService.setWindowGetter(() => mainWindow)
   LocalWhisperService.setWindowGetter(() => mainWindow)

@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3'
 import { LectureAudioService } from './lectureAudioService'
 import type { CascadeDB } from '../../src/lib/db'
 import type { Lecture } from '../../src/types'
+import { LocalWhisperService } from './localWhisperService'
 
 export function setLectureDatabase(database: Database.Database | CascadeDB): void {
   LectureAudioService.init(database)
@@ -89,6 +90,27 @@ export function registerLectureHandlers(): void {
       return true
     }
     return false
+  })
+
+  // ── Local Whisper Models ──
+  ipcMain.handle('whisper:listModels', async () => {
+    return LocalWhisperService.listModels()
+  })
+
+  ipcMain.handle('whisper:downloadModel', async (_event, modelId: string) => {
+    return LocalWhisperService.downloadModel(modelId)
+  })
+
+  ipcMain.handle('whisper:cancelDownload', async (_event, modelId: string) => {
+    return LocalWhisperService.cancelDownload(modelId)
+  })
+
+  ipcMain.handle('whisper:deleteModel', async (_event, modelId: string) => {
+    return LocalWhisperService.deleteModel(modelId)
+  })
+
+  ipcMain.handle('whisper:getModelStatus', async (_event, modelId: string) => {
+    return LocalWhisperService.getModelStatus(modelId)
   })
 }
 
