@@ -7,9 +7,13 @@ import CurriculumView from '../components/classes/CurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
 import CardImportModal from '../components/CardImportModal'
-import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent } from '../types'
+import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture } from '../types'
+import { useLectureRecordingStore } from '../store/lectureRecordingStore'
+import LectureAudioPlayer from '../components/classes/LectureAudioPlayer'
+import LectureNotesModal from '../components/classes/LectureNotesModal'
+import AudioDeviceSelector from '../components/classes/AudioDeviceSelector'
 
-type Tab = 'cards' | 'curriculum' | 'materials' | 'deadlines'
+type Tab = 'cards' | 'curriculum' | 'materials' | 'lectures' | 'deadlines'
 
 export default function UnifiedSubjectDetail(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
@@ -71,6 +75,14 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [updatingSyllabus, setUpdatingSyllabus] = useState(false)
   const [syncingFolder, setSyncingFolder] = useState(false)
 
+  // ── Lectures state ──
+  const [lectures, setLectures] = useState<Lecture[]>([])
+  const [selectedLectureForNotes, setSelectedLectureForNotes] = useState<Lecture | null>(null)
+  const [showStartRecordModal, setShowStartRecordModal] = useState(false)
+  const [lectureTitleInput, setLectureTitleInput] = useState('')
+  const [startingLecture, setStartingLecture] = useState(false)
+  const recordingStore = useLectureRecordingStore()
+
   // ── Deadlines state (from SubjectDetail) ──
   const [deadlines, setDeadlines] = useState<Deadline[]>([])
   const [newDeadlineLabel, setNewDeadlineLabel] = useState('')
@@ -86,6 +98,26 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setEditStatus(subject?.status || 'active')
     }
   }, [subjectId, user])
+
+  // ── Lecture status event listener ──
+  useEffect(() => {
+    if (!window.electronAPI?.onLectureStatusUpdate) return
+
+    const unsubscribe = window.electronAPI.onLectureStatusUpdate((data) => {
+      loadAllData()
+      if (data.status === 'ready') {
+        addToast({ type: 'success', title: 'Lecture Processed', message: 'Structured notes added to class materials.' })
+      } else if (data.status === 'failed') {
+        addToast({ type: 'error', title: 'Transcription Failed', message: data.error || 'Check Settings for API configuration.' })
+      }
+    })
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe()
+      }
+    }
+  }, [subjectId])
 
   // ── Folder sync event listener ──
   useEffect(() => {
@@ -116,16 +148,18 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     try {
       const hasCurriculum = subject?.subject_type === 'class' || subject?.subject_type === 'book'
 
-      const [c, d, f, mats] = await Promise.all([
+      const [c, d, f, mats, lecs] = await Promise.all([
         window.electronAPI.getCards(subjectId),
         window.electronAPI.getDeadlines(subjectId),
         window.electronAPI.getFolders(subjectId),
         window.electronAPI.getMaterials(subjectId),
+        window.electronAPI.listLectures ? window.electronAPI.listLectures(subjectId) : Promise.resolve([])
       ])
       setCards(c)
       setDeadlines(d as Deadline[])
       setFolders(f)
       setMaterials(mats as Material[])
+      setLectures((lecs as Lecture[]) || [])
 
       if (window.electronAPI.syllabusListModules) {
         try {
@@ -402,6 +436,64 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     }
   }
 
+  const isThisClassRecording =
+    recordingStore.isRecording && recordingStore.subjectId === subjectId
+
+  async function handleStartRecording(): Promise<void> {
+    if (!subject) return
+    if (recordingStore.isRecording) {
+      addToast({
+        type: 'error',
+        title: 'Recording in Progress',
+        message: `Already recording for "${recordingStore.subjectName}". Please finish or stop that session first.`
+      })
+      return
+    }
+
+    setStartingLecture(true)
+    const title = lectureTitleInput.trim() || undefined
+    const success = await recordingStore.startRecording(subjectId, subject.name, title)
+    setStartingLecture(false)
+    setShowStartRecordModal(false)
+    setLectureTitleInput('')
+
+    if (success) {
+      addToast({
+        type: 'success',
+        title: 'Recording Started',
+        message: 'Audio is streaming to disk. You can navigate freely.'
+      })
+      loadAllData()
+    } else {
+      addToast({
+        type: 'error',
+        title: 'Failed to Start Recording',
+        message: recordingStore.error || 'Please check microphone permissions in System Settings.'
+      })
+    }
+  }
+
+  async function handleDeleteLecture(lectureId: number, title: string): Promise<void> {
+    if (!window.confirm(`Delete lecture "${title}" and its audio recording?`)) return
+    try {
+      await window.electronAPI.deleteLecture(lectureId, true)
+      addToast({ type: 'success', title: 'Lecture Deleted', message: `Removed "${title}"` })
+      loadAllData()
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Delete Failed', message: err?.message || 'Could not delete lecture' })
+    }
+  }
+
+  async function handleRetryLecture(lectureId: number): Promise<void> {
+    try {
+      await window.electronAPI.retryLectureTranscription(lectureId)
+      addToast({ type: 'success', title: 'Transcription Retrying', message: 'Processing in background...' })
+      loadAllData()
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Retry Failed', message: err?.message || 'Could not retry' })
+    }
+  }
+
   /** Explicit full rebuild — destructive, so it requires confirmation. Progress
    * on modules whose titles match after regeneration is preserved by the backend. */
   async function handleRegenerateSyllabus(): Promise<void> {
@@ -618,6 +710,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   }
   tabs.push(
     { id: 'materials', label: 'Materials', count: materials.length },
+    { id: 'lectures', label: 'Lectures', count: lectures.length },
     { id: 'deadlines', label: 'Deadlines', count: deadlines.length }
   )
 
@@ -1138,6 +1231,241 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         </div>
       )}
 
+      {/* ═══ LECTURES TAB ═══ */}
+      {activeTab === 'lectures' && (
+        <div>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Lecture Recordings & Notes
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Record your lectures, transcribe speech to text, and auto-generate structured notes for this class.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <AudioDeviceSelector compact className="hidden sm:flex" />
+              {isThisClassRecording ? (
+                <button
+                  onClick={() => recordingStore.stopRecording()}
+                  className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-rose-600 hover:bg-rose-700 text-white flex items-center gap-1.5 shadow-sm transition-colors"
+                >
+                  <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                  Stop Recording
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowStartRecordModal(true)}
+                  className="btn-primary text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+                    <circle cx="8" cy="8" r="6" />
+                  </svg>
+                  Record Lecture
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Active recording banner */}
+          {isThisClassRecording && (
+            <div className="mb-5 p-4 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="relative flex h-3 w-3">
+                  {!recordingStore.isPaused && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75" />
+                  )}
+                  <span
+                    className={`relative inline-flex rounded-full h-3 w-3 ${
+                      recordingStore.isPaused ? 'bg-amber-400' : 'bg-violet-600'
+                    }`}
+                  />
+                </span>
+                <div>
+                  <div className="text-xs font-semibold text-violet-900 dark:text-violet-200">
+                    {recordingStore.isPaused ? 'Recording Paused' : 'Recording in Progress…'}
+                  </div>
+                  <div className="text-xs text-violet-700 dark:text-violet-300">
+                    {recordingStore.lectureTitle} • Streaming chunks safely to disk
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={recordingStore.isPaused ? recordingStore.resumeRecording : recordingStore.pauseRecording}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-200 bg-white dark:bg-slate-800 hover:bg-violet-50 transition-colors"
+                >
+                  {recordingStore.isPaused ? 'Resume' : 'Pause'}
+                </button>
+                <button
+                  onClick={() => recordingStore.stopRecording()}
+                  className="px-3 py-1 text-xs font-medium rounded-lg bg-violet-600 hover:bg-violet-700 text-white transition-colors"
+                >
+                  Finish & Save
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Lectures List */}
+          {lectures.length > 0 ? (
+            <div className="space-y-3">
+              {lectures.map((lec) => {
+                const linkedMaterial = materials.find((m) => m.id === lec.material_id)
+
+                return (
+                  <div
+                    key={lec.id}
+                    className="p-4 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80 shadow-sm space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100 truncate">
+                            {lec.title}
+                          </h4>
+                          {/* Status Badge */}
+                          {lec.status === 'ready' && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                              ✓ Notes Ready
+                            </span>
+                          )}
+                          {lec.status === 'transcribing' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+                              <span className="w-2 h-2 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                              Transcribing & Structuring...
+                            </span>
+                          )}
+                          {lec.status === 'recording' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
+                              <span className="w-1.5 h-1.5 rounded-full bg-violet-600 animate-pulse" />
+                              Recording
+                            </span>
+                          )}
+                          {lec.status === 'failed' && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+                              ✕ Failed
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500 mt-1">
+                          <span>
+                            {new Date(lec.created_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric'
+                            })}
+                          </span>
+                          {lec.duration_seconds > 0 && (
+                            <span>
+                              ⏱️ {Math.floor(lec.duration_seconds / 60)}m {lec.duration_seconds % 60}s
+                            </span>
+                          )}
+                          {lec.file_size_bytes > 0 && (
+                            <span>
+                              💾 {(lec.file_size_bytes / (1024 * 1024)).toFixed(1)} MB
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {linkedMaterial && (
+                          <button
+                            onClick={() => setSelectedLectureForNotes(lec)}
+                            className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium flex items-center gap-1 transition-colors"
+                            title="View Markdown Notes"
+                          >
+                            <span>📝</span>
+                            <span>Notes</span>
+                          </button>
+                        )}
+
+                        {linkedMaterial && (
+                          <button
+                            onClick={() => {
+                              setSelectedImportMaterialId(linkedMaterial.id)
+                              setShowTextImport(true)
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-xs font-medium flex items-center gap-1 transition-colors"
+                            title="Generate Flashcards from Notes"
+                          >
+                            <span>✨</span>
+                            <span>Cards</span>
+                          </button>
+                        )}
+
+                        {linkedMaterial && (
+                          <button
+                            onClick={() =>
+                              setShowConfigModal({
+                                subjectId: subject.id,
+                                subjectName: subject.name,
+                                materialId: linkedMaterial.id,
+                                materialName: linkedMaterial.filename
+                              })
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/60 text-xs font-medium flex items-center gap-1 transition-colors"
+                            title="Study with AI Tutor"
+                          >
+                            <span>🎓</span>
+                            <span>Tutor</span>
+                          </button>
+                        )}
+
+                        {lec.status === 'failed' && (
+                          <button
+                            onClick={() => handleRetryLecture(lec.id)}
+                            className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 text-xs font-medium transition-colors"
+                          >
+                            Retry
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => handleDeleteLecture(lec.id, lec.title)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 transition-colors"
+                          title="Delete lecture and audio"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                            <path d="M2 3.5h10M5 3.5V2.5a1 1 0 011-1h2a1 1 0 011 1v1M11.5 3.5L11 12a1 1 0 01-1 1H4a1 1 0 01-1-1L2.5 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Embedded Audio Player */}
+                    {lec.audio_path && (
+                      <LectureAudioPlayer audioPath={lec.audio_path} title={lec.title} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-14 bg-white dark:bg-slate-800 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
+              <span className="text-2xl mb-2 inline-block">🎙️</span>
+              <p className="text-sm text-slate-400 dark:text-slate-500 mb-1">
+                No lecture recordings yet.
+              </p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
+                Record your lectures right from your laptop or connected phone microphone.
+              </p>
+              <button
+                onClick={() => setShowStartRecordModal(true)}
+                className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
+              >
+                Record your first lecture
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ═══ DEADLINES TAB ═══ */}
       {activeTab === 'deadlines' && (
         <div>
@@ -1373,6 +1701,109 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           initialModuleId={showConfigModal.moduleId}
           initialMode={showConfigModal.initialMode}
           onClose={() => setShowConfigModal(null)}
+        />
+      )}
+
+      {/* Start Recording Modal */}
+      {showStartRecordModal && (
+        <div className="fixed inset-0 bg-black/40 dark:bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm" onClick={() => !startingLecture && setShowStartRecordModal(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl w-full max-w-md p-6 animate-slide-up" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+                <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+                  Record Lecture
+                </h3>
+              </div>
+              <button
+                disabled={startingLecture}
+                onClick={() => setShowStartRecordModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1L13 13M13 1L1 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
+              Neuron streams your audio to disk in real-time. Even if the laptop battery dies or app closes, recordings are preserved safely.
+            </p>
+
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
+                  Lecture Title (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder={`e.g. ${subject?.name || 'Class'} - Lecture ${lectures.length + 1}`}
+                  value={lectureTitleInput}
+                  onChange={e => setLectureTitleInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !startingLecture) {
+                      handleStartRecording()
+                    }
+                  }}
+                  className="input w-full text-sm"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
+                  Microphone Input
+                </label>
+                <AudioDeviceSelector />
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200/60 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex items-start gap-2.5">
+                <span className="text-base leading-none">🤫</span>
+                <p className="leading-relaxed">
+                  <strong>Stealth indicator:</strong> Recording appears as a small, subtle dot in the top navigation bar. You can freely switch subjects, study flashcards, or take notes while recording.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={startingLecture}
+                onClick={() => setShowStartRecordModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={startingLecture}
+                onClick={handleStartRecording}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                {startingLecture ? 'Starting...' : 'Start Recording'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lecture Notes Preview Modal */}
+      {selectedLectureForNotes && (
+        <LectureNotesModal
+          title={selectedLectureForNotes.title}
+          markdown={
+            materials.find(m => m.id === selectedLectureForNotes.material_id)?.content_text ||
+            selectedLectureForNotes.raw_transcript ||
+            'No notes available.'
+          }
+          onClose={() => setSelectedLectureForNotes(null)}
+          onGenerateCards={
+            selectedLectureForNotes.material_id
+              ? () => {
+                  setSelectedImportMaterialId(selectedLectureForNotes.material_id!)
+                  setShowTextImport(true)
+                }
+              : undefined
+          }
         />
       )}
 
