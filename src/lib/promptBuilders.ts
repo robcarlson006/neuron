@@ -536,3 +536,51 @@ export function parseActiveRecallResponse(
     }
   })
 }
+
+/**
+ * Build a structured lecture notes prompt that converts raw transcript into
+ * a rich Markdown document optimized for Neuron's AI card generator, curriculum builder,
+ * and AI Tutor.
+ */
+export function buildLectureNotesPrompt(
+  rawTranscript: string,
+  subjectName: string,
+  lectureTitle: string
+): string {
+  return `You are an elite academic tutor creating comprehensive, beautifully structured study notes from a lecture recording for the class "${subjectName}".
+
+LECTURE TITLE: ${lectureTitle}
+CLASS: ${subjectName}
+
+TRANSCRIPT:
+${rawTranscript}
+
+Generate a comprehensive, structured Markdown study document based on this lecture.
+Requirements:
+1. Use GitHub-flavored Markdown.
+2. Structure the document with these exact sections:
+   # 📚 ${subjectName}: ${lectureTitle}
+
+   ## 🎯 Executive Summary & Objectives
+   A high-level synthesis of what this lecture was about, key themes, and main takeaways.
+
+   ## 🔑 Key Concepts, Definitions & Formulas
+   Bulleted list of every important term, concept, definition, equation, or theorem introduced in the lecture. Format each as:
+   - **Term / Concept**: Definition, context, and significance.
+
+   ## ⏱️ Detailed Chronological Notes
+   Organized by major topic or time block (e.g. ### [00:00 - 25:00] Topic Name). Provide thorough, structured notes with explanations, bullet points, and examples given in the lecture.
+
+   ## 💡 Potential Exam Questions & Review Points
+   5-10 active recall questions that test understanding of core concepts from this lecture.
+
+   <details>
+   <summary>📜 Click to expand full raw transcript</summary>
+
+   ${rawTranscript}
+
+   </details>
+
+3. Do NOT wrap the entire output in triple backtick fences. Output clean, raw Markdown directly.`
+}
+

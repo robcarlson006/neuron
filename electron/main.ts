@@ -17,7 +17,9 @@ import { registerClassHandlers, setClassDatabase } from './ipc/classHandlers'
 import { registerCalendarHandlers, setCalendarDatabase } from './ipc/calendarHandlers'
 import { registerLocalEngineHandlers, setLocalEngineWindowGetter, stopEngine } from './ipc/localEngine'
 import { registerFolderHandlers, setFolderDatabase } from './ipc/folderHandlers'
-import { registerLectureHandlers, setLectureDatabase } from './ipc/lectureHandlers'
+import { registerLectureHandlers, setLectureDatabase, setOnRecordingFinalized } from './ipc/lectureHandlers'
+import { LectureNotesService } from './ipc/lectureNotesService'
+import { LocalWhisperService } from './ipc/localWhisperService'
 import { FolderSyncService } from './ipc/folderSyncService'
 
 protocol.registerSchemesAsPrivileged([
@@ -223,6 +225,12 @@ app.whenReady().then(async () => {
   registerFolderHandlers()
   setLectureDatabase(db)
   registerLectureHandlers()
+  LectureNotesService.init(db)
+  LectureNotesService.setWindowGetter(() => mainWindow)
+  LocalWhisperService.setWindowGetter(() => mainWindow)
+  setOnRecordingFinalized(async (lectureId) => {
+    await LectureNotesService.processLecture(lectureId)
+  })
 
   protocol.handle('neuron-audio', (request) => {
     try {
