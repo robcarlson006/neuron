@@ -6,6 +6,7 @@ import { safeParseAIJson, safeParseAICards } from '../../src/lib/jsonRepair'
 import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
 import { FolderSyncService } from './folderSyncService'
+import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
 import type { ClassCreationData, Subject, Card } from '../../src/types'
 
 let db: Database.Database
@@ -183,7 +184,7 @@ async function generateSyllabusForClass(subjectId: number): Promise<unknown[]> {
   if (materials.length === 0) throw new Error('No materials found')
 
   const materialSummaries = materials.map(m =>
-    `[File: ${m.filename}]\n${m.content_text.substring(0, 4000)}`
+    buildComprehensiveOutline(m.content_text, m.filename)
   ).join('\n\n---\n\n')
 
   const weeklyHours = subject.time_commitment_minutes || 60

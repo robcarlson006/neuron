@@ -3,6 +3,7 @@ import Database from 'better-sqlite3'
 import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
 import { safeParseAIJson } from '../../src/lib/jsonRepair'
+import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 
 let db: Database.Database
@@ -33,9 +34,9 @@ async function generateFromAllMaterials(subjectId: number) {
 
     if (materials.length === 0) throw new Error('No materials with content found')
 
-    // Build condensed material text (truncated to fit context window)
+    // Build comprehensive material overview across all sections
     const materialSummaries = materials.map(m =>
-      `[File: ${m.filename}]\n${m.content_text.substring(0, 4000)}`
+      buildComprehensiveOutline(m.content_text, m.filename)
     ).join('\n\n---\n\n')
 
     const weeklyHours = subject.time_commitment_minutes || 60
@@ -441,7 +442,7 @@ async function updateFromMaterials(
   }).join('\n')
 
   const materialText = materials.map(m =>
-    `[File: ${m.filename}]\n${m.content_text.substring(0, 3000)}`
+    buildComprehensiveOutline(m.content_text, m.filename)
   ).join('\n\n---\n\n')
 
   const prompt = `You are an expert curriculum designer. A student is studying "${subject.name}" and has added NEW study materials to their ${isBook ? 'book' : 'subject'}.

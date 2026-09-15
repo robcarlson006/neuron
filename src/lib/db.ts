@@ -549,6 +549,75 @@ export const DB_SCHEMA = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_practice_attempts_session ON practice_problem_attempts (session_id);
+
+  -- V5.0: Cognitive Knowledge & Rating Fabric (CKRF)
+  CREATE TABLE IF NOT EXISTS topic_competency_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    rating REAL NOT NULL DEFAULT 1500.0,
+    rating_deviation REAL NOT NULL DEFAULT 350.0,
+    volatility REAL NOT NULL DEFAULT 0.06,
+    highest_rating REAL NOT NULL DEFAULT 1500.0,
+    lowest_rating REAL NOT NULL DEFAULT 1500.0,
+    observations_count INTEGER NOT NULL DEFAULT 0,
+    last_assessed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    decayed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, subject_id, topic),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_topic_ratings_user_subject ON topic_competency_ratings(user_id, subject_id);
+
+  CREATE TABLE IF NOT EXISTS episodic_learning_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    memory_type TEXT NOT NULL CHECK(memory_type IN ('breakthrough', 'struggle', 'analogy', 'pedagogical_profile')),
+    importance_score INTEGER NOT NULL DEFAULT 5,
+    summary TEXT NOT NULL,
+    context_snippet TEXT,
+    effective_intervention TEXT,
+    session_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_episodic_memories_lookup ON episodic_learning_memories(user_id, subject_id, topic);
+
+  CREATE TABLE IF NOT EXISTS student_misconceptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    concept TEXT NOT NULL,
+    misconception_key TEXT NOT NULL,
+    misconception_title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    remediation_status TEXT NOT NULL DEFAULT 'active' CHECK(remediation_status IN ('active', 'inoculating', 'resolved')),
+    consecutive_successes INTEGER DEFAULT 0,
+    occurrence_count INTEGER DEFAULT 1,
+    first_observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    UNIQUE(user_id, subject_id, misconception_key),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_misconceptions_status ON student_misconceptions(user_id, subject_id, remediation_status);
+
+  CREATE TABLE IF NOT EXISTS concept_dependencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    prerequisite_concept TEXT NOT NULL,
+    target_concept TEXT NOT NULL,
+    weight REAL DEFAULT 1.0,
+    UNIQUE(subject_id, prerequisite_concept, target_concept),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_concept_deps_subject ON concept_dependencies(subject_id);
 `
 
 export const MIGRATIONS_SQL = [
@@ -686,6 +755,71 @@ export const MIGRATIONS_SQL = [
     FOREIGN KEY (problem_id) REFERENCES practice_problems(id) ON DELETE CASCADE
   )`,
   "CREATE INDEX IF NOT EXISTS idx_practice_attempts_session ON practice_problem_attempts (session_id)",
+  // V5.0: Cognitive Knowledge & Rating Fabric (CKRF)
+  `CREATE TABLE IF NOT EXISTS topic_competency_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    rating REAL NOT NULL DEFAULT 1500.0,
+    rating_deviation REAL NOT NULL DEFAULT 350.0,
+    volatility REAL NOT NULL DEFAULT 0.06,
+    highest_rating REAL NOT NULL DEFAULT 1500.0,
+    lowest_rating REAL NOT NULL DEFAULT 1500.0,
+    observations_count INTEGER NOT NULL DEFAULT 0,
+    last_assessed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    decayed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, subject_id, topic),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_topic_ratings_user_subject ON topic_competency_ratings(user_id, subject_id)",
+  `CREATE TABLE IF NOT EXISTS episodic_learning_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    memory_type TEXT NOT NULL CHECK(memory_type IN ('breakthrough', 'struggle', 'analogy', 'pedagogical_profile')),
+    importance_score INTEGER NOT NULL DEFAULT 5,
+    summary TEXT NOT NULL,
+    context_snippet TEXT,
+    effective_intervention TEXT,
+    session_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_episodic_memories_lookup ON episodic_learning_memories(user_id, subject_id, topic)",
+  `CREATE TABLE IF NOT EXISTS student_misconceptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    concept TEXT NOT NULL,
+    misconception_key TEXT NOT NULL,
+    misconception_title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    remediation_status TEXT NOT NULL DEFAULT 'active' CHECK(remediation_status IN ('active', 'inoculating', 'resolved')),
+    consecutive_successes INTEGER DEFAULT 0,
+    occurrence_count INTEGER DEFAULT 1,
+    first_observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    UNIQUE(user_id, subject_id, misconception_key),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_misconceptions_status ON student_misconceptions(user_id, subject_id, remediation_status)",
+  `CREATE TABLE IF NOT EXISTS concept_dependencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    prerequisite_concept TEXT NOT NULL,
+    target_concept TEXT NOT NULL,
+    weight REAL DEFAULT 1.0,
+    UNIQUE(subject_id, prerequisite_concept, target_concept),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_concept_deps_subject ON concept_dependencies(subject_id)",
 ]
 
 export const MASTERED_INTERVAL = 21

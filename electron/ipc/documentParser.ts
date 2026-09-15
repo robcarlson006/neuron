@@ -324,12 +324,11 @@ export async function parseFileToText(filePath: string): Promise<{
   }
 
   const originalLength = contentText.length
-  const truncated = truncateText(contentText, 25000)
 
   return {
     filename,
     fileType: detectedType,
-    contentText: truncated,
+    contentText,
     originalLength
   }
 }

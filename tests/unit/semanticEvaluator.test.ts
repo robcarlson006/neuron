@@ -54,6 +54,13 @@ describe('semanticEvaluator', () => {
       expect(detectNegationMismatch('Produces ATP in matrix', 'Generates ATP in matrix')).toBe(false)
       expect(detectNegationMismatch('Does not work', 'It is not functional')).toBe(false)
     })
+
+    it('does NOT trigger false positives for words containing "no" or "not" as substrings (economics, technology, knowledge)', () => {
+      // "economics", "technology", "knowledge", "innovation", "notion" all contain "no"
+      expect(detectNegationMismatch('Economics and modern technology drive global trade', 'Technology and economic principles govern markets')).toBe(false)
+      expect(detectNegationMismatch('Acquiring knowledge requires study', 'Learning entails acquiring knowledge')).toBe(false)
+      expect(detectNegationMismatch('A polynomial with three terms is a trinomial', 'A three-term polynomial')).toBe(false)
+    })
   })
 
   describe('scoreToQuality', () => {

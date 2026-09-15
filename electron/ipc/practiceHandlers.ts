@@ -7,7 +7,14 @@ import {
   buildGenerateVariantPrompt,
   buildEvaluatePracticeAttemptPrompt
 } from "../../src/lib/practicePrompts"
+import { parseDocumentTopology } from "../../src/lib/coverage/documentTopologyParser"
+import { classifyMaterialDomain } from "../../src/lib/classification/domainClassifier"
 import { cleanMarkdownFences } from "../../src/lib/jsonRepair"
+import {
+  recordTopicAssessment,
+  recordMisconception,
+  recordConceptSuccess
+} from "../../src/lib/memory/ckrfMemoryService"
 import type {
   PracticeProblem,
   PracticeSession,
@@ -21,6 +28,85 @@ let db: Database.Database
 
 export function setPracticeDatabase(database: Database.Database): void {
   db = database
+}
+
+async function extractProblemsFromMaterialText(
+  text: string,
+  subjectName: string,
+  filename?: string,
+  moduleTitle?: string,
+  topicTitle?: string
+): Promise<ExtractedPracticeProblem[]> {
+  const config = getAIConfig()
+  const apiKey = getApiKey()
+  if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+
+  const domainResult = classifyMaterialDomain(text, subjectName, filename)
+
+  const chunksToProcess: { text: string; title?: string }[] = []
+  if (text.length > 6000) {
+    const topology = parseDocumentTopology(text, filename || '', 1200)
+    for (const chunk of topology.chunks) {
+      if (chunk.text.trim().length > 100) {
+        chunksToProcess.push({ text: chunk.text, title: chunk.title })
+      }
+    }
+  }
+
+  if (chunksToProcess.length === 0) {
+    chunksToProcess.push({ text, title: filename || 'Source Content' })
+  }
+
+  const allProblems: ExtractedPracticeProblem[] = []
+
+  for (const chunk of chunksToProcess) {
+    const prompt = buildExtractPracticeProblemsPrompt(
+      chunk.text,
+      subjectName,
+      moduleTitle ? `${moduleTitle}${chunk.title ? ` - ${chunk.title}` : ''}` : chunk.title,
+      topicTitle,
+      domainResult
+    )
+
+    try {
+      const responseText = await callAIMessages(
+        [{ role: "user", content: prompt }],
+        { ...config, apiKey },
+        { type: "json_object" }
+      )
+
+      const cleanedJson = cleanMarkdownFences(responseText)
+      let parsed: { problems?: ExtractedPracticeProblem[] } = {}
+      try {
+        parsed = JSON.parse(cleanedJson)
+      } catch {
+        const match = cleanedJson.match(/\{.*"problems"\s*:\s*\[([\s\S]*?)\]\s*\}/)
+        if (match) {
+          parsed = JSON.parse(match[0])
+        }
+      }
+
+      if (parsed.problems && Array.isArray(parsed.problems)) {
+        allProblems.push(...parsed.problems)
+      }
+    } catch (chunkErr) {
+      console.warn("Error extracting problems from chunk:", chunk.title, chunkErr)
+    }
+  }
+
+  // Deduplicate extracted problems across chunks
+  const seen = new Set<string>()
+  const deduplicated: ExtractedPracticeProblem[] = []
+  for (const p of allProblems) {
+    if (!p || !p.problem_text) continue
+    const key = p.problem_text.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 80)
+    if (!seen.has(key)) {
+      seen.add(key)
+      deduplicated.push(p)
+    }
+  }
+
+  return deduplicated
 }
 
 export function registerPracticeHandlers(): void {
@@ -129,38 +215,14 @@ export function registerPracticeHandlers(): void {
           topicTitle = top?.title
         }
 
-        const prompt = buildExtractPracticeProblemsPrompt(
+        const problems = await extractProblemsFromMaterialText(
           material.content_text,
           subject?.name || "Subject",
+          material.filename,
           moduleTitle,
           topicTitle
         )
 
-        const config = getAIConfig()
-        const apiKey = getApiKey()
-        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
-
-        const responseText = await callAIMessages(
-          [{ role: "user", content: prompt }],
-          { ...config, apiKey },
-          { type: "json_object" }
-        )
-
-        const cleanedJson = cleanMarkdownFences(responseText)
-        let parsed: { problems?: ExtractedPracticeProblem[] } = {}
-        try {
-          parsed = JSON.parse(cleanedJson)
-        } catch (e) {
-          // If direct parse fails, try extracting array
-          const match = cleanedJson.match(/\{.*"problems"\s*:\s*\[([\s\S]*?)\]\s*\}/)
-          if (match) {
-            parsed = JSON.parse(match[0])
-          } else {
-            throw new Error("Failed to parse extracted practice problems JSON from AI.")
-          }
-        }
-
-        const problems = parsed.problems || []
         const created: PracticeProblem[] = []
 
         const insertStmt = db.prepare(`
@@ -222,34 +284,13 @@ export function registerPracticeHandlers(): void {
           topicTitle = top?.title
         }
 
-        const prompt = buildExtractPracticeProblemsPrompt(
+        const problems = await extractProblemsFromMaterialText(
           text,
           subject?.name || "Subject",
+          undefined,
           moduleTitle,
           topicTitle
         )
-
-        const config = getAIConfig()
-        const apiKey = getApiKey()
-        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
-
-        const responseText = await callAIMessages(
-          [{ role: "user", content: prompt }],
-          { ...config, apiKey },
-          { type: "json_object" }
-        )
-
-        const cleanedJson = cleanMarkdownFences(responseText)
-        let parsed: { problems?: ExtractedPracticeProblem[] } = {}
-        try {
-          parsed = JSON.parse(cleanedJson)
-        } catch {
-          const match = cleanedJson.match(/\{.*"problems"\s*:\s*\[([\s\S]*?)\]\s*\}/)
-          if (match) parsed = JSON.parse(match[0])
-          else throw new Error("Failed to parse extracted practice problems JSON.")
-        }
-
-        const problems = parsed.problems || []
         const created: PracticeProblem[] = []
 
         const insertStmt = db.prepare(`
@@ -542,6 +583,41 @@ export function registerPracticeHandlers(): void {
                 observations = observations + 1,
                 updated_at = datetime('now')
             `).run(session.user_id, session.subject_id, p, isCorrectNum === 1 ? 0.6 : 0.25, delta)
+          }
+
+          // ── CKRF Memory Updates (Glicko-2 & Misconception Ledger) ──────────
+          try {
+            recordTopicAssessment(
+              db,
+              session.user_id,
+              session.subject_id,
+              topicName,
+              {
+                itemDifficulty: problem.difficulty || 2,
+                score: isCorrectNum === 1 ? 1.0 : (errorType === "execution_slip" ? 0.35 : 0.0)
+              }
+            )
+
+            if (isCorrectNum === 1) {
+              recordConceptSuccess(db, session.user_id, session.subject_id, topicName)
+              for (const p of principles) {
+                if (p && typeof p === "string") {
+                  recordConceptSuccess(db, session.user_id, session.subject_id, p)
+                }
+              }
+            } else {
+              const mainConcept = (principles.length > 0 && typeof principles[0] === "string") ? principles[0] : topicName
+              const misconceptionKey = `${topicName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${(evalResult.error_type || 'misconception').toLowerCase()}`
+              const primaryError = (evalResult.identified_errors && evalResult.identified_errors[0]) || `Error in ${topicName}`
+              recordMisconception(db, session.user_id, session.subject_id, {
+                concept: mainConcept,
+                misconceptionKey,
+                misconceptionTitle: primaryError,
+                description: detailedStruggle
+              })
+            }
+          } catch (ckrfErr) {
+            console.warn("Could not record CKRF memory update:", ckrfErr)
           }
         } catch (memErr) {
           console.warn("Could not update topic memory from practice attempt:", memErr)

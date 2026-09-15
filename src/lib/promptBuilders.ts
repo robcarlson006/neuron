@@ -195,10 +195,11 @@ Return valid JSON with this exact structure:
       "front": "Atomic prompt or cloze deletion (e.g. 'Photosynthesis is the mechanism where ___')",
       "back": "Concise, precise explanation (1-2 sentences)",
       "concept": "Major topic name (Group cards under 3-5 broad overarching themes across the deck, e.g. 'Action Potentials', 'Synaptic Transmission'; NEVER invent a unique micro-topic per card)",
-      "card_subtype": "definition | mechanism | application | discrimination",
+      "card_subtype": "discrimination | boundary | mechanism | faded_step | misconception | definition",
       "concrete_example": "A concrete real-world scenario or analogy illustrating this concept",
       "common_mistake": "A frequent student misconception or trap to avoid",
-      "mnemonic": "An intuitive memory hook, acronym, or vivid mental visual"
+      "mnemonic": "An intuitive memory hook, acronym, or vivid mental visual",
+      "checkpoints": ["Key idea 1 student must recall", "Key idea 2 student must recall"]
     }
   ],
   "active_recall": [
@@ -206,10 +207,11 @@ Return valid JSON with this exact structure:
       "question": "Deep conceptual inquiry starting with Why/How/Explain the mechanism of... or scenario analysis",
       "model_answer": "Complete, structured explanation with key conceptual checkpoints for mastery",
       "concept": "Major topic name (Must match one of the 3-5 broad overarching themes across the deck)",
-      "card_subtype": "definition | mechanism | application | discrimination",
+      "card_subtype": "discrimination | boundary | mechanism | faded_step | misconception | definition",
       "concrete_example": "A real-world application or case study",
       "common_mistake": "A common reasoning flaw or incorrect assumption",
-      "mnemonic": "Optional memory aid or mental framework"
+      "mnemonic": "Optional memory aid or mental framework",
+      "checkpoints": ["Key idea 1 student must recall", "Key idea 2 student must recall"]
     }
   ]
 }
@@ -302,10 +304,11 @@ Return valid JSON with this exact structure:
       "front": "Question, prompt, or cloze deletion (e.g. 'Photosynthesis is the process by which ___')",
       "back": "Precise, concise answer/explanation (1-2 sentences)",
       "concept": "Major topic name (Group cards under 3-5 broad overarching themes across the deck, e.g. 'Action Potentials', 'Synaptic Transmission'; NEVER invent a unique micro-topic per card)",
-      "card_subtype": "definition | mechanism | application | discrimination",
+      "card_subtype": "discrimination | boundary | mechanism | faded_step | misconception | definition",
       "concrete_example": "A concrete real-world scenario or analogy illustrating this concept",
       "common_mistake": "A frequent student misconception or trap to avoid",
-      "mnemonic": "An intuitive memory hook, acronym, or vivid mental visual"
+      "mnemonic": "An intuitive memory hook, acronym, or vivid mental visual",
+      "checkpoints": ["Key idea 1 student must recall", "Key idea 2 student must recall"]
     }
   ]
 }
@@ -389,10 +392,11 @@ Return valid JSON with this exact structure:
       "question": "Open-ended inquiry requiring deep conceptual understanding (Why/How/Explain/Compare/Analyze)",
       "model_answer": "Complete, rigorous model answer highlighting the core conceptual criteria",
       "concept": "Major topic name (Group cards under 3-5 broad overarching themes across the deck; NEVER invent a unique micro-topic per card)",
-      "card_subtype": "definition | mechanism | application | discrimination",
+      "card_subtype": "discrimination | boundary | mechanism | faded_step | misconception | definition",
       "concrete_example": "A real-world application, case study, or problem scenario",
       "common_mistake": "A common logical flaw, incomplete explanation, or misconception",
-      "mnemonic": "Optional mental framework or memory aid"
+      "mnemonic": "Optional mental framework or memory aid",
+      "checkpoints": ["Key conceptual criterion 1", "Key conceptual criterion 2"]
     }
   ]
 }

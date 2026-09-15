@@ -29,13 +29,17 @@ describe('validateCardQuality', () => {
     expect(result.issues.some((i) => i.includes('vague reference'))).toBe(true)
   })
 
-  it('splits compound answers with 3+ numbered items', () => {
+  it('splits compound answers with 3+ numbered items without leaking the answer', () => {
     const result = validateCardQuality({
       front: 'What are the first three Greek letters?',
       back: '1. Alpha\n2. Bravo\n3. Gamma'
     })
     expect(result.valid).toBe(true)
     expect(result.cards.length).toBe(3)
+    // Invariant: Card front must never contain the card back (no answer leakage)
+    for (const card of result.cards) {
+      expect(card.front.toLowerCase()).not.toContain(card.back.toLowerCase())
+    }
   })
 
   it('flags non-question fronts', () => {

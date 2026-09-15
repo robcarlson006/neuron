@@ -24,7 +24,7 @@ const STOP_WORDS = new Set([
   'too', 'very', 'can', 'will', 'just', 'should', 'now', 'that', 'this', 'these', 'those', 'it', 'its'
 ])
 
-const NEGATION_WORDS = ['not', "n't", 'no', 'never', 'neither', 'nor', 'cannot', 'cant', 'without', 'false']
+export const NEGATION_REGEX = /\b(?:not|no|never|neither|nor|cannot|cant|without|false)\b|n't\b/i
 
 export function normalizeText(text: string): string {
   return text
@@ -87,10 +87,8 @@ export function extractKeyConcepts(text: string): string[] {
 }
 
 export function detectNegationMismatch(student: string, model: string): boolean {
-  const studentLower = student.toLowerCase()
-  const modelLower = model.toLowerCase()
-  const studentHasNeg = NEGATION_WORDS.some(w => studentLower.includes(w))
-  const modelHasNeg = NEGATION_WORDS.some(w => modelLower.includes(w))
+  const studentHasNeg = NEGATION_REGEX.test(student)
+  const modelHasNeg = NEGATION_REGEX.test(model)
   return studentHasNeg !== modelHasNeg
 }
 

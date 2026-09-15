@@ -133,13 +133,25 @@ export default function GeneralChat(): React.JSX.Element {
       const selectedSubject = subjects.find(s => s.id === selectedSubjectId)
       if (selectedSubject) {
         attachedContent = `[Context from class: ${selectedSubject.name}]`
-        // Try to attach first library file for context
+        // Attach class materials for context
         try {
           const files = await window.electronAPI.libraryGetFiles(selectedSubjectId) as LibraryFile[]
           if (files.length > 0) {
-            const content = await window.electronAPI.libraryGetFileContent(files[0].id) as { content_text: string } | null
-            if (content) {
-              attachedContent += `\n\nRelevant material:\n${content.content_text.substring(0, 3000)}`
+            const materialSnippets: string[] = []
+            for (const f of files.slice(0, 10)) {
+              const content = await window.electronAPI.libraryGetFileContent(f.id) as { content_text: string } | null
+              if (content?.content_text) {
+                const text = content.content_text.trim()
+                if (text) {
+                  const snippet = text.length <= 6000
+                    ? text
+                    : text.substring(0, 6000) + '\n... [additional material omitted for brevity]'
+                  materialSnippets.push(`[File: ${f.filename}]\n${snippet}`)
+                }
+              }
+            }
+            if (materialSnippets.length > 0) {
+              attachedContent += `\n\nRelevant class materials:\n${materialSnippets.join('\n\n---\n\n')}`
             }
           }
         } catch { /* ignore */ }

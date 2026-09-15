@@ -9,6 +9,14 @@ import { parseFileToText } from './documentParser'
 import { bktUpdate } from '../../src/lib/bkt'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
 import { safeParseAIJson } from '../../src/lib/jsonRepair'
+import { parseDocumentTopology } from '../../src/lib/coverage/documentTopologyParser'
+import {
+  buildCKRFMemoryBlock,
+  recordTopicAssessment,
+  recordMisconception,
+  recordConceptSuccess,
+  recordEpisodicMemory
+} from '../../src/lib/memory/ckrfMemoryService'
 import type {
   TutorSession,
   TutorStreamParams,
@@ -213,6 +221,8 @@ function buildMemoryBlock(params: {
 export function buildHistoricalMemoryBlock(database: Database.Database | undefined, subjectId: number, userId?: number): string {
   if (!database || !subjectId || !userId) return ''
   try {
+    const ckrfBlock = buildCKRFMemoryBlock(database, userId, subjectId)
+
     const memories = database.prepare(`
       SELECT topic, mastery_level, strengths, struggles
       FROM tutor_topic_memories
@@ -221,21 +231,30 @@ export function buildHistoricalMemoryBlock(database: Database.Database | undefin
       LIMIT 20
     `).all(subjectId, userId) as { topic: string; mastery_level: string; strengths: string | null; struggles: string | null }[]
 
-    if (!memories.length) return ''
+    const blocks: string[] = []
 
-    const mastered = memories.filter(m => m.mastery_level === 'mastered' || m.mastery_level === 'good')
-    const struggling = memories.filter(m => m.mastery_level === 'struggling' || m.mastery_level === 'developing')
+    if (ckrfBlock.trim()) {
+      blocks.push(ckrfBlock.trim())
+    }
 
-    const lines: string[] = ['', 'HISTORICAL LEARNING MEMORY (FROM PREVIOUS SESSIONS):']
-    if (mastered.length > 0) {
-      lines.push(`- Concepts student has strong command of: ${mastered.map(m => m.topic + (m.strengths ? ` (${m.strengths})` : '')).slice(0, 10).join('; ')}`)
+    // Include legacy summary if CKRF ratings aren't yet populated
+    if (memories.length > 0 && !ckrfBlock.includes('COGNITIVE KNOWLEDGE & PSYCHOMETRIC RATINGS')) {
+      const mastered = memories.filter(m => m.mastery_level === 'mastered' || m.mastery_level === 'good')
+      const struggling = memories.filter(m => m.mastery_level === 'struggling' || m.mastery_level === 'developing')
+
+      const lines: string[] = ['HISTORICAL LEARNING MEMORY (FROM PREVIOUS SESSIONS):']
+      if (mastered.length > 0) {
+        lines.push(`- Concepts student has strong command of: ${mastered.map(m => m.topic + (m.strengths ? ` (${m.strengths})` : '')).slice(0, 10).join('; ')}`)
+      }
+      if (struggling.length > 0) {
+        lines.push(`- Concepts student has struggled with: ${struggling.map(m => m.topic + (m.struggles ? ` (${m.struggles})` : '')).slice(0, 10).join('; ')}`)
+        lines.push(`- Pedagogical Note: Prioritize reinforcing these struggled areas with intuitive examples before advancing.`)
+      }
+      blocks.push(lines.join('\n'))
     }
-    if (struggling.length > 0) {
-      lines.push(`- Concepts student has struggled with: ${struggling.map(m => m.topic + (m.struggles ? ` (${m.struggles})` : '')).slice(0, 10).join('; ')}`)
-      lines.push(`- Pedagogical Note: Prioritize reinforcing these struggled areas with intuitive examples before advancing.`)
-    }
-    lines.push('')
-    return lines.join('\n')
+
+    if (!blocks.length) return ''
+    return '\n' + blocks.join('\n\n') + '\n'
   } catch (err) {
     console.error('Failed to build historical memory block:', err)
     return ''
@@ -497,7 +516,9 @@ export async function evaluateAndSaveSessionMemory(
     strengths: [] as string[],
     struggles: [] as string[],
     topics_covered: [] as string[],
-    summary: summaryText || ''
+    summary: summaryText || '',
+    breakthroughs: [] as Array<{ topic: string; summary: string; effective_intervention?: string; importance_score?: number }>,
+    misconceptions: [] as Array<{ concept: string; misconception_title: string; description: string }>
   }
 
   try {
@@ -505,7 +526,7 @@ export async function evaluateAndSaveSessionMemory(
     const config = getAIConfig()
 
     if (apiKey) {
-      const prompt = `You are an educational analytics AI. Analyze this tutoring session dialogue between Tutor and Student for class "${className}".
+      const prompt = `You are an educational analytics AI and cognitive memory specialist. Analyze this tutoring session dialogue between Tutor and Student for class "${className}".
 
 DIALOGUE:
 ${transcript}
@@ -515,13 +536,19 @@ Extract:
 2. "struggles": Array of 1-4 specific concepts, topics, or misconceptions the student struggled with, answered incorrectly, or needed hints for.
 3. "topics_covered": Array of 1-5 syllabus/subject topics covered during this session.
 4. "summary": A 1-2 sentence summary of what was accomplished and areas to focus on next.
+5. "breakthroughs": Array of 0-3 objects for moments where the student had a clear breakthrough or where a specific explanation/analogy worked well:
+   [{"topic": "string", "summary": "what clicked", "effective_intervention": "analogy or prompt that helped", "importance_score": 7}]
+6. "misconceptions": Array of 0-3 objects for specific conceptual errors or mental model traps exhibited:
+   [{"concept": "string", "misconception_title": "short title", "description": "precise misconception explanation"}]
 
 Return STRICT JSON ONLY, no extra text, in this format:
 {
   "strengths": ["string"],
   "struggles": ["string"],
   "topics_covered": ["string"],
-  "summary": "string"
+  "summary": "string",
+  "breakthroughs": [{"topic": "string", "summary": "string", "effective_intervention": "string", "importance_score": 7}],
+  "misconceptions": [{"concept": "string", "misconception_title": "string", "description": "string"}]
 }`
       const response = await callAIMessages(
         [{ role: 'user', content: prompt }],
@@ -535,6 +562,12 @@ Return STRICT JSON ONLY, no extra text, in this format:
         if (Array.isArray(parsed.struggles)) evaluation.struggles = parsed.struggles.filter((s: unknown) => typeof s === 'string' && s.trim())
         if (Array.isArray(parsed.topics_covered)) evaluation.topics_covered = parsed.topics_covered.filter((s: unknown) => typeof s === 'string' && s.trim())
         if (typeof parsed.summary === 'string' && parsed.summary.trim()) evaluation.summary = parsed.summary.trim()
+        if (Array.isArray(parsed.breakthroughs)) {
+          evaluation.breakthroughs = parsed.breakthroughs.filter((b: any) => b && typeof b.topic === 'string' && typeof b.summary === 'string')
+        }
+        if (Array.isArray(parsed.misconceptions)) {
+          evaluation.misconceptions = parsed.misconceptions.filter((m: any) => m && typeof m.concept === 'string' && typeof m.description === 'string')
+        }
       }
     }
   } catch (err) {
@@ -598,6 +631,17 @@ Return STRICT JSON ONLY, no extra text, in this format:
         database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(session.user_id, session.subject_id, cleanTopic, newProb, now)
       }
     } catch { /* ignore */ }
+
+    // Update CKRF Rating & advance concept remediation
+    try {
+      recordTopicAssessment(database, session.user_id, session.subject_id, cleanTopic, {
+        itemDifficulty: 3,
+        score: 1.0
+      })
+      recordConceptSuccess(database, session.user_id, session.subject_id, cleanTopic)
+    } catch (ckrfErr) {
+      console.warn('CKRF strength update error:', ckrfErr)
+    }
   }
 
   // Update topic memories for struggles
@@ -625,6 +669,66 @@ Return STRICT JSON ONLY, no extra text, in this format:
         database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(session.user_id, session.subject_id, cleanTopic, newProb, now)
       }
     } catch { /* ignore */ }
+
+    // Update CKRF Rating for struggle
+    try {
+      recordTopicAssessment(database, session.user_id, session.subject_id, cleanTopic, {
+        itemDifficulty: 3,
+        score: 0.25
+      })
+    } catch (ckrfErr) {
+      console.warn('CKRF struggle update error:', ckrfErr)
+    }
+  }
+
+  // Persist CKRF Misconceptions
+  for (const misc of evaluation.misconceptions) {
+    try {
+      const misconceptionKey = `${misc.concept.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_misconception`
+      recordMisconception(database, session.user_id, session.subject_id, {
+        concept: misc.concept,
+        misconceptionKey,
+        misconceptionTitle: misc.misconception_title || `Misconception on ${misc.concept}`,
+        description: misc.description
+      })
+    } catch (miscErr) {
+      console.warn('CKRF misconception recording error:', miscErr)
+    }
+  }
+
+  // Persist CKRF Episodic Memories (Breakthroughs & Session Profile)
+  for (const bt of evaluation.breakthroughs) {
+    try {
+      recordEpisodicMemory(database, {
+        userId: session.user_id,
+        subjectId: session.subject_id,
+        topic: bt.topic,
+        memoryType: bt.effective_intervention ? 'analogy' : 'breakthrough',
+        importanceScore: bt.importance_score || 7,
+        summary: bt.summary,
+        effectiveIntervention: bt.effective_intervention,
+        sessionId
+      })
+    } catch (btErr) {
+      console.warn('CKRF episodic memory recording error:', btErr)
+    }
+  }
+
+  // Save session profile summary node
+  if (evaluation.summary) {
+    try {
+      recordEpisodicMemory(database, {
+        userId: session.user_id,
+        subjectId: session.subject_id,
+        topic: evaluation.topics_covered[0] || className,
+        memoryType: 'pedagogical_profile',
+        importanceScore: 6,
+        summary: evaluation.summary,
+        sessionId
+      })
+    } catch (epErr) {
+      console.warn('CKRF session profile recording error:', epErr)
+    }
   }
 
   const effectiveModuleId = options?.moduleId || session.module_id
@@ -1136,38 +1240,82 @@ STRICT DESIGN RULES (CRITICAL):
       try {
         const mat = db.prepare('SELECT filename, content_text FROM materials WHERE id = ?').get(params.materialId) as { filename: string; content_text: string } | undefined
         if (mat && mat.content_text) {
+          let contentSnippet = ''
+          let topologySummary = ''
+          if (mat.content_text.length <= 16000) {
+            contentSnippet = mat.content_text
+          } else {
+            const topology = parseDocumentTopology(mat.content_text, mat.filename, 1000)
+            topologySummary = `COMPLETE DOCUMENT STRUCTURE & TOPOLOGY (${topology.chunks.length} sections, ${mat.content_text.length.toLocaleString()} total characters):\n` +
+              topology.chunks.map(c => `- Section ${c.index + 1}: "${c.title}" (${c.type}, approx. ${c.tokenEstimate} tokens)`).join('\n')
+
+            const sampledChunks = topology.chunks.length <= 6
+              ? topology.chunks
+              : [
+                  topology.chunks[0],
+                  topology.chunks[Math.floor(topology.chunks.length * 0.25)],
+                  topology.chunks[Math.floor(topology.chunks.length * 0.5)],
+                  topology.chunks[Math.floor(topology.chunks.length * 0.75)],
+                  topology.chunks[topology.chunks.length - 1]
+                ].filter(Boolean)
+
+            contentSnippet = sampledChunks.map(c => `=== SECTION ${c.index + 1}: ${c.title} ===\n${c.text}`).join('\n\n')
+          }
+
           materialContextBlock = [
             '',
             `SPECIFIC MATERIAL STUDY FOCUS:`,
-            `The student is studying ONLY the specific material: "${mat.filename}".`,
-            `--- MATERIAL CONTENT START ---`,
-            mat.content_text.substring(0, 16000),
-            `--- MATERIAL CONTENT END ---`,
+            `The student is studying the course document: "${mat.filename}".`,
+            topologySummary ? `${topologySummary}\n` : '',
+            `--- MATERIAL CONTENT SAMPLES & FOUNDATIONS START ---`,
+            contentSnippet,
+            `--- MATERIAL CONTENT SAMPLES & FOUNDATIONS END ---`,
             '',
-            `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
-            `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback STRICTLY and EXCLUSIVELY on the content present in the specific material above.`,
-            `2. NO EXTERNAL KNOWLEDGE / NO HALLUCINATIONS: Do NOT introduce or quiz on any external concepts, theories, or outside knowledge not explicitly found in the document above.`,
-            `3. UNUPLOADED MATERIAL HANDLING: If the student asks about a concept not present in this document, politely state that it is not covered in "${mat.filename}" and decline to quiz on it. NEVER use pre-trained knowledge to fill in gaps.`,
+            `CRITICAL SOURCE GROUNDING & PEDAGOGY DIRECTIVE:`,
+            `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback on the content and concepts present across this material.`,
+            `2. COMPLETE TOPOLOGY AWARENESS: You have the full outline and section topology above. Never claim a concept is "not in the uploaded material" if it belongs to any chapter, section, or topic outlined in this material.`,
+            `3. UNUPLOADED SCOPE: Only if the student asks about a concept completely outside the discipline or this document, politely let them know and invite them to upload the relevant notes.`,
             ''
-          ].join('\n')
+          ].filter(Boolean).join('\n')
         }
       } catch (err) {
         console.error('Failed to load specific material for tutor session:', err)
       }
     } else if (params.materialContent) {
+      let contentSnippet = params.materialContent
+      let topologySummary = ''
+      if (params.materialContent.length > 16000) {
+        const topology = parseDocumentTopology(params.materialContent, 'source_material', 1000)
+        topologySummary = `COMPLETE DOCUMENT STRUCTURE & TOPOLOGY (${topology.chunks.length} sections, ${params.materialContent.length.toLocaleString()} characters):\n` +
+          topology.chunks.map(c => `- Section ${c.index + 1}: "${c.title}"`).join('\n')
+
+        const sampledChunks = topology.chunks.length <= 6
+          ? topology.chunks
+          : [
+              topology.chunks[0],
+              topology.chunks[Math.floor(topology.chunks.length * 0.25)],
+              topology.chunks[Math.floor(topology.chunks.length * 0.5)],
+              topology.chunks[Math.floor(topology.chunks.length * 0.75)],
+              topology.chunks[topology.chunks.length - 1]
+            ].filter(Boolean)
+
+        contentSnippet = sampledChunks.map(c => `=== SECTION ${c.index + 1}: ${c.title} ===\n${c.text}`).join('\n\n')
+      }
+
       materialContextBlock = [
         '',
         `SPECIFIC MATERIAL STUDY FOCUS:`,
+        topologySummary ? `${topologySummary}\n` : '',
         `--- MATERIAL CONTENT START ---`,
-        params.materialContent.substring(0, 16000),
+        contentSnippet,
         `--- MATERIAL CONTENT END ---`,
         '',
-        `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
-        `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback STRICTLY and EXCLUSIVELY on the content provided above.`,
-        `2. NO EXTERNAL KNOWLEDGE / NO HALLUCINATIONS: Do NOT introduce or quiz on any external concepts, theories, or outside knowledge not explicitly found in the material above.`,
-        `3. UNUPLOADED MATERIAL HANDLING: If the student asks about a concept not present in this text, politely state that it is not in the uploaded material and decline to quiz on it. NEVER use pre-trained knowledge to fill in gaps.`,
+        `CRITICAL SOURCE GROUNDING & PEDAGOGY DIRECTIVE:`,
+        `1. STRICT SOURCE GROUNDING: Base all questions, explanations, definitions, quizzes, and feedback on the content provided above.`,
+        `2. COMPLETE COVERAGE AWARENESS: You have the complete section outline and text samples. Engage with concepts across the entire document.`,
+        `3. UNUPLOADED SCOPE: If the student asks about a topic completely unrelated to this material, guide them back to the covered topics.`,
         ''
-      ].join('\n')
+      ].filter(Boolean).join('\n')
     } else {
       try {
         const subjectMaterials = db.prepare(`
@@ -1177,9 +1325,15 @@ STRICT DESIGN RULES (CRITICAL):
         `).all(params.subjectId) as { filename: string; content_text: string }[]
 
         if (subjectMaterials.length > 0) {
-          const combined = subjectMaterials.map(m =>
-            `[DOCUMENT: ${m.filename}]\n${m.content_text.substring(0, 6000)}`
-          ).join('\n\n---\n\n')
+          const combined = subjectMaterials.map(m => {
+            if (m.content_text.length <= 8000) {
+              return `[DOCUMENT: ${m.filename}]\n${m.content_text}`
+            }
+            const topology = parseDocumentTopology(m.content_text, m.filename, 800)
+            const outline = `Outline: ${topology.chunks.map(c => c.title).join(' | ')}`
+            const sample = topology.chunks.slice(0, 3).map(c => `[${c.title}]: ${c.text}`).join('\n\n')
+            return `[DOCUMENT: ${m.filename} (${m.content_text.length.toLocaleString()} chars)]\n${outline}\n\n${sample}`
+          }).join('\n\n---\n\n')
 
           materialContextBlock = [
             '',
@@ -1190,17 +1344,17 @@ STRICT DESIGN RULES (CRITICAL):
             `--- COURSE MATERIALS END ---`,
             '',
             `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
-            `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback STRICTLY and EXCLUSIVELY on the content present in the uploaded source materials above.`,
-            `2. NO EXTERNAL KNOWLEDGE / NO HALLUCINATIONS: Even if you possess extensive general knowledge about this subject, or even if upcoming chapters/assignments (e.g. Chapter 5, quizzes, exam dates) are mentioned on a syllabus/slide, you MUST NOT quiz the student on, define, or teach concepts from unuploaded chapters or outside materials.`,
-            `3. UNUPLOADED MATERIAL HANDLING: If the student asks about a topic not in the uploaded documents, or if a syllabus topic has no uploaded document text, explicitly and honestly tell them: "This material is not in your uploaded documents. Please upload the notes or slides for this topic to study it." NEVER quiz them on unuploaded material or use pre-trained knowledge to fill in gaps.`,
+            `1. STRICT SOURCE GROUNDING: Base all questions, explanations, definitions, quizzes, and feedback on the uploaded course materials and syllabus above.`,
+            `2. MULTI-DOCUMENT AWARENESS: You are aware of all uploaded documents and their outlines above. Never claim a chapter or section is missing if it is outlined in the materials above.`,
+            `3. UNUPLOADED TOPICS: If a student asks about a completely unuploaded course topic, invite them to upload the slides or notes.`,
             ''
           ].join('\n')
         } else {
           materialContextBlock = [
             '',
             `NOTICE: No study materials or lecture notes have been uploaded for this subject yet.`,
-            `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
-            `Politely inform the student that they should upload lecture slides, notes, or readings for this subject so you can tutor and quiz them based strictly on their actual class materials. Do NOT quiz them using pre-trained knowledge.`,
+            `CRITICAL GROUNDING DIRECTIVE:`,
+            `Politely inform the student that they should upload lecture slides, notes, or readings for this subject so you can tutor and quiz them based strictly on their actual class materials.`,
             ''
           ].join('\n')
         }
@@ -1239,43 +1393,48 @@ Sentence 1: "Welcome! Let's dive into [topic]."
 Sentence 2: A specific question about [topic].
 Example: "Welcome! Let's explore the Prologue of The Alchemist. What lesson does the narrator draw from the myth of Narcissus and the lake?"
 
-PEDAGOGICAL RULES:
-1. STRICT SOURCE GROUNDING (NOTEBOOKLM MODE): Ask questions ONLY about concepts, mechanisms, and terms that are explicitly present in the student's uploaded source materials. NEVER quiz on unuploaded chapters, outside knowledge, or future syllabus mentions without uploaded text.
-2. Ask ONE question at a time — start with recall, progress to comprehension, then application
-3. After the student answers, give brief corrective feedback (what they got right, what they missed) strictly based on the uploaded materials
-4. If correct: increase difficulty or move to next concept in the materials. If wrong: explain simply using the source materials, then ask a gentler follow-up
-5. Use questions that require genuine thinking — not just yes/no
-6. Suggest the deep dive phase when the student has demonstrated solid understanding across 3+ concepts
-7. Keep responses conversational but structured. Use bullet points for feedback when helpful.
-8. When time is up, include [SESSION_END] in your final response.
-9. For formulas: wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Use proper LaTeX, never ^ for exponents.${syllabusContext}`,
+PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
+1. STRICT SOURCE GROUNDING: Ask questions and teach concepts present in the student's uploaded source materials.
+2. Ask ONE question at a time — start with recall, progress to comprehension, then application and synthesis.
+3. 5-LAYER INSTRUCTIONAL FADING PROTOCOL (Never give away answers immediately!):
+   - Layer 1 (Meta-cognitive Probe): If the student is unsure or makes an error, ask them what specific principle or definition applies, or where their reasoning started.
+   - Layer 2 (Conceptual Anchor): Identify the governing rule or theorem without doing the calculation/analysis for them.
+   - Layer 3 (Faded Scaffold): Provide a partial structure or formula, prompting the student to actively execute the pivotal reasoning step.
+   - Layer 4 (Explicit Model with Mirror Test): If still stuck after 2 failed attempts, demonstrate the method on a parallel ISOMORPHIC problem (never giving away the target problem directly), then immediately give them a mirror test to solve.
+   - Layer 5 (Post-Reflection): Once correct, prompt them with: "Why did that step work?" or "What would happen if parameter X changed?" to cement deep transfer.
+4. Give crisp, specific corrective feedback (what was right, what was missed) grounded in the source materials.
+5. Suggest the Socratic deep dive phase when the student has demonstrated solid mastery across 3+ concepts.
+6. Keep responses conversational, rigorous, and supportive. Use LaTeX for math ($...$ inline, $$...$$ standalone).
+7. When time is up, include [SESSION_END] in your final response.${syllabusContext}`,
 
       socratic: `You are now in the SOCRATIC DEEP DIVE phase for "${className}".
 
-PEDAGOGICAL METHOD — Socratic Deep Dive:
-1. STRICT SOURCE GROUNDING (NOTEBOOKLM MODE): Probe deeply into concepts and mechanisms strictly found within the uploaded materials. NEVER introduce or quiz on outside or unuploaded chapters.
-2. Ask "why" and "how" questions that probe deeper understanding
-3. Challenge the student to explain concepts in their own words as if teaching a beginner
-4. Ask them to apply concepts to scenarios grounded in the uploaded material
-5. Ask them to connect concepts across the uploaded material
-6. Present a claim (sometimes incorrect) based on the uploaded material and ask them to evaluate it
-7. When they struggle, scaffold: break the question down, don't give the answer
+PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
+1. STRICT SOURCE GROUNDING: Probe deeply into concepts, causal mechanisms, and applications found within the uploaded materials.
+2. HINGE-POINT DIAGNOSTIC PROBES: Before advancing to a new concept, ask a Two-Tier Diagnostic question:
+   - Tier 1: Ask for an outcome prediction in a novel or counterfactual scenario.
+   - Tier 2: Challenge the student to justify the exact theoretical mechanism driving that outcome.
+3. AUTHENTIC MISCONCEPTION ADDRESSING: If the student exhibits a common misconception, do not simply state that they are wrong. Formulate a brief Socratic counter-example that illuminates the logical contradiction.
+4. Challenge the student to explain concepts in their own words as if explaining to an intelligent novice.
+5. Ask them to connect concepts across different sections of the uploaded material.
+6. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
+7. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
 8. When instructed that time is up, include [SESSION_END] in your final response.
 9. When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$.
 
-Your goal: push beyond surface understanding of the uploaded material. If the student can explain it simply, connect it across topics, and apply it to new situations — they've truly mastered it.${syllabusContext}`,
+Your goal: push beyond surface memorization of the material into deep conceptual transfer.${syllabusContext}`,
 
       summary: `You are wrapping up a tutoring session for "${className}".
 
 PEDAGOGICAL METHOD — Session Summary Phase:
-1. Summarize the key concepts from the uploaded materials that were covered
-2. Identify what the student understood well (be specific)
-3. Identify areas that still need work (be specific and constructive)
-4. Generate 5-7 study cards based strictly on the uploaded source material in this format (one per line):
+1. Summarize the key concepts from the uploaded materials that were explored during this session.
+2. Identify what the student understood with clarity and precision (be specific).
+3. Identify specific conceptual gaps or misconceptions that still require reinforcement.
+4. Generate 5-7 high-yield study cards based strictly on the uploaded source material in this format (one per line):
    **[Term or Question]** -> [Answer or Definition]
-5. Mix flashcards AND active recall questions grounded in the materials
-6. Cover BOTH strong and weak areas (strong needs maintenance too!)
-7. End with a clear recommendation for what to study next${syllabusContext}
+5. Mix contrast-pair flashcards AND active recall application questions grounded in the materials.
+6. Cover BOTH mastered concepts (for retention) and identified weak areas.
+7. End with a clear, actionable recommendation for what module or problem archetype to tackle next.${syllabusContext}
 8. When showing formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents.`
     }
 
@@ -1295,7 +1454,7 @@ PEDAGOGICAL METHOD — Session Summary Phase:
     // Add attached content if present
     let userMessage = params.message
     if (params.attachedContent) {
-      userMessage = `[The student attached study material for context]\n\n${params.attachedContent.substring(0, 8000)}\n\n---\n\n${userMessage}`
+      userMessage = `[The student attached study material for context]\n\n${params.attachedContent.substring(0, 32000)}\n\n---\n\n${userMessage}`
     }
     messages.push({ role: 'user', content: userMessage })
 

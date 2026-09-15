@@ -3,6 +3,7 @@ import Database from 'better-sqlite3'
 import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
 import { buildAutoCardGenerationPrompt, buildFlashcardOnlyPrompt, buildActiveRecallOnlyPrompt } from '../../src/lib/promptBuilders'
+import { parseDocumentTopology } from '../../src/lib/coverage/documentTopologyParser'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
 import { safeParseAICards, type ParsedAICardsPayload } from '../../src/lib/jsonRepair'
 import { cleanCardBrackets } from '../../src/lib/cardParser'
@@ -131,28 +132,51 @@ export function registerCardGenerationHandlers(): void {
         'SELECT front, back FROM cards WHERE subject_id = ? AND material_id IS NOT NULL'
       ).all(subjectId) as { front: string; back: string }[]
 
-      const prompt = buildAutoCardGenerationPrompt(
-        material.content_text,
-        subject.name,
-        moduleTitle,
-        undefined,
-        existingCards,
-        8, 4
-      )
+      const chunks: { text: string; title?: string }[] = []
+      if (material.content_text.length > 8000) {
+        const topology = parseDocumentTopology(material.content_text, material.filename, 1000)
+        for (const c of topology.chunks) {
+          if (c.text.trim().length > 100) {
+            chunks.push({ text: c.text, title: c.title })
+          }
+        }
+      }
+      if (chunks.length === 0) {
+        chunks.push({ text: material.content_text, title: moduleTitle })
+      }
 
-      const config = getAIConfig()
-      const apiKey = getApiKey()
-      if (!apiKey) throw new Error('AI API key not configured. Go to Settings to configure your AI provider.')
+      const validFlashcards: { front: string; back: string; concept?: string }[] = []
+      const validActiveRecall: { question: string; model_answer: string; concept?: string }[] = []
 
-      const responseText = await callAIMessages(
-        [{ role: 'user', content: prompt }],
-        { ...config, apiKey },
-        { type: 'json_object' }
-      )
+      const fcPerChunk = Math.max(2, Math.ceil(8 / chunks.length))
+      const arPerChunk = Math.max(1, Math.ceil(4 / chunks.length))
 
-      // Parse the response using bulletproof parser
-      const parsed = safeParseAICards(responseText)
-      const { flashcards: validFlashcards, activeRecall: validActiveRecall } = extractCardCandidates(parsed, 'auto')
+      for (const chunk of chunks) {
+        const prompt = buildAutoCardGenerationPrompt(
+          chunk.text,
+          subject.name,
+          chunk.title ? `${moduleTitle ? `${moduleTitle} - ` : ''}${chunk.title}` : moduleTitle,
+          undefined,
+          existingCards,
+          fcPerChunk,
+          arPerChunk
+        )
+
+        try {
+          const responseText = await callAIMessages(
+            [{ role: 'user', content: prompt }],
+            { ...config, apiKey },
+            { type: 'json_object' }
+          )
+
+          const parsed = safeParseAICards(responseText)
+          const extracted = extractCardCandidates(parsed, 'auto')
+          validFlashcards.push(...extracted.flashcards)
+          validActiveRecall.push(...extracted.activeRecall)
+        } catch (chunkErr) {
+          console.warn('Error generating cards for chunk:', chunk.title, chunkErr)
+        }
+      }
 
       const validatedCards: Partial<Card>[] = []
 
@@ -326,9 +350,14 @@ export function registerCardGenerationHandlers(): void {
         : ''
 
       const materialText = materials.length > 0
-        ? `\n\nSource material:\n${materials.map(m =>
-            `[${m.filename}]: ${m.content_text.substring(0, 3000)}`
-          ).join('\n\n')}`
+        ? `\n\nSource material:\n${materials.map(m => {
+            if (m.content_text.length > 8000) {
+              const topology = parseDocumentTopology(m.content_text, m.filename, 800)
+              const sections = topology.chunks.map(c => `[${c.title}]:\n${c.text}`).join('\n\n')
+              return `[${m.filename}]:\n${sections}`
+            }
+            return `[${m.filename}]:\n${m.content_text}`
+          }).join('\n\n')}`
         : ''
 
       const contextText = `Module: ${mod.title}${mod.chapter_number ? ` (Chapter ${mod.chapter_number})` : ''}
@@ -577,9 +606,14 @@ ${materialText}`
         : ''
 
       const materialText = materials.length > 0
-        ? `\n\nSource material:\n${materials.map(m =>
-            `[${m.filename}]: ${m.content_text.substring(0, 3000)}`
-          ).join('\n\n')}`
+        ? `\n\nSource material:\n${materials.map(m => {
+            if (m.content_text.length > 8000) {
+              const topology = parseDocumentTopology(m.content_text, m.filename, 800)
+              const sections = topology.chunks.map(c => `[${c.title}]:\n${c.text}`).join('\n\n')
+              return `[${m.filename}]:\n${sections}`
+            }
+            return `[${m.filename}]:\n${m.content_text}`
+          }).join('\n\n')}`
         : ''
 
       const contextText = `Module: ${mod.title}${mod.chapter_number ? ` (Chapter ${mod.chapter_number})` : ''}
@@ -786,15 +820,15 @@ ${materialText}`
 
       if (isAuto) {
         const chunks: string[] = []
-        if (text.length > 15000) {
-          const numChunks = Math.min(3, Math.ceil(text.length / 12000))
-          const chunkSize = Math.ceil(text.length / numChunks)
-          for (let i = 0; i < numChunks; i++) {
-            const start = Math.max(0, i * chunkSize - 200)
-            const end = Math.min(text.length, (i + 1) * chunkSize + 200)
-            chunks.push(text.slice(start, end))
+        if (text.length > 8000) {
+          const topology = parseDocumentTopology(text, '', 1000)
+          for (const c of topology.chunks) {
+            if (c.text.trim().length > 100) {
+              chunks.push(c.text)
+            }
           }
-        } else {
+        }
+        if (chunks.length === 0) {
           chunks.push(text)
         }
 
@@ -1069,13 +1103,32 @@ function validateCardQuality(card: Partial<Card> & { front: string; back: string
   if (listIndicators && listIndicators.length >= 3) {
     const parts = cleanedBack.split('\n').map(p => p.trim()).filter(p => p.match(/^(?:\d+\.\s|\*\s|-\s)/))
     if (parts.length >= 2) {
-      const splitCards = parts.map((part) => ({
-        ...card,
-        front: cleanCardBrackets(`${cleanedFront} — ${part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim()}`),
-        back: cleanCardBrackets(part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim()),
-        quality_score: 0.85
-      }))
-      return { valid: true, cards: splitCards, quality_score: 0.85 }
+      const basePrompt = cleanedFront.replace(/[?:.!]+$/, '')
+      const splitCards = parts.map((part, idx) => {
+        const rawItem = cleanCardBrackets(part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim())
+        const colonIdx = rawItem.indexOf(':')
+        const dashMatch = rawItem.match(/\s+[—–-]\s+/)
+        const splitIdx = colonIdx > 0 ? colonIdx : (dashMatch?.index !== undefined ? dashMatch.index : -1)
+
+        if (splitIdx > 0 && splitIdx < rawItem.length - 1) {
+          const term = rawItem.slice(0, splitIdx).trim()
+          const desc = rawItem.slice(splitIdx + (colonIdx > 0 ? 1 : (dashMatch?.[0].length || 1))).trim()
+          return {
+            ...card,
+            front: cleanCardBrackets(`${basePrompt} — which element is: "${desc}"?`),
+            back: term,
+            quality_score: 0.9
+          }
+        }
+
+        return {
+          ...card,
+          front: cleanCardBrackets(`${basePrompt} (Part ${idx + 1} of ${parts.length})?`),
+          back: rawItem,
+          quality_score: 0.9
+        }
+      })
+      return { valid: true, cards: splitCards, quality_score: 0.9 }
     }
   }
 

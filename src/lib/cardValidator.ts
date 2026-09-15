@@ -55,15 +55,32 @@ export function validateCardQuality(card: {
   const mipResult = checkMinimumInformationPrinciple(cleanedFront, cleanedBack)
   issues.push(...mipResult.issues)
 
-  // If compound answer detected with 3+ items, split into multiple cards
+  // If compound answer detected with 3+ items, split into multiple cards without leaking the answer
   if (!mipResult.passes) {
     const items = detectCompoundAnswer(cleanedBack)
     if (items.length >= 3) {
-      const splitCards: ValidatedCard[] = items.map((item) => ({
-        front: cleanCardBrackets(`${cleanedFront.trim().replace(/[?:.!]+$/, '')} — ${item}`),
-        back: cleanCardBrackets(item),
-        type
-      }))
+      const basePrompt = cleanedFront.trim().replace(/[?:.!]+$/, '')
+      const splitCards: ValidatedCard[] = items.map((item, idx) => {
+        const colonIdx = item.indexOf(':')
+        const dashMatch = item.match(/\s+[—–-]\s+/)
+        const splitIdx = colonIdx > 0 ? colonIdx : (dashMatch?.index !== undefined ? dashMatch.index : -1)
+
+        if (splitIdx > 0 && splitIdx < item.length - 1) {
+          const term = item.slice(0, splitIdx).trim()
+          const desc = item.slice(splitIdx + (colonIdx > 0 ? 1 : (dashMatch?.[0].length || 1))).trim()
+          return {
+            front: cleanCardBrackets(`${basePrompt} — which element is: "${desc}"?`),
+            back: cleanCardBrackets(term),
+            type
+          }
+        }
+
+        return {
+          front: cleanCardBrackets(`${basePrompt} (Part ${idx + 1} of ${items.length})?`),
+          back: cleanCardBrackets(item),
+          type
+        }
+      })
       return { valid: true, cards: splitCards, issues }
     }
   }
