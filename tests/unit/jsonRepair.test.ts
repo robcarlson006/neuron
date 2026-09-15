@@ -246,6 +246,35 @@ And here are your generated flashcards:
       expect(result.flashcards![0].front).toContain('url')
       expect(result.flashcards![0].back).toContain('user')
     })
+
+    it('cleans unnecessary brackets around terms and concepts from AI cards', () => {
+      const payloadWithBrackets = JSON.stringify({
+        flashcards: [
+          {
+            front: '[Action Potential] is the electrical impulse where [___]',
+            back: '[A rapid depolarization and repolarization across the membrane]',
+            concept: '[Neurobiology]'
+          }
+        ],
+        active_recall: [
+          {
+            question: 'What is the primary role of [Mitochondria] in [cellular respiration]?',
+            model_answer: '[Synthesizing ATP via oxidative phosphorylation]',
+            concept: '[Bioenergetics]'
+          }
+        ]
+      })
+      const result = safeParseAICards(payloadWithBrackets)
+      expect(result.flashcards).toHaveLength(1)
+      expect(result.flashcards![0].front).toBe('Action Potential is the electrical impulse where [___]')
+      expect(result.flashcards![0].back).toBe('A rapid depolarization and repolarization across the membrane')
+      expect(result.flashcards![0].concept).toBe('Neurobiology')
+
+      expect(result.active_recall).toHaveLength(1)
+      expect(result.active_recall![0].question).toBe('What is the primary role of Mitochondria in cellular respiration?')
+      expect(result.active_recall![0].model_answer).toBe('Synthesizing ATP via oxidative phosphorylation')
+      expect(result.active_recall![0].concept).toBe('Bioenergetics')
+    })
   })
 
   describe('safeParseAIJson', () => {
@@ -282,5 +311,55 @@ And here are your generated flashcards:
       expect(result).toBe(fallback)
     })
   })
+
+  describe('safeParseAICards - Key normalization & nested structures', () => {
+    it('correctly maps flashcards when model outputs question/answer keys under flashcards array', () => {
+      const input = JSON.stringify({
+        flashcards: [
+          { question: "What is mitochondria?", answer: "Powerhouse of the cell" },
+          { question: "What is ribosome?", answer: "Protein synthesis site" }
+        ]
+      })
+      const result = safeParseAICards(input)
+      expect(result.flashcards).toBeDefined()
+      expect(result.flashcards!).toHaveLength(2)
+      expect(result.flashcards![0].front).toBe("What is mitochondria?")
+      expect(result.flashcards![0].back).toBe("Powerhouse of the cell")
+      expect(result.active_recall).toHaveLength(0)
+    })
+
+    it('recovers cards nested in topic dictionaries', () => {
+      const input = JSON.stringify({
+        flashcards: {
+          "Cell Structure": [
+            { front: "Nucleus", back: "Contains genetic material" }
+          ],
+          "Energy Production": [
+            { term: "ATP", definition: "Cellular energy currency" }
+          ]
+        }
+      })
+      const result = safeParseAICards(input)
+      expect(result.flashcards).toBeDefined()
+      expect(result.flashcards!.length).toBeGreaterThanOrEqual(2)
+      expect(result.flashcards!.some(c => c.front === "Nucleus")).toBe(true)
+      expect(result.flashcards!.some(c => c.front === "ATP")).toBe(true)
+    })
+
+    it('handles q/a and prompt/response aliases for both flashcards and active recall', () => {
+      const input = JSON.stringify({
+        cards: [
+          { q: "Define osmosis", a: "Movement of water across a semipermeable membrane" },
+          { prompt: "Define diffusion", response: "Movement of particles from high to low concentration" }
+        ]
+      })
+      const result = safeParseAICards(input)
+      expect(result.flashcards).toBeDefined()
+      expect(result.flashcards!).toHaveLength(2)
+      expect(result.flashcards![0].front).toBe("Define osmosis")
+      expect(result.flashcards![1].front).toBe("Define diffusion")
+    })
+  })
 })
+
 

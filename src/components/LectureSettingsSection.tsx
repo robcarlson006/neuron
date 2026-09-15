@@ -24,6 +24,36 @@ export default function LectureSettingsSection(): React.JSX.Element {
   const [saved, setSaved] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
+  const [testStatus, setTestStatus] = useState<
+    Record<string, { testing: boolean; success?: boolean; message?: string }>
+  >({})
+
+  const handleTestProvider = async (providerName: string, keyVal: string) => {
+    setTestStatus((prev) => ({ ...prev, [providerName]: { testing: true } }))
+    try {
+      if (!window.electronAPI?.testTranscriptionConnection) {
+        setTestStatus((prev) => ({
+          ...prev,
+          [providerName]: { testing: false, success: false, message: 'Test API not available' }
+        }))
+        return
+      }
+      const res = await window.electronAPI.testTranscriptionConnection({
+        provider: providerName,
+        apiKey: keyVal.trim()
+      })
+      setTestStatus((prev) => ({
+        ...prev,
+        [providerName]: { testing: false, success: res.success, message: res.message }
+      }))
+    } catch (err: any) {
+      setTestStatus((prev) => ({
+        ...prev,
+        [providerName]: { testing: false, success: false, message: err?.message || 'Test failed' }
+      }))
+    }
+  }
+
   const loadData = async () => {
     if (!window.electronAPI) return
     try {
@@ -185,7 +215,7 @@ export default function LectureSettingsSection(): React.JSX.Element {
           onChange={(e) => setProvider(e.target.value)}
           className="input w-full max-w-md text-sm"
         >
-          <option value="auto">Auto (Fastest available: Groq → OpenAI → Gemini → Local)</option>
+          <option value="auto">Auto (Fastest available: Groq → Gemini → OpenAI → Local)</option>
           <option value="groq">Groq Cloud Whisper (Ultra-fast ~10x realtime, free tier)</option>
           <option value="openai">OpenAI Whisper API (Standard whisper-1)</option>
           <option value="gemini">Google Gemini Audio (Multimodal transcription)</option>
@@ -206,84 +236,150 @@ export default function LectureSettingsSection(): React.JSX.Element {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {/* Groq Card */}
-          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800 dark:text-slate-200">
-                <span>⚡ Groq Whisper</span>
-                <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.2 rounded-full">
-                  Fastest
-                </span>
+          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 space-y-2 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800 dark:text-slate-200">
+                  <span>⚡ Groq Whisper</span>
+                  <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.2 rounded-full">
+                    Fastest
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openLink('https://console.groq.com/keys')}
+                  className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline flex items-center gap-0.5"
+                >
+                  Get Key ↗
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => openLink('https://console.groq.com/keys')}
-                className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline flex items-center gap-0.5"
-              >
-                Get Key ↗
-              </button>
+              <p className="text-[11px] text-slate-400 leading-tight">
+                Transcribes a 1-hour lecture in ~15 seconds. Free tier included.
+              </p>
+              <input
+                type="password"
+                placeholder="gsk_..."
+                value={groqKey}
+                onChange={(e) => setGroqKey(e.target.value)}
+                className="input w-full text-xs font-mono"
+              />
             </div>
-            <p className="text-[11px] text-slate-400 leading-tight">
-              Transcribes a 1-hour lecture in ~15 seconds. Generous free tier.
-            </p>
-            <input
-              type="password"
-              placeholder="gsk_..."
-              value={groqKey}
-              onChange={(e) => setGroqKey(e.target.value)}
-              className="input w-full text-xs font-mono"
-            />
+            <div className="pt-1">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => handleTestProvider('groq', groqKey)}
+                  disabled={!groqKey.trim() || testStatus.groq?.testing}
+                  className="px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+                >
+                  {testStatus.groq?.testing ? 'Testing...' : 'Test Key'}
+                </button>
+                {testStatus.groq && (
+                  <span className={`text-[11px] font-medium ${testStatus.groq.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+                    {testStatus.groq.success ? '✓ Connected' : '✗ Failed'}
+                  </span>
+                )}
+              </div>
+              {testStatus.groq?.message && !testStatus.groq.success && (
+                <p className="text-[10px] text-rose-500 mt-1 leading-tight">{testStatus.groq.message}</p>
+              )}
+            </div>
           </div>
 
           {/* OpenAI Card */}
-          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-xs text-slate-800 dark:text-slate-200">
-                🌐 OpenAI Whisper
-              </span>
-              <button
-                type="button"
-                onClick={() => openLink('https://platform.openai.com/api-keys')}
-                className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline flex items-center gap-0.5"
-              >
-                Get Key ↗
-              </button>
+          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 space-y-2 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-xs text-slate-800 dark:text-slate-200">
+                  🌐 OpenAI Whisper
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openLink('https://platform.openai.com/api-keys')}
+                  className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline flex items-center gap-0.5"
+                >
+                  Get Key ↗
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-tight">
+                Official OpenAI Whisper-1 API. Highly accurate across dialects.
+              </p>
+              <input
+                type="password"
+                placeholder="sk-..."
+                value={openaiKey}
+                onChange={(e) => setOpenaiKey(e.target.value)}
+                className="input w-full text-xs font-mono"
+              />
             </div>
-            <p className="text-[11px] text-slate-400 leading-tight">
-              Official OpenAI Whisper-1 API. Highly accurate across dialects.
-            </p>
-            <input
-              type="password"
-              placeholder="sk-..."
-              value={openaiKey}
-              onChange={(e) => setOpenaiKey(e.target.value)}
-              className="input w-full text-xs font-mono"
-            />
+            <div className="pt-1">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => handleTestProvider('openai', openaiKey)}
+                  disabled={!openaiKey.trim() || testStatus.openai?.testing}
+                  className="px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+                >
+                  {testStatus.openai?.testing ? 'Testing...' : 'Test Key'}
+                </button>
+                {testStatus.openai && (
+                  <span className={`text-[11px] font-medium ${testStatus.openai.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+                    {testStatus.openai.success ? '✓ Connected' : '✗ Failed'}
+                  </span>
+                )}
+              </div>
+              {testStatus.openai?.message && !testStatus.openai.success && (
+                <p className="text-[10px] text-rose-500 mt-1 leading-tight">{testStatus.openai.message}</p>
+              )}
+            </div>
           </div>
 
           {/* Gemini Card */}
-          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-xs text-slate-800 dark:text-slate-200">
-                ✨ Google Gemini
-              </span>
-              <button
-                type="button"
-                onClick={() => openLink('https://aistudio.google.com/app/apikey')}
-                className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline flex items-center gap-0.5"
-              >
-                Get Key ↗
-              </button>
+          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 space-y-2 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-xs text-slate-800 dark:text-slate-200">
+                  ✨ Google Gemini
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openLink('https://aistudio.google.com/app/apikey')}
+                  className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline flex items-center gap-0.5"
+                >
+                  Get Key ↗
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-tight">
+                Gemini 3.6 Flash audio processing. Free in Google AI Studio.
+              </p>
+              <input
+                type="password"
+                placeholder="AIza..."
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+                className="input w-full text-xs font-mono"
+              />
             </div>
-            <p className="text-[11px] text-slate-400 leading-tight">
-              Gemini 2.0 Flash audio processing. Free in Google AI Studio.
-            </p>
-            <input
-              type="password"
-              placeholder="AIza..."
-              value={geminiKey}
-              onChange={(e) => setGeminiKey(e.target.value)}
-              className="input w-full text-xs font-mono"
-            />
+            <div className="pt-1">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => handleTestProvider('gemini', geminiKey)}
+                  disabled={!geminiKey.trim() || testStatus.gemini?.testing}
+                  className="px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+                >
+                  {testStatus.gemini?.testing ? 'Testing...' : 'Test Key'}
+                </button>
+                {testStatus.gemini && (
+                  <span className={`text-[11px] font-medium ${testStatus.gemini.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+                    {testStatus.gemini.success ? '✓ Connected' : '✗ Failed'}
+                  </span>
+                )}
+              </div>
+              {testStatus.gemini?.message && !testStatus.gemini.success && (
+                <p className="text-[10px] text-rose-500 mt-1 leading-tight">{testStatus.gemini.message}</p>
+              )}
+            </div>
           </div>
         </div>
 

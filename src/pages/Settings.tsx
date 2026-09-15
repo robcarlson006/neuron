@@ -286,7 +286,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     pomodoroWorkMinutes,
     pomodoroBreakMinutes,
     autoGradeEnabled,
-    setAutoGradeEnabled
+    setAutoGradeEnabled,
+    calculatorSkin,
+    setCalculatorSkin
   } = useAppStore()
   const [name, setName] = useState(user?.name || '')
   const [reminderTime, setReminderTime] = useState('09:00')
@@ -307,14 +309,15 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [hasApiKey, setHasApiKey] = useState(false)
   const [apiKeyModified, setApiKeyModified] = useState(false)
   const [aiBaseUrl, setAiBaseUrl] = useState('https://api.deepseek.com')
-  const [aiModel, setAiModel] = useState('deepseek-chat')
+  const [aiModel, setAiModel] = useState('deepseek-flash')
   const [aiConfigLoaded, setAiConfigLoaded] = useState(false)
   const [aiConnectionStatus, setAiConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle')
   const [aiConnectionMessage, setAiConnectionMessage] = useState('')
   const [aiConnectionLatency, setAiConnectionLatency] = useState<number | undefined>()
   const [aiSaved, setAiSaved] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
-  const [copiedCommand, setCopiedCommand] = useState(false)
+  const [aiMode, setAiMode] = useState<'local' | 'cloud'>('local')
+  const [showAdvancedCloud, setShowAdvancedCloud] = useState(false)
   const [currentVersion, setCurrentVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle')
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
@@ -354,8 +357,10 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     // Load AI config
     window.electronAPI.getAIConfig().then(cfg => {
       setAiProvider(cfg.provider || 'openai-compatible')
-      setAiBaseUrl(cfg.baseUrl || 'https://api.deepseek.com')
-      setAiModel(cfg.model || 'deepseek-chat')
+      setAiBaseUrl(cfg.baseUrl || 'http://127.0.0.1:8080')
+      setAiModel(cfg.model || 'qwen-2.5-3b')
+      const isLocal = cfg.baseUrl ? (cfg.baseUrl.includes('127.0.0.1') || cfg.baseUrl.includes('localhost')) : true
+      setAiMode(isLocal ? 'local' : 'cloud')
       const hasKey = Boolean(cfg.hasApiKey || (cfg.apiKey && cfg.apiKey.length > 0))
       setHasApiKey(hasKey)
       setAiApiKey(hasKey && cfg.apiKey ? cfg.apiKey : '')
@@ -610,6 +615,58 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           </p>
         </section>
 
+        {/* Practice Lab & Calculator section */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Practice Lab & Calculator</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+            Choose your default on-screen calculator layout for practice problems.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setCalculatorSkin('numworks')}
+              className={`p-4 rounded-xl border text-left transition-all ${
+                calculatorSkin === 'numworks'
+                  ? 'border-violet-500 bg-violet-50/50 dark:bg-violet-950/30 ring-2 ring-violet-500/20'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                  NumWorks (Default)
+                </span>
+                {calculatorSkin === 'numworks' && <span className="text-xs font-bold text-violet-600 dark:text-violet-400">Active</span>}
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Modern, minimalist white chassis with yellow accent keys and clean multi-line display.
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCalculatorSkin('ti84')}
+              className={`p-4 rounded-xl border text-left transition-all ${
+                calculatorSkin === 'ti84'
+                  ? 'border-violet-500 bg-violet-50/50 dark:bg-violet-950/30 ring-2 ring-violet-500/20'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  TI-84 Plus
+                </span>
+                {calculatorSkin === 'ti84' && <span className="text-xs font-bold text-violet-600 dark:text-violet-400">Active</span>}
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Classic dark graphite casing, dot-matrix LCD screen, and traditional TI function layout.
+              </p>
+            </button>
+          </div>
+        </section>
+
         {/* Study algorithm — FSRS */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Study Algorithm</h2>
@@ -761,362 +818,322 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           </div>
         </section>
 
-        {/* Local AI & Hardware Section */}
-        <LocalAISection
-          onSelectModel={(url, model) => {
-            setAiProvider('openai-compatible')
-            setAiBaseUrl(url)
-            setAiModel(model)
-            setAiConnectionStatus('idle')
-          }}
-          currentBaseUrl={aiBaseUrl}
-          currentModel={aiModel}
-        />
-
-        {/* Lecture Recording & Transcription Section */}
-        <LectureSettingsSection />
-
-        {/* AI Provider section */}
+        {/* AI Assistant Section: Local AI vs Cloud AI */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">AI Provider</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-            Configure your AI provider for card generation and answer evaluation. Compatible with any OpenAI API.
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">AI Assistant</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Power automated flashcard generation, tutor chat, and answer evaluation.
+              </p>
+            </div>
 
-          {/* Preset Buttons */}
-          <div className="mb-5">
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
-              Configuration Preset
-            </label>
-            <div className="grid grid-cols-3 gap-2.5">
+            {/* Mode Switcher */}
+            <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 self-start sm:self-auto">
               <button
                 type="button"
                 onClick={() => {
+                  setAiMode('local')
                   setAiProvider('openai-compatible')
-                  setAiBaseUrl('http://127.0.0.1:11434')
-                  setAiModel('qwen2.5:3b')
+                  setAiBaseUrl('http://127.0.0.1:8080')
                   setAiConnectionStatus('idle')
                 }}
-                className={`p-3 rounded-xl text-xs font-medium border text-left transition-all ${
-                  aiBaseUrl.includes('11434') && aiModel.includes('qwen')
-                    ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-500 text-violet-700 dark:text-violet-300 shadow-sm ring-1 ring-violet-500'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  aiMode === 'local'
+                    ? 'bg-white dark:bg-slate-800 text-violet-600 dark:text-violet-300 shadow-xs font-semibold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                 }`}
               >
-                <div className="font-semibold flex items-center justify-between">
-                  <span>🖥️ Local Qwen</span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.5 rounded-full font-medium">Offline</span>
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Ollama · 3B (~2.2 GB RAM)</div>
+                <span>🖥️</span>
+                <span>Local AI (Free & Private)</span>
               </button>
-
               <button
                 type="button"
                 onClick={() => {
-                  setAiProvider('openai-compatible')
-                  setAiBaseUrl('https://api.deepseek.com')
-                  setAiModel('deepseek-chat')
+                  setAiMode('cloud')
+                  if (aiBaseUrl.includes('127.0.0.1') || aiBaseUrl.includes('localhost')) {
+                    setAiBaseUrl('https://api.deepseek.com')
+                    setAiModel('deepseek-flash')
+                  }
                   setAiConnectionStatus('idle')
                 }}
-                className={`p-3 rounded-xl text-xs font-medium border text-left transition-all ${
-                  aiBaseUrl.includes('deepseek')
-                    ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-500 text-violet-700 dark:text-violet-300 shadow-sm ring-1 ring-violet-500'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  aiMode === 'cloud'
+                    ? 'bg-white dark:bg-slate-800 text-violet-600 dark:text-violet-300 shadow-xs font-semibold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                 }`}
               >
-                <div className="font-semibold flex items-center justify-between">
-                  <span>☁️ DeepSeek</span>
-                  <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 px-1.5 py-0.5 rounded-full font-medium">Cloud</span>
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Cloud API · deepseek-chat</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setAiProvider('openai-compatible')
-                  setAiBaseUrl('http://127.0.0.1:1234')
-                  setAiModel('qwen2.5-3b-instruct')
-                  setAiConnectionStatus('idle')
-                }}
-                className={`p-3 rounded-xl text-xs font-medium border text-left transition-all ${
-                  aiBaseUrl.includes('1234')
-                    ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-500 text-violet-700 dark:text-violet-300 shadow-sm ring-1 ring-violet-500'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
-                }`}
-              >
-                <div className="font-semibold flex items-center justify-between">
-                  <span>🧪 LM Studio</span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.5 rounded-full font-medium">Offline</span>
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Local Server :1234</div>
+                <span>☁️</span>
+                <span>Cloud AI (API Key)</span>
               </button>
             </div>
           </div>
 
-          {/* Local setup guidance banner */}
-          {(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
-            <div className="mb-5 p-4 rounded-xl bg-violet-50/70 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-xs">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">
-                  ⚡ 100% Offline & Private
-                </span>
-                <span className="text-slate-500 dark:text-slate-400 font-medium">Apple Silicon M2 (~2.2 GB RAM)</span>
-              </div>
-              <p className="text-slate-600 dark:text-slate-300 mb-3 leading-relaxed">
-                Neuron runs inference directly on your Mac using Metal acceleration. Cards, active recall grading, and tutor sessions all work completely without WiFi.
-              </p>
-              <div className="bg-slate-900 dark:bg-slate-950 text-slate-100 rounded-lg p-3 font-mono text-[11px]">
-                <div className="text-slate-400 dark:text-slate-500 mb-1 font-sans text-[10px] uppercase tracking-wider font-semibold">
-                  Step 1: Start Qwen in Terminal
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-violet-300">ollama run qwen2.5:3b</span>
+          {aiMode === 'local' ? (
+            <LocalAISection
+              onSelectModel={(url, model) => {
+                setAiProvider('openai-compatible')
+                setAiBaseUrl(url)
+                setAiModel(model)
+                setAiConnectionStatus('idle')
+              }}
+              currentBaseUrl={aiBaseUrl}
+              currentModel={aiModel}
+            />
+          ) : (
+            <div className="space-y-5">
+              {/* Cloud Provider Preset Cards */}
+              <div>
+                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
+                  Select Provider
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText('ollama run qwen2.5:3b')
-                      setCopiedCommand(true)
-                      setTimeout(() => setCopiedCommand(false), 2000)
+                      setAiProvider('openai-compatible')
+                      setAiBaseUrl('https://api.deepseek.com')
+                      setAiModel('deepseek-flash')
+                      setAiConnectionStatus('idle')
                     }}
-                    className="text-violet-400 hover:text-violet-300 font-sans text-xs px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors ml-2"
+                    className={`p-3.5 rounded-xl text-left border transition-all ${
+                      aiBaseUrl.includes('deepseek')
+                        ? 'bg-violet-50/80 dark:bg-violet-950/30 border-violet-400 dark:border-violet-600 shadow-xs'
+                        : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
                   >
-                    {copiedCommand ? '✓ Copied' : 'Copy'}
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-xs text-slate-900 dark:text-slate-100">DeepSeek</span>
+                      <span className="text-[10px] bg-violet-100 text-violet-700 dark:bg-violet-900/60 dark:text-violet-300 px-1.5 py-0.5 rounded font-medium">
+                        Recommended
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                      Ultra-affordable, fast reasoning & card generation.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiProvider('openai-compatible')
+                      setAiBaseUrl('https://api.openai.com')
+                      setAiModel('gpt-4o-mini')
+                      setAiConnectionStatus('idle')
+                    }}
+                    className={`p-3.5 rounded-xl text-left border transition-all ${
+                      aiBaseUrl.includes('openai.com')
+                        ? 'bg-violet-50/80 dark:bg-violet-950/30 border-violet-400 dark:border-violet-600 shadow-xs'
+                        : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-xs text-slate-900 dark:text-slate-100">OpenAI</span>
+                      <span className="text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded font-medium">
+                        GPT-4o mini
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                      High accuracy with standard ChatGPT accounts.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiProvider('gemini')
+                      setAiBaseUrl('https://generativelanguage.googleapis.com')
+                      setAiModel('gemini-2.0-flash')
+                      setAiConnectionStatus('idle')
+                    }}
+                    className={`p-3.5 rounded-xl text-left border transition-all ${
+                      aiProvider === 'gemini'
+                        ? 'bg-violet-50/80 dark:bg-violet-950/30 border-violet-400 dark:border-violet-600 shadow-xs'
+                        : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-xs text-slate-900 dark:text-slate-100">Google Gemini</span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.5 rounded font-medium">
+                        Free Tier
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                      Generous free tier via Google AI Studio.
+                    </p>
                   </button>
                 </div>
               </div>
-              <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-2">
-                Step 2: Click <strong className="text-slate-600 dark:text-slate-300">Test Connection</strong> below to verify Ollama is ready.
-              </p>
-            </div>
-          )}
 
-          {/* Quick Setup Presets */}
-          <div className="mb-4">
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
-              Quick Setup Presets
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setAiProvider('openai-compatible')
-                  setAiBaseUrl('https://api.deepseek.com')
-                  setAiModel('deepseek-chat')
-                }}
-                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
-                  aiBaseUrl === 'https://api.deepseek.com' && aiProvider === 'openai-compatible'
-                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
-                }`}
-              >
-                DeepSeek
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAiProvider('openai-compatible')
-                  setAiBaseUrl('https://api.openai.com')
-                  setAiModel('gpt-4o-mini')
-                }}
-                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
-                  aiBaseUrl === 'https://api.openai.com' && aiProvider === 'openai-compatible'
-                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
-                }`}
-              >
-                OpenAI (ChatGPT)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAiProvider('gemini')
-                  setAiBaseUrl('https://generativelanguage.googleapis.com')
-                  setAiModel('gemini-2.0-flash')
-                }}
-                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
-                  aiProvider === 'gemini'
-                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
-                }`}
-              >
-                Google Gemini
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAiProvider('openai-compatible')
-                  setAiBaseUrl('http://127.0.0.1:11434')
-                  setAiModel('qwen2.5:3b')
-                }}
-                className={`px-3 py-2 rounded-xl text-xs font-medium transition-all text-center border ${
-                  aiBaseUrl.includes('127.0.0.1:11434')
-                    ? 'bg-violet-50 dark:bg-violet-900/40 border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 font-semibold shadow-xs'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750'
-                }`}
-              >
-                Local Ollama
-              </button>
-            </div>
-          </div>
-
-          {/* Provider dropdown */}
-          <div className="mb-4">
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
-              Provider Protocol
-            </label>
-            <select
-              value={aiProvider}
-              onChange={e => setAiProvider(e.target.value)}
-              className="input w-full"
-            >
-              <option value="openai-compatible">OpenAI-Compatible (Ollama, DeepSeek, OpenAI, LM Studio, vLLM)</option>
-              <option value="gemini">Google Gemini</option>
-            </select>
-          </div>
-
-          {/* API key */}
-          <div className="mb-4">
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                API Key
-              </label>
-              <div className="flex items-center gap-2">
-                {hasApiKey && !(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
-                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                    ✓ Key configured
-                  </span>
-                )}
-                {(aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')) && (
-                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                    ✓ Optional for local models
-                  </span>
-                )}
+              {/* API Key Input */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                    API Key
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {hasApiKey && (
+                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                        ✓ Key saved
+                      </span>
+                    )}
+                    {aiBaseUrl.includes('deepseek') && (
+                      <a
+                        href="https://platform.deepseek.com/api_keys"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline"
+                      >
+                        Get DeepSeek Key ↗
+                      </a>
+                    )}
+                    {aiBaseUrl.includes('openai.com') && (
+                      <a
+                        href="https://platform.openai.com/api-keys"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline"
+                      >
+                        Get OpenAI Key ↗
+                      </a>
+                    )}
+                    {aiProvider === 'gemini' && (
+                      <a
+                        href="https://aistudio.google.com/app/apikey"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline"
+                      >
+                        Get Gemini Key ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <div className="relative flex items-center">
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    className="input w-full font-mono text-sm pr-16"
+                    value={aiApiKey}
+                    onFocus={() => {
+                      if (!apiKeyModified && hasApiKey && aiApiKey.includes('••••')) {
+                        setAiApiKey('')
+                      }
+                    }}
+                    onChange={e => {
+                      setAiApiKey(e.target.value)
+                      setApiKeyModified(true)
+                    }}
+                    placeholder={
+                      hasApiKey
+                        ? '•••••••••••••••• (API key configured — enter new key to replace)'
+                        : (aiConfigLoaded ? 'Paste your API key here (e.g. sk-...)' : 'Loading...')
+                    }
+                  />
+                  {aiApiKey && (
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-2 px-2 py-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      {showApiKey ? 'Hide' : 'Show'}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className="relative flex items-center">
-              <input
-                type={showApiKey ? 'text' : 'password'}
-                className="input w-full font-mono text-sm pr-16"
-                value={aiApiKey}
-                onFocus={() => {
-                  if (!apiKeyModified && hasApiKey && aiApiKey.includes('••••')) {
-                    setAiApiKey('')
-                  }
-                }}
-                onChange={e => {
-                  setAiApiKey(e.target.value)
-                  setApiKeyModified(true)
-                }}
-                placeholder={
-                  aiBaseUrl.toLowerCase().includes('localhost') || aiBaseUrl.toLowerCase().includes('127.0.0.1')
-                    ? 'Not required for local Ollama / LM Studio (leave blank)'
-                    : hasApiKey
-                      ? '•••••••••••••••• (API key configured — enter new key to replace)'
-                      : (aiConfigLoaded ? 'Enter your API key' : 'Loading...')
-                }
-              />
-              {aiApiKey && (
+
+              {/* Collapsible Advanced Cloud Settings */}
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-700">
                 <button
                   type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-2 px-2 py-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  onClick={() => setShowAdvancedCloud(!showAdvancedCloud)}
+                  className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 flex items-center gap-1.5 transition-colors"
                 >
-                  {showApiKey ? 'Hide' : 'Show'}
+                  <span>{showAdvancedCloud ? '▼' : '▶'}</span>
+                  <span>Advanced Settings (Custom URL & Model)</span>
                 </button>
-              )}
-            </div>
-            {aiApiKey.startsWith('sk-proj-') && aiBaseUrl.includes('deepseek.com') && (
-              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5 flex items-center gap-1">
-                ℹ️ Detected OpenAI project key. Click "OpenAI" preset above to use https://api.openai.com.
-              </p>
-            )}
-            {aiApiKey.startsWith('AIza') && aiProvider !== 'gemini' && (
-              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5 flex items-center gap-1">
-                ℹ️ Detected Google Gemini key. Click "Google Gemini" preset above.
-              </p>
-            )}
-          </div>
 
-          {/* Base URL */}
-          <div className="mb-4">
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
-              Base URL
-            </label>
-            <input
-              type="text"
-              className="input w-full font-mono text-sm"
-              value={aiBaseUrl}
-              onChange={e => setAiBaseUrl(e.target.value)}
-              placeholder="http://127.0.0.1:11434"
-            />
-            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-              For Ollama use <code className="font-mono text-slate-600 dark:text-slate-300">http://127.0.0.1:11434</code>. For DeepSeek use <code className="font-mono text-slate-600 dark:text-slate-300">https://api.deepseek.com</code>.
-            </p>
-          </div>
-
-          {/* Model */}
-          <div className="mb-4">
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
-              Model
-            </label>
-            <input
-              type="text"
-              className="input w-full font-mono text-sm"
-              value={aiModel}
-              onChange={e => setAiModel(e.target.value)}
-              placeholder="qwen2.5:3b"
-            />
-            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-              Recommended for 8GB M2 Mac: <code className="font-mono text-slate-600 dark:text-slate-300">qwen2.5:3b</code> (fast, accurate JSON) or <code className="font-mono text-slate-600 dark:text-slate-300">llama3.2:3b</code>.
-            </p>
-          </div>
-
-          {/* Connection test result */}
-          {aiConnectionStatus === 'testing' && (
-            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-4">
-              <span className="w-3.5 h-3.5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-              Testing connection…
-            </div>
-          )}
-          {aiConnectionStatus === 'success' && (
-            <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 mb-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-3 py-2">
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" className="flex-shrink-0">
-                <path d="M2.5 7.5L6 11L12.5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <span>
-                Connected! Response: "{aiConnectionMessage}"
-                {aiConnectionLatency != null && (
-                  <span className="text-xs ml-1 opacity-75">({aiConnectionLatency}ms)</span>
+                {showAdvancedCloud && (
+                  <div className="mt-3 space-y-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 animate-fade-in">
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                        Base URL
+                      </label>
+                      <input
+                        type="text"
+                        className="input w-full text-xs font-mono"
+                        value={aiBaseUrl}
+                        onChange={e => setAiBaseUrl(e.target.value)}
+                        placeholder="https://api.deepseek.com"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                        Model Name
+                      </label>
+                      <input
+                        type="text"
+                        className="input w-full text-xs font-mono"
+                        value={aiModel}
+                        onChange={e => setAiModel(e.target.value)}
+                        placeholder="deepseek-flash"
+                      />
+                    </div>
+                  </div>
                 )}
-              </span>
-            </div>
-          )}
-          {aiConnectionStatus === 'error' && (
-            <div className="text-sm text-red-500 dark:text-red-400 mb-4 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">
-              <span className="font-medium">Connection failed:</span> {aiConnectionMessage}
-            </div>
-          )}
+              </div>
 
-          {/* Actions */}
-          <div className="flex gap-2">
-            <button
-              onClick={handleTestAIConnection}
-              disabled={aiConnectionStatus === 'testing'}
-              className="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Test Connection
-            </button>
-            <button
-              onClick={handleSaveAIConfig}
-              className={`flex-1 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${
-                aiSaved ? 'bg-emerald-600' : 'bg-violet-600 hover:bg-violet-700'
-              }`}
-            >
-              {aiSaved ? '✓ Saved' : 'Save'}
-            </button>
-          </div>
+              {/* Connection test result */}
+              {aiConnectionStatus === 'testing' && (
+                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                  <span className="w-3.5 h-3.5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  Testing connection…
+                </div>
+              )}
+              {aiConnectionStatus === 'success' && (
+                <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-3 py-2">
+                  <svg width="14" height="14" viewBox="0 0 15 15" fill="none" className="flex-shrink-0">
+                    <path d="M2.5 7.5L6 11L12.5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <span>
+                    Connected successfully!
+                    {aiConnectionLatency != null && (
+                      <span className="text-xs ml-1 opacity-75">({aiConnectionLatency}ms)</span>
+                    )}
+                  </span>
+                </div>
+              )}
+              {aiConnectionStatus === 'error' && (
+                <div className="text-xs text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">
+                  <span className="font-semibold">Connection failed:</span> {aiConnectionMessage}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={handleTestAIConnection}
+                  disabled={aiConnectionStatus === 'testing'}
+                  className="px-4 py-2 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors"
+                >
+                  Test Connection
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAIConfig}
+                  className={`flex-1 px-4 py-2 rounded-xl text-white text-xs font-semibold transition-colors ${
+                    aiSaved ? 'bg-emerald-600' : 'bg-violet-600 hover:bg-violet-700'
+                  }`}
+                >
+                  {aiSaved ? '✓ Saved' : 'Save Cloud Configuration'}
+                </button>
+              </div>
+            </div>
+          )}
         </section>
+
+        {/* Lecture Recording & Transcription Section */}
+        <LectureSettingsSection />
 
         {/* Data Storage section */}
         <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">

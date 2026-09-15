@@ -148,10 +148,12 @@ class TranscriptionServiceManager {
   public async transcribeWithGemini(options: {
     audioPath: string
     apiKey: string
+    model?: string
   }): Promise<TranscriptionResult> {
     const buffer = await fs.promises.readFile(options.audioPath)
     const base64Audio = buffer.toString('base64')
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${options.apiKey}`
+    const model = options.model || 'gemini-3.6-flash'
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${options.apiKey}`
 
     const prompt =
       'Provide an accurate, detailed verbatim transcription of this lecture audio. ' +
@@ -193,6 +195,141 @@ class TranscriptionServiceManager {
     }
   }
 
+  /**
+   * Transcribe using local on-device Whisper model
+   */
+  public async transcribeWithLocalWhisper(audioPath: string): Promise<TranscriptionResult> {
+    const res = await LocalWhisperService.transcribeAudio(audioPath)
+    return {
+      text: res.text,
+      timestampedText: res.timestampedText,
+      durationSeconds: res.durationSeconds,
+      segments: res.segments
+    }
+  }
+
+  /**
+   * Test connection / credentials for a given transcription provider
+   */
+  public async testConnection(params: {
+    provider: string
+    apiKey?: string
+  }): Promise<{ success: boolean; message: string; latencyMs?: number }> {
+    const startTime = Date.now()
+    const provider = params.provider.toLowerCase()
+
+    try {
+      if (provider === 'local') {
+        const models = LocalWhisperService.listModels()
+        const readyModel = models.find((m) => m.status === 'ready')
+        const binary = LocalWhisperService.findWhisperBinary()
+
+        if (!readyModel) {
+          return {
+            success: false,
+            message: 'No local Whisper model downloaded yet. Please download Whisper Base or Tiny.',
+            latencyMs: Date.now() - startTime
+          }
+        }
+        if (!binary) {
+          return {
+            success: false,
+            message: `Model ready (${readyModel.name}), but whisper-cli was not found in PATH or local-ai/bin.`,
+            latencyMs: Date.now() - startTime
+          }
+        }
+        return {
+          success: true,
+          message: `Local engine ready (${readyModel.name}, binary: ${path.basename(binary)})`,
+          latencyMs: Date.now() - startTime
+        }
+      }
+
+      if (provider === 'groq') {
+        const key = params.apiKey || this.readMeta('transcription_groq_key') || getApiKey()
+        if (!key) throw new Error('No Groq API key provided')
+
+        const res = await fetch('https://api.groq.com/openai/v1/models', {
+          headers: { Authorization: `Bearer ${key}` }
+        })
+        if (!res.ok) {
+          const err = await res.text()
+          return {
+            success: false,
+            message: `Groq error (${res.status}): ${err.substring(0, 200)}`,
+            latencyMs: Date.now() - startTime
+          }
+        }
+        return {
+          success: true,
+          message: 'Groq Whisper API is ready and connected',
+          latencyMs: Date.now() - startTime
+        }
+      }
+
+      if (provider === 'openai') {
+        const key = params.apiKey || this.readMeta('transcription_openai_key') || getApiKey()
+        if (!key) throw new Error('No OpenAI API key provided')
+
+        const res = await fetch('https://api.openai.com/v1/models', {
+          headers: { Authorization: `Bearer ${key}` }
+        })
+        if (!res.ok) {
+          const err = await res.text()
+          let msg = `OpenAI error (${res.status}): ${err.substring(0, 200)}`
+          if (res.status === 429) {
+            msg = 'OpenAI quota exceeded (429): No credits remaining in your OpenAI account.'
+          }
+          return {
+            success: false,
+            message: msg,
+            latencyMs: Date.now() - startTime
+          }
+        }
+        return {
+          success: true,
+          message: 'OpenAI Whisper API is ready and connected',
+          latencyMs: Date.now() - startTime
+        }
+      }
+
+      if (provider === 'gemini') {
+        const key = params.apiKey || this.readMeta('transcription_gemini_key') || getApiKey()
+        if (!key) throw new Error('No Google Gemini API key provided')
+
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: 'Ping' }] }] })
+          }
+        )
+        if (!res.ok) {
+          const err = await res.text()
+          return {
+            success: false,
+            message: `Gemini error (${res.status}): ${err.substring(0, 200)}`,
+            latencyMs: Date.now() - startTime
+          }
+        }
+        return {
+          success: true,
+          message: 'Google Gemini API is ready and connected',
+          latencyMs: Date.now() - startTime
+        }
+      }
+
+      throw new Error(`Unknown provider: ${provider}`)
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.message || 'Connection test failed',
+        latencyMs: Date.now() - startTime
+      }
+    }
+  }
+
   private db: any = null
 
   public setDatabase(database: any): void {
@@ -219,18 +356,12 @@ class TranscriptionServiceManager {
     options?: { provider?: string; apiKey?: string }
   ): Promise<TranscriptionResult> {
     const chosenProvider = options?.provider || this.readMeta('transcription_provider') || 'auto'
-    const groqKey = options?.apiKey || this.readMeta('transcription_groq_key') || getApiKey()
-    const openaiKey = options?.apiKey || this.readMeta('transcription_openai_key') || getApiKey()
-    const geminiKey = options?.apiKey || this.readMeta('transcription_gemini_key') || getApiKey()
+    const groqKey = options?.apiKey || this.readMeta('transcription_groq_key') || (getApiKey()?.startsWith('gsk_') ? getApiKey() : '')
+    const openaiKey = options?.apiKey || this.readMeta('transcription_openai_key') || (getApiKey()?.startsWith('sk-') ? getApiKey() : '')
+    const geminiKey = options?.apiKey || this.readMeta('transcription_gemini_key') || (getApiKey()?.startsWith('AIza') || getApiKey()?.startsWith('AQ.') ? getApiKey() : '')
 
     if (chosenProvider === 'local') {
-      const readyModel = LocalWhisperService.listModels().find((m) => m.status === 'ready')
-      if (!readyModel) {
-        throw new Error(
-          'Local Whisper model is not downloaded yet. Please download a model in Settings or switch to cloud transcription.'
-        )
-      }
-      throw new Error('Local on-device transcription engine is being initialized.')
+      return this.transcribeWithLocalWhisper(audioPath)
     }
 
     if (chosenProvider === 'gemini') {
@@ -240,12 +371,19 @@ class TranscriptionServiceManager {
 
     if (chosenProvider === 'openai') {
       if (!openaiKey) throw new Error('OpenAI API key is not configured in Settings.')
-      return this.transcribeWithOpenAICompatible({
-        audioPath,
-        apiKey: openaiKey,
-        baseUrl: 'https://api.openai.com',
-        model: 'whisper-1'
-      })
+      try {
+        return await this.transcribeWithOpenAICompatible({
+          audioPath,
+          apiKey: openaiKey,
+          baseUrl: 'https://api.openai.com',
+          model: 'whisper-1'
+        })
+      } catch (err: any) {
+        if (err.message?.includes('credit_balance_exhausted') || err.message?.includes('429')) {
+          throw new Error('OpenAI API quota exceeded (0 credits remaining). Please add credits to your OpenAI account or switch to Groq / Local Whisper in Settings.')
+        }
+        throw err
+      }
     }
 
     if (chosenProvider === 'groq') {
@@ -258,47 +396,61 @@ class TranscriptionServiceManager {
       })
     }
 
-    // Auto mode: try Groq -> OpenAI -> Gemini -> Local
-    if (groqKey && (groqKey.startsWith('gsk_') || !openaiKey)) {
-      return this.transcribeWithOpenAICompatible({
-        audioPath,
-        apiKey: groqKey,
-        baseUrl: 'https://api.groq.com/openai',
-        model: 'whisper-large-v3-turbo'
-      })
+    // Auto mode: try configured providers in order with automatic fallback
+    const errors: string[] = []
+
+    // 1. Try Groq (Fastest + reliable)
+    if (groqKey) {
+      try {
+        return await this.transcribeWithOpenAICompatible({
+          audioPath,
+          apiKey: groqKey,
+          baseUrl: 'https://api.groq.com/openai',
+          model: 'whisper-large-v3-turbo'
+        })
+      } catch (err: any) {
+        errors.push(`Groq failed: ${err.message}`)
+      }
     }
 
-    if (openaiKey && openaiKey.startsWith('sk-')) {
-      return this.transcribeWithOpenAICompatible({
-        audioPath,
-        apiKey: openaiKey,
-        baseUrl: 'https://api.openai.com',
-        model: 'whisper-1'
-      })
+    // 2. Try Gemini
+    if (geminiKey) {
+      try {
+        return await this.transcribeWithGemini({ audioPath, apiKey: geminiKey })
+      } catch (err: any) {
+        errors.push(`Gemini failed: ${err.message}`)
+      }
     }
 
-    if (geminiKey && geminiKey.startsWith('AIza')) {
-      return this.transcribeWithGemini({ audioPath, apiKey: geminiKey })
+    // 3. Try OpenAI
+    if (openaiKey) {
+      try {
+        return await this.transcribeWithOpenAICompatible({
+          audioPath,
+          apiKey: openaiKey,
+          baseUrl: 'https://api.openai.com',
+          model: 'whisper-1'
+        })
+      } catch (err: any) {
+        errors.push(`OpenAI failed: ${err.message}`)
+      }
     }
 
-    // Fallback if any key is present
-    const anyKey = groqKey || openaiKey || geminiKey
-    if (anyKey) {
-      return this.transcribeWithOpenAICompatible({
-        audioPath,
-        apiKey: anyKey,
-        baseUrl: 'https://api.groq.com/openai',
-        model: 'whisper-large-v3-turbo'
-      })
-    }
-
-    // Check if local model ready
+    // 4. Try Local Whisper
     const readyModel = LocalWhisperService.listModels().find((m) => m.status === 'ready')
     if (readyModel) {
-      throw new Error('Local on-device transcription engine is being initialized.')
+      try {
+        return await this.transcribeWithLocalWhisper(audioPath)
+      } catch (err: any) {
+        errors.push(`Local Whisper failed: ${err.message}`)
+      }
     }
 
-    throw new Error('No transcription API key found. Please configure a Groq, OpenAI, or Gemini key in Settings.')
+    if (errors.length > 0) {
+      throw new Error(`Transcription failed:\n${errors.join('\n')}`)
+    }
+
+    throw new Error('No transcription provider configured. Please add a Groq, OpenAI, or Gemini key, or download Local Whisper in Settings.')
   }
 }
 

@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, createWriteStream, statSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, createWriteStream, statSync, unlinkSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import https from 'https'
 import http from 'http'
+import { spawn, exec, execSync } from 'child_process'
 import type { BrowserWindow } from 'electron'
 
 export interface WhisperModelInfo {
@@ -12,6 +13,19 @@ export interface WhisperModelInfo {
   downloadUrl: string
   sizeBytes: number
   sizeDisplay: string
+}
+
+export interface LocalWhisperTranscriptionSegment {
+  start: number
+  end: number
+  text: string
+}
+
+export interface LocalWhisperTranscriptionResult {
+  text: string
+  timestampedText: string
+  durationSeconds: number
+  segments: LocalWhisperTranscriptionSegment[]
 }
 
 export const WHISPER_MODELS: WhisperModelInfo[] = [
@@ -65,6 +79,90 @@ class LocalWhisperServiceManager {
     const dir = join(process.cwd(), 'local-ai', 'whisper')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     return dir
+  }
+
+  public getBinDir(): string {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { app } = require('electron')
+      if (app && typeof app.getPath === 'function') {
+        const dir = join(app.getPath('userData'), 'local-ai', 'bin')
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+        return dir
+      }
+    } catch {
+      // fallback
+    }
+    const dir = join(process.cwd(), 'local-ai', 'bin')
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    return dir
+  }
+
+  public findWhisperBinary(): string | null {
+    const binDir = this.getBinDir()
+    const candidates = process.platform === 'win32'
+      ? ['whisper-cli.exe', 'main.exe', 'whisper.exe', 'whisper-cpp.exe']
+      : ['whisper-cli', 'main', 'whisper-cpp', 'whisper']
+
+    // 1. Direct in local-ai/bin
+    for (const name of candidates) {
+      const p = join(binDir, name)
+      if (existsSync(p)) return p
+    }
+
+    // 2. Subdirectories in local-ai/bin
+    try {
+      const entries = readdirSync(binDir)
+      for (const entry of entries) {
+        for (const name of candidates) {
+          const p = join(binDir, entry, name)
+          if (existsSync(p)) return p
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 3. System common paths
+    if (process.platform === 'darwin') {
+      const macPaths = [
+        '/opt/homebrew/bin/whisper-cli',
+        '/opt/homebrew/bin/whisper-cpp',
+        '/usr/local/bin/whisper-cli',
+        '/usr/local/bin/whisper-cpp'
+      ]
+      for (const p of macPaths) {
+        if (existsSync(p)) return p
+      }
+    }
+
+    // 4. Check system PATH
+    try {
+      const checkCmd = process.platform === 'win32' ? 'where whisper-cli' : 'which whisper-cli || which whisper-cpp'
+      const out = execSync(checkCmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().split('\n')[0]
+      if (out && existsSync(out)) return out
+    } catch {
+      // ignore
+    }
+
+    return null
+  }
+
+  public findFfmpegBinary(): string | null {
+    if (process.platform === 'darwin') {
+      const macPaths = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']
+      for (const p of macPaths) {
+        if (existsSync(p)) return p
+      }
+    }
+    try {
+      const checkCmd = process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg'
+      const out = execSync(checkCmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().split('\n')[0]
+      if (out && existsSync(out)) return out
+    } catch {
+      // ignore
+    }
+    return null
   }
 
   public getModelStatus(modelId: string): {
@@ -273,6 +371,160 @@ class LocalWhisperServiceManager {
       }
     }
     return false
+  }
+
+  /**
+   * Convert an audio file (e.g. .webm, .mp4, .m4a) to 16kHz 16-bit mono WAV for whisper.cpp
+   */
+  public async convertTo16kWav(inputPath: string, outputPath: string): Promise<void> {
+    const ffmpeg = this.findFfmpegBinary()
+    if (!ffmpeg) {
+      throw new Error(
+        'ffmpeg is required for local audio conversion. Please install ffmpeg (e.g. "brew install ffmpeg") or use Cloud transcription.'
+      )
+    }
+
+    return new Promise((resolve, reject) => {
+      const cmd = `"${ffmpeg}" -y -i "${inputPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${outputPath}"`
+      exec(cmd, (err, _stdout, stderr) => {
+        if (err) {
+          reject(new Error(`Audio conversion failed: ${stderr || err.message}`))
+        } else {
+          resolve()
+        }
+      })
+    })
+  }
+
+  /**
+   * Transcribe an audio file using local Whisper binary and model
+   */
+  public async transcribeAudio(
+    audioPath: string,
+    modelIdOrPath?: string
+  ): Promise<LocalWhisperTranscriptionResult> {
+    // 1. Resolve model path
+    let modelPath = modelIdOrPath
+    if (!modelPath) {
+      const readyModel = this.listModels().find((m) => m.status === 'ready')
+      if (!readyModel || !readyModel.localPath) {
+        throw new Error(
+          'No local Whisper model is downloaded. Please download Whisper Base or Tiny in Settings.'
+        )
+      }
+      modelPath = readyModel.localPath
+    } else if (!existsSync(modelPath)) {
+      const fromList = this.listModels().find((m) => m.id === modelPath)
+      if (fromList?.localPath && existsSync(fromList.localPath)) {
+        modelPath = fromList.localPath
+      } else {
+        throw new Error(`Local Whisper model file not found: ${modelPath}`)
+      }
+    }
+
+    // 2. Resolve whisper executable
+    const whisperBin = this.findWhisperBinary()
+    if (!whisperBin) {
+      throw new Error(
+        'Local Whisper executable (whisper-cli) not found on system. Please install whisper-cpp (e.g. "brew install whisper-cpp") or use Groq Cloud transcription in Settings.'
+      )
+    }
+
+    // 3. Prepare temporary 16kHz WAV file
+    const tempDir = this.getModelsDir()
+    const tempWav = join(tempDir, `temp_transcribe_${Date.now()}.wav`)
+    const tempJsonBase = join(tempDir, `temp_transcribe_${Date.now()}`)
+    const tempJsonFile = `${tempJsonBase}.json`
+
+    try {
+      await this.convertTo16kWav(audioPath, tempWav)
+
+      // 4. Run whisper-cli
+      await new Promise<void>((resolve, reject) => {
+        const args = ['-m', modelPath!, '-f', tempWav, '-oj', '-of', tempJsonBase]
+        const proc = spawn(whisperBin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+        let stderr = ''
+
+        proc.stderr.on('data', (d) => {
+          stderr += d.toString()
+        })
+
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve()
+          } else {
+            reject(new Error(`Whisper execution failed (code ${code}): ${stderr.slice(-300)}`))
+          }
+        })
+
+        proc.on('error', (err) => {
+          reject(err)
+        })
+      })
+
+      // 5. Parse JSON output
+      if (!existsSync(tempJsonFile)) {
+        throw new Error('Local Whisper did not produce a transcript output file.')
+      }
+
+      const rawJsonStr = readFileSync(tempJsonFile, 'utf-8')
+      const parsed = JSON.parse(rawJsonStr)
+
+      const segments: LocalWhisperTranscriptionSegment[] = []
+      let fullText = ''
+
+      const rawTrans = parsed.transcription || []
+      for (const item of rawTrans) {
+        const text = (item.text || '').trim()
+        if (!text) continue
+        const fromSec = (item.timestamps?.from ? this.parseWhisperTimestamp(item.timestamps.from) : 0)
+        const toSec = (item.timestamps?.to ? this.parseWhisperTimestamp(item.timestamps.to) : fromSec + 5)
+        segments.push({
+          start: fromSec,
+          end: toSec,
+          text
+        })
+        fullText += (fullText ? ' ' : '') + text
+      }
+
+      const durationSeconds = segments.length > 0 ? Math.round(segments[segments.length - 1].end) : 0
+
+      // Format timestamped text
+      const timestampedLines: string[] = []
+      for (const seg of segments) {
+        const mm = String(Math.floor(seg.start / 60)).padStart(2, '0')
+        const ss = String(Math.floor(seg.start % 60)).padStart(2, '0')
+        timestampedLines.push(`[${mm}:${ss}] ${seg.text}`)
+      }
+      const timestampedText = timestampedLines.join('\n\n')
+
+      return {
+        text: fullText,
+        timestampedText: timestampedText || fullText,
+        durationSeconds,
+        segments
+      }
+    } finally {
+      // Cleanup temporary files
+      try { if (existsSync(tempWav)) unlinkSync(tempWav) } catch {}
+      try { if (existsSync(tempJsonFile)) unlinkSync(tempJsonFile) } catch {}
+    }
+  }
+
+  private parseWhisperTimestamp(ts: string): number {
+    // format: "00:01:23.456" or "01:23.456"
+    const parts = ts.split(':')
+    if (parts.length === 3) {
+      const h = parseFloat(parts[0]) || 0
+      const m = parseFloat(parts[1]) || 0
+      const s = parseFloat(parts[2]) || 0
+      return h * 3600 + m * 60 + s
+    } else if (parts.length === 2) {
+      const m = parseFloat(parts[0]) || 0
+      const s = parseFloat(parts[1]) || 0
+      return m * 60 + s
+    }
+    return parseFloat(ts) || 0
   }
 }
 

@@ -398,10 +398,14 @@ describe('FolderSyncService', () => {
       // Write a file to trigger watcher
       fs.writeFileSync(path.join(tempDir, 'watch_test.txt'), 'Created during watch')
 
-      // Wait 2200ms for the 1500ms debounce to fire cleanly even under full parallel suite load
-      await new Promise((resolve) => setTimeout(resolve, 2200))
+      // Poll for the 1500ms debounce to fire cleanly under parallel suite load
+      let materials: any[] = []
+      for (let i = 0; i < 40; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        materials = db.prepare('SELECT * FROM materials WHERE subject_id = 1').all() as any[]
+        if (materials.length > 0) break
+      }
 
-      const materials = db.prepare('SELECT * FROM materials WHERE subject_id = 1').all() as any[]
       expect(materials.length).toBe(1)
       expect(materials[0].filename).toBe('watch_test.txt')
     }, 10000)

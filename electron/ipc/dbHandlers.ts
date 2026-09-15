@@ -14,6 +14,7 @@ import {
 } from '../../src/lib/fsrs'
 import { bktUpdate } from '../../src/lib/bkt'
 import { deleteSubjectCascade, deleteCardCascade, deleteCardsCascade } from '../../src/lib/db'
+import { cleanCardBrackets } from '../../src/lib/cardParser'
 import { FolderSyncService } from './folderSyncService'
 import { getOrCreateMaterialFolder, syncCardsToMaterialFolders } from './materialFolderHelper'
 import type {
@@ -36,6 +37,20 @@ export function setDatabase(database: Database.Database): void {
 }
 
 export function registerDbHandlers(): void {
+  // Purge any cards for already-archived subjects on startup
+  try {
+    const archivedCards = db.prepare(`
+      SELECT c.id FROM cards c
+      JOIN subjects s ON s.id = c.subject_id
+      WHERE s.status = 'archived'
+    `).all() as { id: number }[]
+    if (archivedCards.length > 0) {
+      deleteCardsCascade(db, archivedCards.map(c => c.id))
+    }
+  } catch {
+    // Ignore if tables are not initialized yet
+  }
+
   // User handlers
   ipcMain.handle('db:getUser', () => {
     const user = db.prepare('SELECT * FROM users LIMIT 1').get() as User | undefined
@@ -69,6 +84,15 @@ export function registerDbHandlers(): void {
       db.prepare(
         'UPDATE subjects SET name = ?, status = ?, course_code = ? WHERE id = ?'
       ).run(subject.name, subject.status, subject.course_code || null, subject.id)
+
+      // If subject is marked as archived, remove all flashcards associated with it
+      if (subject.status === 'archived') {
+        const cards = db.prepare('SELECT id FROM cards WHERE subject_id = ?').all(subject.id) as { id: number }[]
+        if (cards.length > 0) {
+          deleteCardsCascade(db, cards.map(c => c.id))
+        }
+      }
+
       return db.prepare('SELECT * FROM subjects WHERE id = ?').get(subject.id) as Subject
     } else {
       const result = db.prepare(
@@ -108,20 +132,24 @@ export function registerDbHandlers(): void {
   })
 
   ipcMain.handle('db:saveCard', (_event, card: Partial<Card>) => {
+    const cleanFront = cleanCardBrackets(card.front || '')
+    const cleanBack = cleanCardBrackets(card.back || '')
+    const cleanConcept = card.concept ? cleanCardBrackets(card.concept) : null
+
     let folderId = card.folder_id ?? null
     if (!folderId && card.subject_id && card.material_id) {
-      folderId = getOrCreateMaterialFolder(db, card.subject_id, card.material_id, card.concept)
+      folderId = getOrCreateMaterialFolder(db, card.subject_id, card.material_id, cleanConcept)
     }
 
     if (card.id) {
       db.prepare(
         'UPDATE cards SET front = ?, back = ?, type = ?, folder_id = ?, concept = ?, topic_id = ?, material_id = ?, tags = ? WHERE id = ?'
       ).run(
-        card.front,
-        card.back,
+        cleanFront,
+        cleanBack,
         card.type,
         folderId,
-        card.concept ?? null,
+        cleanConcept,
         card.topic_id ?? null,
         card.material_id ?? null,
         card.tags || '',
@@ -135,11 +163,11 @@ export function registerDbHandlers(): void {
         card.subject_id,
         card.material_id || null,
         card.type,
-        card.front,
-        card.back,
+        cleanFront,
+        cleanBack,
         card.is_manual || 0,
         folderId,
-        card.concept ?? null,
+        cleanConcept,
         card.topic_id ?? null,
         card.tags || '',
         new Date().toISOString()
@@ -176,20 +204,24 @@ export function registerDbHandlers(): void {
     const savedCards: Card[] = []
     const saveMany = db.transaction(() => {
       for (const card of cards) {
+        const cleanFront = cleanCardBrackets(card.front || '')
+        const cleanBack = cleanCardBrackets(card.back || '')
+        const cleanConcept = card.concept ? cleanCardBrackets(card.concept) : null
+
         let folderId = card.folder_id ?? null
         if (!folderId && card.subject_id && card.material_id) {
-          folderId = getOrCreateMaterialFolder(db, card.subject_id, card.material_id, card.concept)
+          folderId = getOrCreateMaterialFolder(db, card.subject_id, card.material_id, cleanConcept)
         }
 
         const result = insertCard.run(
           card.subject_id,
           card.material_id || null,
           card.type,
-          card.front,
-          card.back,
+          cleanFront,
+          cleanBack,
           card.is_manual || 0,
           folderId,
-          card.concept ?? null,
+          cleanConcept,
           card.topic_id ?? null,
           card.tags || '',
           new Date().toISOString()
@@ -246,7 +278,8 @@ export function registerDbHandlers(): void {
         SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at
         FROM cards c
         JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
-        WHERE c.subject_id = ? AND cs.due_date <= ?
+        JOIN subjects s ON s.id = c.subject_id
+        WHERE c.subject_id = ? AND s.status != 'archived' AND cs.due_date <= ?
         ORDER BY cs.due_date ASC
       `).all(userId, subjectId, today)
     }
@@ -254,7 +287,8 @@ export function registerDbHandlers(): void {
       SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at
       FROM cards c
       JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
-      WHERE cs.due_date <= ?
+      JOIN subjects s ON s.id = c.subject_id
+      WHERE s.status != 'archived' AND cs.due_date <= ?
       ORDER BY cs.due_date ASC
     `).all(userId, today)
   })
@@ -265,7 +299,8 @@ export function registerDbHandlers(): void {
         SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at
         FROM cards c
         JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
-        WHERE c.subject_id = ?
+        JOIN subjects s ON s.id = c.subject_id
+        WHERE c.subject_id = ? AND s.status != 'archived'
         ORDER BY cs.repetitions ASC, cs.due_date ASC
       `).all(userId, subjectId)
     }
@@ -273,17 +308,27 @@ export function registerDbHandlers(): void {
       SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at
       FROM cards c
       JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+      JOIN subjects s ON s.id = c.subject_id
+      WHERE s.status != 'archived'
       ORDER BY cs.repetitions ASC, cs.due_date ASC
     `).all(userId)
   })
 
   ipcMain.handle('db:getAllSchedules', (_event, userId: number, subjectId?: number) => {
     if (subjectId) {
-      return db.prepare(
-        'SELECT cs.* FROM card_schedule cs JOIN cards c ON c.id = cs.card_id WHERE cs.user_id = ? AND c.subject_id = ?'
-      ).all(userId, subjectId) as CardSchedule[]
+      return db.prepare(`
+        SELECT cs.* FROM card_schedule cs
+        JOIN cards c ON c.id = cs.card_id
+        JOIN subjects s ON s.id = c.subject_id
+        WHERE cs.user_id = ? AND c.subject_id = ? AND s.status != 'archived'
+      `).all(userId, subjectId) as CardSchedule[]
     }
-    return db.prepare('SELECT * FROM card_schedule WHERE user_id = ?').all(userId) as CardSchedule[]
+    return db.prepare(`
+      SELECT cs.* FROM card_schedule cs
+      JOIN cards c ON c.id = cs.card_id
+      JOIN subjects s ON s.id = c.subject_id
+      WHERE cs.user_id = ? AND s.status != 'archived'
+    `).all(userId) as CardSchedule[]
   })
 
   // Review log handlers
@@ -407,10 +452,13 @@ export function registerDbHandlers(): void {
       ? `SELECT c.subject_id, cs.interval, cs.ease_factor
          FROM cards c
          JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
-         WHERE c.subject_id = ?`
+         JOIN subjects s ON s.id = c.subject_id
+         WHERE c.subject_id = ? AND s.status != 'archived'`
       : `SELECT c.subject_id, cs.interval, cs.ease_factor
          FROM cards c
-         JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?`
+         JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+         JOIN subjects s ON s.id = c.subject_id
+         WHERE s.status != 'archived'`
 
     const args = subjectId ? [userId, subjectId] : [userId]
     return db.prepare(query).all(...args)
@@ -435,7 +483,8 @@ export function registerDbHandlers(): void {
         (SELECT AVG(quality) FROM review_log rl WHERE rl.card_id = c.id AND rl.user_id = ?) as avg_quality
       FROM cards c
       JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
-      WHERE cs.repetitions > 0
+      JOIN subjects s ON s.id = c.subject_id
+      WHERE s.status != 'archived' AND cs.repetitions > 0
       ORDER BY avg_quality ASC
       LIMIT ?
     `).all(userId, userId, limit)
@@ -664,16 +713,20 @@ export function registerDbHandlers(): void {
           SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at,
                  cs.stability, cs.difficulty, cs.state, cs.lapses,
                  COALESCE(c.concept, (SELECT name FROM card_folders cf WHERE cf.id = c.folder_id), 'General') AS bucket
-          FROM cards c JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
-          WHERE c.subject_id = ? AND cs.due_date <= ?
+          FROM cards c
+          JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+          JOIN subjects s ON s.id = c.subject_id
+          WHERE c.subject_id = ? AND s.status != 'archived' AND cs.due_date <= ?
           ORDER BY cs.due_date ASC
         `).all(userId, subjectId, today) as (Card & CardSchedule & { bucket: string })[]
       : db.prepare(`
           SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at,
                  cs.stability, cs.difficulty, cs.state, cs.lapses,
                  COALESCE(c.concept, (SELECT name FROM card_folders cf WHERE cf.id = c.folder_id), 'General') AS bucket
-          FROM cards c JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
-          WHERE cs.due_date <= ?
+          FROM cards c
+          JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+          JOIN subjects s ON s.id = c.subject_id
+          WHERE s.status != 'archived' AND cs.due_date <= ?
           ORDER BY cs.due_date ASC
         `).all(userId, today) as (Card & CardSchedule & { bucket: string })[]
 

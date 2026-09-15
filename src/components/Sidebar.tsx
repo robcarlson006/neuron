@@ -88,10 +88,14 @@ const settingsNavItems = [
 
 export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): React.JSX.Element {
   const { user, subjects, toggleTheme, theme, focusBlock } = useAppStore()
+  const [showArchived, setShowArchived] = React.useState(false)
 
   const initials = user?.name
     ? user.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : 'U'
+
+  const activeSubjects = subjects.filter(s => s.status !== 'archived')
+  const archivedSubjects = subjects.filter(s => s.status === 'archived')
 
   return (
     <aside className="w-60 h-full bg-neuron-100 dark:bg-neuron-950 border-r border-neuron-200 dark:border-neuron-800 flex flex-col flex-shrink-0 overflow-hidden">
@@ -185,7 +189,7 @@ export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): Re
             )}
           </div>
           <div className="space-y-0.5 max-h-44 overflow-y-auto">
-            {subjects.filter(s => s.status !== 'archived').map((subject) => (
+            {activeSubjects.map((subject) => (
               <NavLink
                 key={subject.id}
                 to={`/subject/${subject.id}`}
@@ -207,8 +211,51 @@ export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): Re
                 )}
               </NavLink>
             ))}
-            {subjects.filter(s => s.status !== 'archived').length === 0 && (
-              <p className="text-xs text-slate-400 dark:text-slate-500 px-2.5 py-1">No subjects yet</p>
+            {activeSubjects.length === 0 && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 px-2.5 py-1">No active subjects</p>
+            )}
+
+            {/* Archived subjects collapsible */}
+            {archivedSubjects.length > 0 && (
+              <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-800/60">
+                <button
+                  onClick={() => setShowArchived(prev => !prev)}
+                  className="w-full flex items-center justify-between px-2 py-1 text-[11px] font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                  aria-label="Toggle archived subjects"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span>📦</span>
+                    <span>Archived ({archivedSubjects.length})</span>
+                  </span>
+                  <span className="text-[9px]">{showArchived ? '▼' : '▶'}</span>
+                </button>
+                {showArchived && (
+                  <div className="space-y-0.5 mt-1">
+                    {archivedSubjects.map((subject) => (
+                      <NavLink
+                        key={subject.id}
+                        to={`/subject/${subject.id}`}
+                        className={({ isActive }) =>
+                          `flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors truncate ${
+                            isActive
+                              ? 'bg-neuron-200 dark:bg-neuron-800/50 text-neuron-700 dark:text-neuron-300'
+                              : 'text-slate-400 dark:text-slate-500 hover:bg-neuron-200/60 dark:hover:bg-neuron-900/40 hover:text-neuron-800 dark:hover:text-neuron-200 opacity-80'
+                          }`
+                        }
+                      >
+                        {({ isActive }) => (
+                          <>
+                            <span className={`flex-shrink-0 text-xs ${isActive ? 'text-neuron-500' : 'text-slate-400'}`}>
+                              📦
+                            </span>
+                            <span className="truncate">{subject.name}</span>
+                          </>
+                        )}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

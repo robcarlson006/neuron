@@ -9,7 +9,7 @@ interface LocalAISectionProps {
 
 export default function LocalAISection({
   onSelectModel,
-  currentBaseUrl,
+  currentBaseUrl: _currentBaseUrl,
   currentModel
 }: LocalAISectionProps): React.JSX.Element {
   const [profile, setProfile] = useState<HardwareProfile | null>(null)
@@ -142,28 +142,58 @@ export default function LocalAISection({
     }
   }
 
+  const [autoStartModelId, setAutoStartModelId] = useState<string | null>(null)
+
+  const handleOneClickSetup = async (model: LocalModelInfo) => {
+    setActionError(null)
+    if (model.status === 'ready') {
+      await handleStartAndSelect(model)
+    } else {
+      setAutoStartModelId(model.id)
+      await handleDownload(model.id)
+    }
+  }
+
+  useEffect(() => {
+    if (autoStartModelId && models.length > 0) {
+      const target = models.find(m => m.id === autoStartModelId)
+      if (target && target.status === 'ready' && !engineStatus.isRunning) {
+        setAutoStartModelId(null)
+        handleStartAndSelect(target)
+      }
+    }
+  }, [models, autoStartModelId, engineStatus])
+
+  const recommendedModel = models.find(m => m.isRecommended) || models[0]
+  const isRecommendedActive = engineStatus.isRunning && recommendedModel && engineStatus.activeModelId === recommendedModel.id
+
   return (
     <div className="card p-6 mb-6">
-      <div className="flex items-start justify-between mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Local AI & Hardware Specs</h2>
             {profile && getTierBadge(profile.tier)}
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Run open-weights language models directly on your hardware without internet access.
+            Run open-weights language models completely on your device without internet access or subscriptions.
           </p>
         </div>
-        {engineStatus.isRunning && (
-          <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 rounded-lg text-xs font-medium border border-emerald-200 dark:border-emerald-800">
+        {engineStatus.isRunning ? (
+          <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium border border-emerald-200 dark:border-emerald-800 self-start sm:self-auto">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            Engine Active (Port {engineStatus.port})
+            <span>Active & Running</span>
             <button
               onClick={handleStopEngine}
               className="ml-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-semibold underline"
             >
               Stop
             </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-3 py-1.5 rounded-xl text-xs font-medium self-start sm:self-auto">
+            <span className="w-2 h-2 rounded-full bg-slate-400" />
+            <span>Engine Offline</span>
           </div>
         )}
       </div>
@@ -177,8 +207,8 @@ export default function LocalAISection({
 
       {/* Hardware Profile Summary */}
       {profile && (
-        <div className="mb-5 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-2.5">
+        <div className="mb-5 p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
             <div>
               <span className="text-slate-400 dark:text-slate-500 block text-[10px] uppercase font-semibold">Processor</span>
               <span className="font-medium text-slate-700 dark:text-slate-200 truncate block" title={profile.cpuModel}>
@@ -194,7 +224,7 @@ export default function LocalAISection({
             <div>
               <span className="text-slate-400 dark:text-slate-500 block text-[10px] uppercase font-semibold">Platform & Arch</span>
               <span className="font-medium text-slate-700 dark:text-slate-200">
-                {profile.platform} ({profile.arch})
+                {profile.platform === 'darwin' ? 'macOS' : profile.platform} ({profile.arch})
               </span>
             </div>
             <div>
@@ -204,10 +234,53 @@ export default function LocalAISection({
               </span>
             </div>
           </div>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-200/60 dark:border-slate-800/80 pt-2 leading-relaxed">
-            💡 <strong className="text-slate-700 dark:text-slate-300">Recommendation: </strong>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-200/60 dark:border-slate-800/80 pt-2.5 leading-relaxed">
+            💡 <strong className="text-slate-700 dark:text-slate-300">Hardware Detection: </strong>
             {profile.tierReason}
           </p>
+        </div>
+      )}
+
+      {/* 1-Click Automated Setup Banner */}
+      {recommendedModel && !isRecommendedActive && (
+        <div className="mb-5 p-4 rounded-xl bg-gradient-to-r from-violet-600/10 via-purple-600/10 to-indigo-600/10 border border-violet-200 dark:border-violet-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                ✨ 1-Click Quick Setup
+              </span>
+              <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/60 dark:text-violet-300">
+                Automated
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+              {recommendedModel.status === 'ready'
+                ? `Activate ${recommendedModel.name} for your machine with one click.`
+                : `Automatically download and enable the best model for your system (${recommendedModel.name}).`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleOneClickSetup(recommendedModel)}
+            disabled={startingModelId === recommendedModel.id || downloadProgress[recommendedModel.id]?.status === 'downloading'}
+            className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-semibold shadow-sm transition-all flex items-center justify-center gap-2 flex-shrink-0"
+          >
+            {startingModelId === recommendedModel.id ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Starting Engine...
+              </>
+            ) : downloadProgress[recommendedModel.id]?.status === 'downloading' ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Downloading ({downloadProgress[recommendedModel.id]?.percent || 0}%)
+              </>
+            ) : recommendedModel.status === 'ready' ? (
+              '⚡ Enable Recommended Model'
+            ) : (
+              '⚡ Download & Enable Model'
+            )}
+          </button>
         </div>
       )}
 
@@ -215,7 +288,7 @@ export default function LocalAISection({
       <div className="space-y-3">
         <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-1">
           <span>Available Models</span>
-          <span>Explicit Download Only</span>
+          <span>Zero Terminal Needed</span>
         </div>
 
         {models.map((model) => {
@@ -223,16 +296,18 @@ export default function LocalAISection({
           const isDownloading = prog?.status === 'downloading' || model.status === 'downloading'
           const isReady = model.status === 'ready'
           const isCurrentActive =
-            (currentModel?.toLowerCase().includes('qwen') || currentModel?.toLowerCase().includes('3b')) &&
-            (currentBaseUrl?.includes('8080') || currentBaseUrl?.includes('11434'))
+            (engineStatus.isRunning && engineStatus.activeModelId === model.id) ||
+            (currentModel?.toLowerCase() === model.name.toLowerCase())
 
           return (
             <div
               key={model.id}
               className={`p-4 rounded-xl border transition-all ${
-                model.isRecommended
-                  ? 'bg-violet-50/40 dark:bg-violet-950/20 border-violet-200 dark:border-violet-800'
-                  : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700'
+                isCurrentActive
+                  ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800 shadow-xs'
+                  : model.isRecommended
+                    ? 'bg-violet-50/40 dark:bg-violet-950/20 border-violet-200 dark:border-violet-800'
+                    : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700'
               }`}
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -244,9 +319,15 @@ export default function LocalAISection({
                         Recommended
                       </span>
                     )}
-                    {isReady && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
-                        ✓ Downloaded
+                    {isReady && !isCurrentActive && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                        Downloaded
+                      </span>
+                    )}
+                    {isCurrentActive && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Active Model
                       </span>
                     )}
                   </div>
@@ -274,7 +355,7 @@ export default function LocalAISection({
                         type="button"
                         onClick={() => handleStartAndSelect(model)}
                         disabled={startingModelId === model.id}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                           isCurrentActive
                             ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                             : 'bg-violet-600 text-white hover:bg-violet-700'
@@ -286,7 +367,7 @@ export default function LocalAISection({
                             Starting...
                           </span>
                         ) : isCurrentActive ? (
-                          '✓ Active Model'
+                          '✓ Active'
                         ) : (
                           'Use Model'
                         )}

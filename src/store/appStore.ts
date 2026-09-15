@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { User, Subject, Theme, ToastMessage, DailyPlan } from '../types'
+import type { User, Subject, Theme, ToastMessage, DailyPlan, CalculatorSkin } from '../types'
 
 export type PomodoroPhase = 'idle' | 'work' | 'work-done' | 'break' | 'break-done'
 
@@ -23,6 +23,7 @@ interface AppState {
   isLoading: boolean
   error: string | null
   showDemo: boolean
+  calculatorSkin: CalculatorSkin
 
   // Focus Block runtime state
   focusBlock: ActiveFocusBlockState | null
@@ -53,6 +54,7 @@ interface AppState {
   removeSubject: (subjectId: number) => void
   addSubject: (subject: Subject) => void
   setShowDemo: (show: boolean) => void
+  setCalculatorSkin: (skin: CalculatorSkin) => void
 
   // Toast notifications
   toasts: ToastMessage[]
@@ -109,6 +111,14 @@ export const useAppStore = create<AppState>((set, get) => {
     isLoading: false,
     error: null,
     showDemo: false,
+    calculatorSkin: (() => {
+      try {
+        const saved = localStorage.getItem('calculator_skin')
+        return saved === 'ti84' ? 'ti84' : 'numworks'
+      } catch {
+        return 'numworks'
+      }
+    })(),
     toasts: [],
 
     // Pomodoro settings
@@ -137,6 +147,12 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         theme: state.theme === 'light' ? 'dark' : 'light'
       })),
+    setCalculatorSkin: (skin) => {
+      try {
+        localStorage.setItem('calculator_skin', skin)
+      } catch {}
+      set({ calculatorSkin: skin })
+    },
     updateSubject: (subject) =>
       set((state) => ({
         subjects: state.subjects.map((s) => (s.id === subject.id ? subject : s))

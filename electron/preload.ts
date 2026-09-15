@@ -9,7 +9,8 @@ import type {
   ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult,
   TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
   HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus,
-  FolderSyncResult, FolderSyncEvent, Lecture
+  FolderSyncResult, FolderSyncEvent, Lecture,
+  PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult
 } from '../src/types'
 
 const electronAPI = {
@@ -85,6 +86,8 @@ const electronAPI = {
     ipcRenderer.invoke('ai:generateCards', text, minCards, minQuestions),
   evaluateAnswer: (question: string, modelAnswer: string, studentAnswer: string): Promise<EvaluationResult> =>
     ipcRenderer.invoke('ai:evaluateAnswer', question, modelAnswer, studentAnswer),
+  formatMathEquations: (text: string): Promise<{ success: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('ai:formatMathEquations', text),
   getAIConfig: (): Promise<{ provider: string; baseUrl: string; model: string; apiKey: string; hasApiKey?: boolean }> =>
     ipcRenderer.invoke('ai:getConfig'),
   saveAIConfig: (config: { provider: string; baseUrl: string; model: string; apiKey?: string }): Promise<{ success: boolean }> =>
@@ -584,7 +587,39 @@ const electronAPI = {
     ipcRenderer.on('whisper:download-progress', handler)
     return () => { ipcRenderer.removeListener('whisper:download-progress', handler) }
   },
+  testTranscriptionConnection: (params: {
+    provider: string
+    apiKey?: string
+  }): Promise<{ success: boolean; message: string; latencyMs?: number }> =>
+    ipcRenderer.invoke('lecture:testTranscriptionConnection', params),
+  findWhisperBinary: (): Promise<string | null> => ipcRenderer.invoke('whisper:findBinary'),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('updater:openReleasePage', url),
+
+  // ── Practice Problems & Lab ──
+  practiceListProblems: (subjectId: number, moduleId?: number, topicId?: number): Promise<PracticeProblem[]> =>
+    ipcRenderer.invoke('practice:listProblems', subjectId, moduleId, topicId),
+  practiceGetProblem: (problemId: number): Promise<PracticeProblem | null> =>
+    ipcRenderer.invoke('practice:getProblem', problemId),
+  practiceCreateProblem: (problem: Partial<PracticeProblem>): Promise<PracticeProblem> =>
+    ipcRenderer.invoke('practice:createProblem', problem),
+  practiceDeleteProblem: (problemId: number): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('practice:deleteProblem', problemId),
+  practiceExtractFromMaterial: (subjectId: number, materialId: number, moduleId?: number, topicId?: number): Promise<{ success: boolean; count: number; problems?: PracticeProblem[]; error?: string }> =>
+    ipcRenderer.invoke('practice:extractFromMaterial', subjectId, materialId, moduleId, topicId),
+  practiceExtractFromText: (subjectId: number, text: string, moduleId?: number, topicId?: number): Promise<{ success: boolean; count: number; problems?: PracticeProblem[]; error?: string }> =>
+    ipcRenderer.invoke('practice:extractFromText', subjectId, text, moduleId, topicId),
+  practiceGenerateVariant: (problemId: number, userStruggles?: string): Promise<{ success: boolean; variant?: PracticeProblem; error?: string }> =>
+    ipcRenderer.invoke('practice:generateVariant', problemId, userStruggles),
+  practiceCreateSession: (config: PracticeSessionConfig): Promise<{ session: PracticeSession; problems: PracticeProblem[] }> =>
+    ipcRenderer.invoke('practice:createSession', config),
+  practiceGetSession: (sessionId: number): Promise<{ session: PracticeSession; attempts: (PracticeProblemAttempt & { problem_title: string; problem_text: string })[] } | null> =>
+    ipcRenderer.invoke('practice:getSession', sessionId),
+  practiceSubmitAttempt: (sessionId: number, problemId: number, userAnswer: string, timeSpentSeconds: number): Promise<{ success: boolean; evaluation?: PracticeEvaluationResult; attempt?: PracticeProblemAttempt; error?: string }> =>
+    ipcRenderer.invoke('practice:submitAttempt', sessionId, problemId, userAnswer, timeSpentSeconds),
+  practiceEndSession: (sessionId: number, summary?: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('practice:endSession', sessionId, summary),
+  practiceGetStats: (subjectId: number, userId: number): Promise<{ totalProblems: number; totalSessions: number; totalCompleted: number; totalCorrect: number; accuracy: number }> =>
+    ipcRenderer.invoke('practice:getStats', subjectId, userId),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

@@ -1,22 +1,57 @@
 {
   "name": "studyhelper",
-  "version": "4.3.5",
+  "version": "4.4.0",
   "description": "Spaced repetition and active recall for smarter studying",
   "main": "out/main/index.js",
   "author": "Neuron",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && electron-builder",
-    "install-app": "rm -rf /Applications/Neuron.app && cp -fR dist/mac-arm64/Neuron.app /Applications/",
-    "install-desktop": "rm -rf ~/Desktop/Neuron.app && cp -fR dist/mac-arm64/Neuron.app ~/Desktop/",
-    "preview": "electron-vite preview",
+    "build": "electron-vite build",
+    "postinstall": "electron-builder install-app-deps",
+    "build:mac": "electron-vite build && electron-builder --mac",
+    "build:mac:arm64": "electron-vite build && electron-builder --mac --arm64",
+    "build:mac:x64": "electron-vite build && electron-builder --mac --x64",
+    "build:win": "electron-vite build && electron-builder --win",
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "build:all": "electron-vite build && electron-builder -mwl",
+    "install-app": "electron-vite build && electron-builder --mac --dir && rm -rf /Applications/Neuron.app && cp -R dist/mac-arm64/Neuron.app /Applications/Neuron.app",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "test": "jest",
-    "test:coverage": "jest --coverage",
-    "test:e2e": "playwright test",
-    "lint": "eslint src electron seed --ext .ts,.tsx",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "build": {
+    "appId": "com.neuron.app",
+    "productName": "Neuron",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.education",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "robmcarlson006",
+      "repo": "neuron"
+    }
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
@@ -66,50 +101,5 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3",
     "vite": "^5.4.0"
-  },
-  "build": {
-    "appId": "com.neuron.app",
-    "productName": "Neuron",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "out/**/*"
-    ],
-    "icon": "build/icon",
-    "mac": {
-      "category": "public.app-category.education",
-      "icon": "build/icon.icns",
-      "identity": null,
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ]
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "build/icon.ico"
-    },
-    "linux": {
-      "target": "AppImage",
-      "icon": "build/icon.png"
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "robcarlson006",
-      "repo": "neuron"
-    }
   }
 }

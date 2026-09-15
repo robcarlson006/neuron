@@ -726,7 +726,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                         await window.electronAPI.saveAIConfig({
                           provider: currentCfg?.provider || 'openai-compatible',
                           baseUrl: currentCfg?.baseUrl || 'https://api.deepseek.com',
-                          model: currentCfg?.model || 'deepseek-chat',
+                          model: currentCfg?.model || 'deepseek-flash',
                           apiKey: cleanKey
                         })
                         addToast({ type: 'success', title: 'API Key Saved', message: 'Starting tutor session...' })

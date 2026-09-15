@@ -1,3 +1,5 @@
+import { cleanCardBrackets } from './cardParser'
+
 /**
  * Validated card after quality checks
  */
@@ -30,33 +32,36 @@ export function validateCardQuality(card: {
   const issues: string[] = []
   const type = (card.type === 'active_recall' ? 'active_recall' : 'flashcard') as 'flashcard' | 'active_recall'
 
+  const cleanedFront = cleanCardBrackets(card.front || '')
+  const cleanedBack = cleanCardBrackets(card.back || '')
+
   // Check 1: Front and back must be non-empty
-  if (!card.front?.trim()) {
+  if (!cleanedFront.trim()) {
     return { valid: false, cards: [], issues: ['Card front is empty'] }
   }
-  if (!card.back?.trim()) {
+  if (!cleanedBack.trim()) {
     return { valid: false, cards: [], issues: ['Card back is empty'] }
   }
 
   // Check 2: Self-containment — no vague references
-  if (!isSelfContained(card.front)) {
+  if (!isSelfContained(cleanedFront)) {
     issues.push('Front contains vague reference (e.g., "as discussed above")')
   }
-  if (!isSelfContained(card.back)) {
+  if (!isSelfContained(cleanedBack)) {
     issues.push('Back contains vague reference (e.g., "in this context")')
   }
 
   // Check 3: Minimum Information Principle — detect compound answers
-  const mipResult = checkMinimumInformationPrinciple(card.front, card.back)
+  const mipResult = checkMinimumInformationPrinciple(cleanedFront, cleanedBack)
   issues.push(...mipResult.issues)
 
   // If compound answer detected with 3+ items, split into multiple cards
   if (!mipResult.passes) {
-    const items = detectCompoundAnswer(card.back)
+    const items = detectCompoundAnswer(cleanedBack)
     if (items.length >= 3) {
       const splitCards: ValidatedCard[] = items.map((item) => ({
-        front: `${card.front.trim().replace(/[?:.!]+$/, '')} — ${item}`,
-        back: item,
+        front: cleanCardBrackets(`${cleanedFront.trim().replace(/[?:.!]+$/, '')} — ${item}`),
+        back: cleanCardBrackets(item),
         type
       }))
       return { valid: true, cards: splitCards, issues }
@@ -65,24 +70,24 @@ export function validateCardQuality(card: {
 
   // Check 4: Front should be a question/cloze/prompt
   const hasQuestionFormat =
-    card.front.includes('?') ||
-    card.front.includes('___') ||
-    /^(what|how|why|when|where|which|explain|describe|define|compare|contrast|list|name)/i.test(card.front.trim())
+    cleanedFront.includes('?') ||
+    cleanedFront.includes('___') ||
+    /^(what|how|why|when|where|which|explain|describe|define|compare|contrast|list|name)/i.test(cleanedFront.trim())
   if (!hasQuestionFormat) {
     issues.push('Front may not be in question format (no "?" or "___" found)')
   }
 
   // Check 5: Back should have sufficient detail
-  if (card.back.trim().length < 15) {
+  if (cleanedBack.trim().length < 15) {
     issues.push('Back is too short (less than 15 characters)')
   }
 
   // A card is valid if it has content and doesn't fail the hard checks
-  const valid = card.front.trim().length > 0 && card.back.trim().length > 0
+  const valid = cleanedFront.trim().length > 0 && cleanedBack.trim().length > 0
 
   return {
     valid,
-    cards: valid ? [{ front: card.front.trim(), back: card.back.trim(), type }] : [],
+    cards: valid ? [{ front: cleanedFront.trim(), back: cleanedBack.trim(), type }] : [],
     issues
   }
 }

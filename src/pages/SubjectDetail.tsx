@@ -112,6 +112,9 @@ export default function SubjectDetail(): React.JSX.Element {
       status: editStatus as 'active' | 'ongoing' | 'archived'
     })
     updateSubject(updated)
+    if (editStatus === 'archived') {
+      setCards([])
+    }
     setShowEditSubject(false)
   }
 
@@ -294,6 +297,33 @@ export default function SubjectDetail(): React.JSX.Element {
         </div>
       </div>
 
+      {/* Archived Banner */}
+      {subject.status === 'archived' && (
+        <div className="mb-5 p-4 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📦</span>
+            <div>
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                This class is archived
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Flashcards for this class have been removed. Materials and deadlines remain accessible.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              const updated = await window.electronAPI.saveSubject({ ...subject, status: 'active' })
+              updateSubject(updated)
+              setEditStatus('active')
+            }}
+            className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-medium transition-colors whitespace-nowrap shadow-sm"
+          >
+            Restore Class
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1 mb-5 border-b border-slate-200 dark:border-slate-700">
         {([
@@ -406,7 +436,29 @@ export default function SubjectDetail(): React.JSX.Element {
 
           {cards.length === 0 ? (
             <div className="text-center py-14 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-              <p className="text-sm text-slate-400 dark:text-slate-500">No cards yet. Upload a document to generate cards.</p>
+              {subject.status === 'archived' ? (
+                <div>
+                  <span className="text-3xl mb-2 block">📦</span>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Flashcards removed for archived class
+                  </p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
+                    This class is archived. Restore the class to active status if you want to generate or add cards again.
+                  </p>
+                  <button
+                    onClick={async () => {
+                      const updated = await window.electronAPI.saveSubject({ ...subject, status: 'active' })
+                      updateSubject(updated)
+                      setEditStatus('active')
+                    }}
+                    className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Restore Class to Active
+                  </button>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400 dark:text-slate-500">No cards yet. Upload a document to generate cards.</p>
+              )}
             </div>
           ) : (
             <CardBrowser

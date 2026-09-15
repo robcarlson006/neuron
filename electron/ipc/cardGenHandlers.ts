@@ -4,7 +4,8 @@ import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
 import { buildAutoCardGenerationPrompt, buildFlashcardOnlyPrompt, buildActiveRecallOnlyPrompt } from '../../src/lib/promptBuilders'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
-import { safeParseAICards } from '../../src/lib/jsonRepair'
+import { safeParseAICards, type ParsedAICardsPayload } from '../../src/lib/jsonRepair'
+import { cleanCardBrackets } from '../../src/lib/cardParser'
 import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
 import type { Card } from '../../src/types'
@@ -13,6 +14,93 @@ let db: Database.Database
 
 export function setCardGenerationDatabase(database: Database.Database): void {
   db = database
+}
+
+/**
+ * Extracts card candidates from AI output, with multi-level fallbacks so valid
+ * content is never dropped regardless of which keys or structures the LLM used.
+ */
+function extractCardCandidates(
+  parsed: ParsedAICardsPayload,
+  requestedType: 'flashcard' | 'active_recall' | 'auto'
+): {
+  flashcards: { front: string; back: string; concept?: string }[]
+  activeRecall: { question: string; model_answer: string; concept?: string }[]
+} {
+  let flashcards: { front: string; back: string; concept?: string }[] = []
+  let activeRecall: { question: string; model_answer: string; concept?: string }[] = []
+
+  if (requestedType === 'flashcard') {
+    if (parsed.flashcards && parsed.flashcards.length > 0) {
+      flashcards = parsed.flashcards.map(fc => ({ front: fc.front, back: fc.back, concept: fc.concept }))
+    }
+    if (parsed.cards && parsed.cards.length > 0) {
+      for (const c of parsed.cards) {
+        const front = (c.front || c.question || '').trim()
+        const back = (c.back || c.model_answer || '').trim()
+        if (front && back && !flashcards.some(f => f.front === front)) {
+          flashcards.push({ front, back, concept: c.concept })
+        }
+      }
+    }
+    if (flashcards.length === 0 && parsed.active_recall && parsed.active_recall.length > 0) {
+      flashcards = parsed.active_recall.map(ar => ({
+        front: ar.question,
+        back: ar.model_answer,
+        concept: ar.concept
+      }))
+    }
+  } else if (requestedType === 'active_recall') {
+    if (parsed.active_recall && parsed.active_recall.length > 0) {
+      activeRecall = parsed.active_recall.map(ar => ({ question: ar.question, model_answer: ar.model_answer, concept: ar.concept }))
+    }
+    if (parsed.cards && parsed.cards.length > 0) {
+      for (const c of parsed.cards) {
+        const question = (c.question || c.front || '').trim()
+        const model_answer = (c.model_answer || c.back || '').trim()
+        if (question && model_answer && !activeRecall.some(a => a.question === question)) {
+          activeRecall.push({ question, model_answer, concept: c.concept })
+        }
+      }
+    }
+    if (activeRecall.length === 0 && parsed.flashcards && parsed.flashcards.length > 0) {
+      activeRecall = parsed.flashcards.map(fc => ({
+        question: fc.front,
+        model_answer: fc.back,
+        concept: fc.concept
+      }))
+    }
+  } else {
+    // Auto or mixed format
+    if (parsed.flashcards && parsed.flashcards.length > 0) {
+      flashcards = parsed.flashcards.map(fc => ({ front: fc.front, back: fc.back, concept: fc.concept }))
+    }
+    if (parsed.active_recall && parsed.active_recall.length > 0) {
+      activeRecall = parsed.active_recall.map(ar => ({ question: ar.question, model_answer: ar.model_answer, concept: ar.concept }))
+    }
+    if (parsed.cards && parsed.cards.length > 0) {
+      for (const c of parsed.cards) {
+        const front = (c.front || c.question || '').trim()
+        const back = (c.back || c.model_answer || '').trim()
+        if (front && back) {
+          if (c.type === 'active_recall') {
+            if (!activeRecall.some(a => a.question === front)) {
+              activeRecall.push({ question: front, model_answer: back, concept: c.concept })
+            }
+          } else {
+            if (!flashcards.some(f => f.front === front)) {
+              flashcards.push({ front, back, concept: c.concept })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    flashcards: flashcards.filter(fc => typeof fc.front === 'string' && typeof fc.back === 'string' && fc.front.trim().length > 0 && fc.back.trim().length > 0),
+    activeRecall: activeRecall.filter(ar => typeof ar.question === 'string' && typeof ar.model_answer === 'string' && ar.question.trim().length > 0 && ar.model_answer.trim().length > 0)
+  }
 }
 
 export function registerCardGenerationHandlers(): void {
@@ -64,21 +152,7 @@ export function registerCardGenerationHandlers(): void {
 
       // Parse the response using bulletproof parser
       const parsed = safeParseAICards(responseText)
-      const flashcardsData = (parsed.flashcards && parsed.flashcards.length > 0)
-        ? parsed.flashcards
-        : (parsed.cards || []).filter(c => c.type === 'flashcard' || !c.type).map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-      const activeRecallData = (parsed.active_recall && parsed.active_recall.length > 0)
-        ? parsed.active_recall
-        : (parsed.cards || []).filter(c => c.type === 'active_recall').map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
-
-      const validFlashcards = flashcardsData.filter(fc =>
-        typeof fc.front === 'string' && typeof fc.back === 'string' &&
-        fc.front.trim().length > 0 && fc.back.trim().length > 0
-      )
-      const validActiveRecall = activeRecallData.filter(ar =>
-        typeof ar.question === 'string' && typeof ar.model_answer === 'string' &&
-        ar.question.trim().length > 0 && ar.model_answer.trim().length > 0
-      )
+      const { flashcards: validFlashcards, activeRecall: validActiveRecall } = extractCardCandidates(parsed, 'auto')
 
       const validatedCards: Partial<Card>[] = []
 
@@ -209,7 +283,7 @@ export function registerCardGenerationHandlers(): void {
     cardType: CardType,
     buildPrompt: (text: string, subject?: string, moduleTitle?: string, min?: number, existing?: { front: string; back?: string }[], availableTopics?: string[], autoCount?: boolean) => string,
     minCount: number,
-    responseKey: 'flashcards' | 'active_recall',
+    _responseKey: 'flashcards' | 'active_recall',
     userId?: number,
     autoCount?: boolean
   ): Promise<{ success: boolean; count: number; module_name?: string; error?: string; duplicates_filtered?: number }> {
@@ -282,38 +356,10 @@ ${materialText}`
         )
 
         const parsed = safeParseAICards(responseText)
-
-        let rawCards: { front: string; back: string; concept?: string }[] = []
-        if (responseKey === 'flashcards') {
-          if (parsed.flashcards && parsed.flashcards.length > 0) {
-            rawCards = parsed.flashcards
-          } else if (parsed.cards && Array.isArray(parsed.cards)) {
-            rawCards = (parsed.cards as { type?: string; front?: string; back?: string; concept?: string }[])
-              .filter(c => c.type === 'flashcard' || !c.type)
-              .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-          }
-        } else {
-          if (parsed.active_recall && parsed.active_recall.length > 0) {
-            rawCards = parsed.active_recall.map(ar => ({
-              front: ar.question,
-              back: ar.model_answer,
-              concept: ar.concept
-            }))
-          } else if (parsed.cards && Array.isArray(parsed.cards)) {
-            rawCards = (parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[])
-              .filter(c => c.type === 'active_recall')
-              .map(c => ({
-                front: c.question || c.front || '',
-                back: c.model_answer || c.back || '',
-                concept: c.concept
-              }))
-          }
-        }
-
-        const validItems = rawCards.filter(c =>
-          typeof c.front === 'string' && typeof c.back === 'string' &&
-          c.front.trim().length > 0 && c.back.trim().length > 0
-        )
+        const candidates = extractCardCandidates(parsed, cardType)
+        const validItems = cardType === 'flashcard'
+          ? candidates.flashcards.map(fc => ({ front: fc.front, back: fc.back, concept: fc.concept }))
+          : candidates.activeRecall.map(ar => ({ front: ar.question, back: ar.model_answer, concept: ar.concept }))
 
         const batchCandidates: Partial<Card>[] = []
         for (const item of validItems) {
@@ -357,39 +403,10 @@ ${materialText}`
           )
 
           const parsed = safeParseAICards(responseText)
-
-          // Build raw card data from the response key
-          let rawCards: { front: string; back: string; concept?: string }[] = []
-          if (responseKey === 'flashcards') {
-            if (parsed.flashcards && parsed.flashcards.length > 0) {
-              rawCards = parsed.flashcards
-            } else if (parsed.cards && Array.isArray(parsed.cards)) {
-              rawCards = (parsed.cards as { type?: string; front?: string; back?: string; concept?: string }[])
-                .filter(c => c.type === 'flashcard' || !c.type)
-                .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-            }
-          } else {
-            if (parsed.active_recall && parsed.active_recall.length > 0) {
-              rawCards = parsed.active_recall.map(ar => ({
-                front: ar.question,
-                back: ar.model_answer,
-                concept: ar.concept
-              }))
-            } else if (parsed.cards && Array.isArray(parsed.cards)) {
-              rawCards = (parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[])
-                .filter(c => c.type === 'active_recall')
-                .map(c => ({
-                  front: c.question || c.front || '',
-                  back: c.model_answer || c.back || '',
-                  concept: c.concept
-                }))
-            }
-          }
-
-          const validItems = rawCards.filter(c =>
-            typeof c.front === 'string' && typeof c.back === 'string' &&
-            c.front.trim().length > 0 && c.back.trim().length > 0
-          )
+          const candidates = extractCardCandidates(parsed, cardType)
+          const validItems = cardType === 'flashcard'
+            ? candidates.flashcards.map(fc => ({ front: fc.front, back: fc.back, concept: fc.concept }))
+            : candidates.activeRecall.map(ar => ({ front: ar.question, back: ar.model_answer, concept: ar.concept }))
 
           const batchCandidates: Partial<Card>[] = []
           for (const item of validItems) {
@@ -602,22 +619,7 @@ ${materialText}`
         )
 
         const parsed = safeParseAICards(responseText)
-
-        const flashcards = (parsed.flashcards && parsed.flashcards.length > 0)
-          ? parsed.flashcards
-          : (parsed.cards || []).filter(c => c.type === 'flashcard' || !c.type).map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-        const activeRecall = (parsed.active_recall && parsed.active_recall.length > 0)
-          ? parsed.active_recall
-          : (parsed.cards || []).filter(c => c.type === 'active_recall').map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
-
-        const validFlashcards = flashcards.filter(fc =>
-          typeof fc.front === 'string' && typeof fc.back === 'string' &&
-          fc.front.trim().length > 0 && fc.back.trim().length > 0
-        )
-        const validActiveRecall = activeRecall.filter(ar =>
-          typeof ar.question === 'string' && typeof ar.model_answer === 'string' &&
-          ar.question.trim().length > 0 && ar.model_answer.trim().length > 0
-        )
+        const { flashcards: validFlashcards, activeRecall: validActiveRecall } = extractCardCandidates(parsed, 'auto')
 
         const batchCandidates: Partial<Card>[] = []
 
@@ -824,43 +826,7 @@ ${materialText}`
           )
 
           const parsed = safeParseAICards(responseText)
-
-          let flashcards: { front: string; back: string; concept?: string }[] = []
-          let activeRecall: { question: string; model_answer: string; concept?: string }[] = []
-
-          if (requestedType === 'flashcard') {
-            if (parsed.flashcards && parsed.flashcards.length > 0) {
-              flashcards = parsed.flashcards
-            } else if (parsed.cards && Array.isArray(parsed.cards)) {
-              flashcards = (parsed.cards as { type?: string; front?: string; back?: string; concept?: string }[])
-                .filter(c => c.type === 'flashcard' || !c.type)
-                .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-            }
-          } else if (requestedType === 'active_recall') {
-            if (parsed.active_recall && parsed.active_recall.length > 0) {
-              activeRecall = parsed.active_recall
-            } else if (parsed.cards && Array.isArray(parsed.cards)) {
-              activeRecall = (parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[])
-                .filter(c => c.type === 'active_recall')
-                .map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
-            }
-          } else {
-            flashcards = (parsed.flashcards && parsed.flashcards.length > 0)
-              ? parsed.flashcards
-              : (parsed.cards || []).filter(c => c.type === 'flashcard' || !c.type).map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-            activeRecall = (parsed.active_recall && parsed.active_recall.length > 0)
-              ? parsed.active_recall
-              : (parsed.cards || []).filter(c => c.type === 'active_recall').map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
-          }
-
-          const validFlashcards = flashcards.filter(fc =>
-            typeof fc.front === 'string' && typeof fc.back === 'string' &&
-            fc.front.trim().length > 0 && fc.back.trim().length > 0
-          )
-          const validActiveRecall = activeRecall.filter(ar =>
-            typeof ar.question === 'string' && typeof ar.model_answer === 'string' &&
-            ar.question.trim().length > 0 && ar.model_answer.trim().length > 0
-          )
+          const { flashcards: validFlashcards, activeRecall: validActiveRecall } = extractCardCandidates(parsed, requestedType)
 
           const batchCandidates: Partial<Card>[] = []
 
@@ -966,43 +932,7 @@ ${materialText}`
           )
 
           const parsed = safeParseAICards(responseText)
-
-          let flashcards: { front: string; back: string; concept?: string }[] = []
-          let activeRecall: { question: string; model_answer: string; concept?: string }[] = []
-
-          if (requestedType === 'flashcard') {
-            if (parsed.flashcards && parsed.flashcards.length > 0) {
-              flashcards = parsed.flashcards
-            } else if (parsed.cards && Array.isArray(parsed.cards)) {
-              flashcards = (parsed.cards as { type?: string; front?: string; back?: string; concept?: string }[])
-                .filter(c => c.type === 'flashcard' || !c.type)
-                .map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-            }
-          } else if (requestedType === 'active_recall') {
-            if (parsed.active_recall && parsed.active_recall.length > 0) {
-              activeRecall = parsed.active_recall
-            } else if (parsed.cards && Array.isArray(parsed.cards)) {
-              activeRecall = (parsed.cards as { type?: string; front?: string; back?: string; question?: string; model_answer?: string; concept?: string }[])
-                .filter(c => c.type === 'active_recall')
-                .map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
-            }
-          } else {
-            flashcards = (parsed.flashcards && parsed.flashcards.length > 0)
-              ? parsed.flashcards
-              : (parsed.cards || []).filter(c => c.type === 'flashcard' || !c.type).map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-            activeRecall = (parsed.active_recall && parsed.active_recall.length > 0)
-              ? parsed.active_recall
-              : (parsed.cards || []).filter(c => c.type === 'active_recall').map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
-          }
-
-          const validFlashcards = flashcards.filter(fc =>
-            typeof fc.front === 'string' && typeof fc.back === 'string' &&
-            fc.front.trim().length > 0 && fc.back.trim().length > 0
-          )
-          const validActiveRecall = activeRecall.filter(ar =>
-            typeof ar.question === 'string' && typeof ar.model_answer === 'string' &&
-            ar.question.trim().length > 0 && ar.model_answer.trim().length > 0
-          )
+          const { flashcards: validFlashcards, activeRecall: validActiveRecall } = extractCardCandidates(parsed, requestedType)
 
           const batchCandidates: Partial<Card>[] = []
 
@@ -1117,50 +1047,42 @@ function validateCardQuality(card: Partial<Card> & { front: string; back: string
   cards: (Partial<Card> & { front: string; back: string; quality_score?: number })[]
   quality_score: number
 } {
-  let qualityScore = 1.0
+  const cleanedFront = cleanCardBrackets(card.front || '').trim()
+  const cleanedBack = cleanCardBrackets(card.back || '').trim()
 
-  if (!card.front?.trim() || !card.back?.trim()) {
+  if (!cleanedFront || !cleanedBack) {
     return { valid: false, cards: [], quality_score: 0 }
   }
 
+  let qualityScore = 1.0
+
   // Vague reference penalties
-  const vaguePatterns = [/\bas discussed\b/i, /\bin this context\b/i, /\bas we learned\b/i, /\babove\b/i]
+  const vaguePatterns = [/\bas discussed\b/i, /\bin this context\b/i, /\bas we learned\b/i, /\babove\b/i, /\bas mentioned\b/i]
   for (const pattern of vaguePatterns) {
-    if (pattern.test(card.front) || pattern.test(card.back)) {
-      qualityScore -= 0.2
+    if (pattern.test(cleanedFront) || pattern.test(cleanedBack)) {
+      qualityScore -= 0.15
     }
   }
 
   // Detect compound cards (lists in back)
-  const listIndicators = card.back.match(/(?:\d+\.\s|\*\s|-\s).{5,}/g)
+  const listIndicators = cleanedBack.match(/(?:\d+\.\s|\*\s|-\s).{5,}/g)
   if (listIndicators && listIndicators.length >= 3) {
-    qualityScore -= 0.25
-    const parts = card.back.split('\n').filter(p => p.match(/(?:\d+\.\s|\*\s|-\s)/))
+    const parts = cleanedBack.split('\n').map(p => p.trim()).filter(p => p.match(/^(?:\d+\.\s|\*\s|-\s)/))
     if (parts.length >= 2) {
       const splitCards = parts.map((part) => ({
         ...card,
-        front: `${card.front} — ${part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim()}`,
-        back: part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim(),
+        front: cleanCardBrackets(`${cleanedFront} — ${part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim()}`),
+        back: cleanCardBrackets(part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim()),
         quality_score: 0.85
       }))
       return { valid: true, cards: splitCards, quality_score: 0.85 }
     }
   }
 
-  // Front should be a question/cloze/prompt
-  if (!card.front.includes('?') && !card.front.includes('___') &&
-      !card.front.match(/^(what|how|why|when|where|which|explain|describe|define|compare|contrast|list|name)/i)) {
-    qualityScore -= 0.1
-  }
-
-  if (card.back.length < 15) {
-    qualityScore -= 0.15
-  }
-
   return {
-    valid: qualityScore >= 0.4,
-    cards: [{ ...card, quality_score: Math.max(0, qualityScore) }],
-    quality_score: Math.max(0, qualityScore)
+    valid: cleanedFront.length > 0 && cleanedBack.length > 0,
+    cards: [{ ...card, front: cleanedFront, back: cleanedBack, quality_score: Math.max(0.5, qualityScore) }],
+    quality_score: Math.max(0.5, qualityScore)
   }
 }
 
@@ -1191,7 +1113,7 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
     if (mod) moduleTitle = mod.title
   }
 
-const existingCards = db.prepare(
+  const existingCards = db.prepare(
     'SELECT front, back FROM cards WHERE subject_id = ? AND material_id IS NOT NULL'
   ).all(subjectId) as { front: string; back: string }[]
 
@@ -1210,21 +1132,7 @@ const existingCards = db.prepare(
   )
 
   const parsed = safeParseAICards(responseText)
-  const flashcards = (parsed.flashcards && parsed.flashcards.length > 0)
-    ? parsed.flashcards
-    : (parsed.cards || []).filter(c => c.type === 'flashcard' || !c.type).map(c => ({ front: c.front || '', back: c.back || '', concept: c.concept }))
-  const activeRecall = (parsed.active_recall && parsed.active_recall.length > 0)
-    ? parsed.active_recall
-    : (parsed.cards || []).filter(c => c.type === 'active_recall').map(c => ({ question: c.question || c.front || '', model_answer: c.model_answer || c.back || '', concept: c.concept }))
-
-  const validFlashcards = flashcards.filter(fc =>
-    typeof fc.front === 'string' && typeof fc.back === 'string' &&
-    fc.front.trim().length > 0 && fc.back.trim().length > 0
-  )
-  const validActiveRecall = activeRecall.filter(ar =>
-    typeof ar.question === 'string' && typeof ar.model_answer === 'string' &&
-    ar.question.trim().length > 0 && ar.model_answer.trim().length > 0
-  )
+  const { flashcards: validFlashcards, activeRecall: validActiveRecall } = extractCardCandidates(parsed, 'auto')
 
   const validatedCards: Partial<Card>[] = []
 
@@ -1233,8 +1141,9 @@ const existingCards = db.prepare(
       subject_id: subjectId,
       material_id: materialId,
       type: 'flashcard' as const,
-      front: fc.front.trim(),
-      back: fc.back.trim(),
+      front: cleanCardBrackets(fc.front.trim()),
+      back: cleanCardBrackets(fc.back.trim()),
+      concept: fc.concept ? cleanCardBrackets(fc.concept) : null,
       is_manual: 0 as const,
       source: 'auto' as const
     }
@@ -1254,8 +1163,9 @@ const existingCards = db.prepare(
       subject_id: subjectId,
       material_id: materialId,
       type: 'active_recall' as const,
-      front: ar.question.trim(),
-      back: ar.model_answer.trim(),
+      front: cleanCardBrackets(ar.question.trim()),
+      back: cleanCardBrackets(ar.model_answer.trim()),
+      concept: ar.concept ? cleanCardBrackets(ar.concept) : null,
       is_manual: 0 as const,
       source: 'auto' as const
     }
@@ -1303,22 +1213,26 @@ function saveGeneratedCards(cards: Partial<Card>[], database: Database.Database,
   const savedCards: Card[] = []
   const saveMany = database.transaction(() => {
     for (const card of cards) {
+      const cleanFront = cleanCardBrackets(card.front || '')
+      const cleanBack = cleanCardBrackets(card.back || '')
+      const cleanConcept = card.concept ? cleanCardBrackets(card.concept) : null
+
       let folderId = card.folder_id || null
       if (!folderId && card.subject_id) {
-        folderId = getOrCreateMaterialFolder(database, card.subject_id, card.material_id, card.concept)
+        folderId = getOrCreateMaterialFolder(database, card.subject_id, card.material_id, cleanConcept)
       }
 
       const result = insertCard.run(
         card.subject_id,
         card.material_id || null,
         card.type,
-        card.front,
-        card.back,
+        cleanFront,
+        cleanBack,
         card.is_manual || 0,
         card.source || 'manual',
         card.topic_id || null,
         folderId,
-        card.concept || null,
+        cleanConcept,
         card.tags || '',
         new Date().toISOString()
       )

@@ -3,8 +3,32 @@ import Database from 'better-sqlite3'
 
 const DEFAULT_PROVIDER = 'openai-compatible'
 const DEFAULT_BASE_URL = 'https://api.deepseek.com'
-const DEFAULT_MODEL = 'deepseek-chat'
+// DeepSeek retired `deepseek-chat` / `deepseek-reasoner`. Their current lineup is
+// `deepseek-flash` (fast, cheap) and `deepseek-v4-pro` (deeper reasoning).
+// Requests to the retired names hang indefinitely (no response), which broke
+// tutor mode and the "Test Connection" button.
+export const DEFAULT_MODEL = 'deepseek-flash'
 const API_KEY_META_KEY = 'ai_api_key_encrypted'
+
+// Historical DeepSeek model names that no longer resolve to a live backend.
+// We transparently remap them to the current default so existing user configs
+// keep working after the provider-side rename (requests to these names hang
+// instead of erroring). Users can still select `deepseek-v4-pro` explicitly.
+const DEPRECATED_MODELS: Record<string, string> = {
+  'deepseek-chat': DEFAULT_MODEL,
+  'deepseek-reasoner': DEFAULT_MODEL,
+  'deepseek-coder': DEFAULT_MODEL,
+  'deepseek-v2': DEFAULT_MODEL,
+  'deepseek-v3': DEFAULT_MODEL,
+  'deepseek-r1': DEFAULT_MODEL
+}
+
+/** Map a stored model name to a currently-supported one, leaving others untouched. */
+export function normalizeModelName(model?: string | null): string {
+  if (!model) return DEFAULT_MODEL
+  const key = model.trim().toLowerCase()
+  return DEPRECATED_MODELS[key] || model.trim() || DEFAULT_MODEL
+}
 
 interface AIConfig {
   provider: string
@@ -251,7 +275,14 @@ export function getAIConfig(): AIConfig {
 
   const provider = readMeta('ai_provider') || DEFAULT_PROVIDER
   const baseUrl = readMeta('ai_base_url') || DEFAULT_BASE_URL
-  const model = readMeta('ai_model') || DEFAULT_MODEL
+  const rawModel = readMeta('ai_model') || DEFAULT_MODEL
+  const model = normalizeModelName(rawModel)
+
+  // Self-heal: persist the corrected model so Settings shows a valid value and
+  // we don't re-normalize on every request.
+  if (model !== rawModel) {
+    writeMeta('ai_model', model)
+  }
 
   return { provider, baseUrl, model }
 }

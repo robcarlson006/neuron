@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import type { Subject, CardFolder, ModuleCardGenType, ModuleCardGenOptions, Material } from '../types'
 import { CARD_GEN_PRESETS } from '../types'
+import LatexText from './LatexText'
 
 interface CardImportModalProps {
   isOpen: boolean
@@ -70,6 +71,7 @@ export default function CardImportModal({
   const [manualCardType, setManualCardType] = useState<'flashcard' | 'active_recall'>('flashcard')
   const [manualFolderId, setManualFolderId] = useState<number | null>(null)
   const [savingManual, setSavingManual] = useState(false)
+  const [isFormattingMath, setIsFormattingMath] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [detectedFormat, setDetectedFormat] = useState<string | null>(null)
 
@@ -306,6 +308,46 @@ export default function CardImportModal({
     }
     reader.readAsText(file)
     e.target.value = ''
+  }
+
+  async function handleAutoFormatMath(): Promise<void> {
+    if (!manualText.trim()) return
+    if (!window.electronAPI?.formatMathEquations) return
+
+    setIsFormattingMath(true)
+    setErrorMessage(null)
+    try {
+      const result = await window.electronAPI.formatMathEquations(manualText)
+      if (result.success && result.text !== undefined) {
+        setManualText(result.text)
+      } else {
+        setErrorMessage(result.error || 'Failed to auto-format math formulas')
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Error formatting math equations')
+    } finally {
+      setIsFormattingMath(false)
+    }
+  }
+
+  async function handleFormatSourceMath(): Promise<void> {
+    if (!sourceText.trim()) return
+    if (!window.electronAPI?.formatMathEquations) return
+
+    setIsFormattingMath(true)
+    setErrorMessage(null)
+    try {
+      const result = await window.electronAPI.formatMathEquations(sourceText)
+      if (result.success && result.text !== undefined) {
+        setSourceText(result.text)
+      } else {
+        setErrorMessage(result.error || 'Failed to auto-format math formulas')
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Error formatting math equations')
+    } finally {
+      setIsFormattingMath(false)
+    }
   }
 
   async function handleAIGenerate(): Promise<void> {
@@ -590,20 +632,43 @@ export default function CardImportModal({
                   <div className="space-y-2 animate-fade-in">
                     <div className="flex items-center justify-between text-xs text-slate-400">
                       <span>Paste notes, textbook summary, or lecture transcripts below</span>
-                      <label className="flex items-center gap-1.5 text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 font-medium cursor-pointer transition-colors">
-                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-                          <path d="M7 1v8M7 1L4 4M7 1l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                          <path d="M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                        </svg>
-                        <span>Load text file</span>
-                        <input
-                          type="file"
-                          accept=".txt,.md,.markdown,.csv,.tsv"
-                          onChange={handleSourceFileUpload}
-                          className="hidden"
-                          disabled={isGenerating}
-                        />
-                      </label>
+                      <div className="flex items-center gap-3">
+                        {sourceText.trim() && (
+                          <button
+                            type="button"
+                            onClick={handleFormatSourceMath}
+                            disabled={isFormattingMath || isGenerating}
+                            className="flex items-center gap-1 text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 font-medium cursor-pointer disabled:opacity-40"
+                            title="Auto-detect formulas (e.g. x^3) and wrap with LaTeX ($...$)"
+                          >
+                            {isFormattingMath ? (
+                              <>
+                                <div className="w-3 h-3 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                                <span>Formatting Math...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>✨</span>
+                                <span>Auto-Format Math</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                        <label className="flex items-center gap-1.5 text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 font-medium cursor-pointer transition-colors">
+                          <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                            <path d="M7 1v8M7 1L4 4M7 1l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                            <path d="M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                          </svg>
+                          <span>Load text file</span>
+                          <input
+                            type="file"
+                            accept=".txt,.md,.markdown,.csv,.tsv"
+                            onChange={handleSourceFileUpload}
+                            className="hidden"
+                            disabled={isGenerating || isFormattingMath}
+                          />
+                        </label>
+                      </div>
                     </div>
                     <textarea
                       ref={textareaRef}
@@ -1187,15 +1252,36 @@ export default function CardImportModal({
               </div>
 
               <div>
-                <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
-                  Paste formatted cards
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                    Paste formatted cards
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAutoFormatMath}
+                    disabled={isFormattingMath || savingManual || !manualText.trim()}
+                    className="text-xs font-medium px-2.5 py-1 rounded-lg text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 border border-violet-200 dark:border-violet-800 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs"
+                    title="Auto-detect equations (e.g. x^3, a^2+b^2=c^2) and convert them to clean LaTeX math ($...$)"
+                  >
+                    {isFormattingMath ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                        <span>Formatting Math...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>✨</span>
+                        <span>Auto-Format Math (LaTeX)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
                 <textarea
                   className="input min-h-[90px] resize-none font-mono text-xs leading-relaxed"
                   placeholder={`Term${termSep}Definition${eachLineIsCard ? '\nAnother term' + termSep + 'Another definition' : cardSep + ' Another term' + termSep + 'Another definition'}`}
                   value={manualText}
                   onChange={e => setManualText(e.target.value)}
-                  disabled={savingManual}
+                  disabled={savingManual || isFormattingMath}
                 />
               </div>
 
@@ -1220,9 +1306,13 @@ export default function CardImportModal({
                         <div key={i} className="flex items-start gap-3 px-3 py-2 bg-white dark:bg-slate-800 text-xs">
                           <span className="text-slate-300 dark:text-slate-600 font-mono mt-0.5 w-5 flex-shrink-0">{i + 1}</span>
                           <div className="flex-1 min-w-0 flex items-start gap-2">
-                            <p className="font-medium text-slate-700 dark:text-slate-200 flex-1 truncate">{card.front}</p>
+                            <p className="font-medium text-slate-700 dark:text-slate-200 flex-1 truncate">
+                              <LatexText>{card.front}</LatexText>
+                            </p>
                             <span className="text-slate-300 dark:text-slate-600 flex-shrink-0">→</span>
-                            <p className="text-slate-500 dark:text-slate-400 flex-1 truncate">{card.back}</p>
+                            <p className="text-slate-500 dark:text-slate-400 flex-1 truncate">
+                              <LatexText>{card.back}</LatexText>
+                            </p>
                           </div>
                         </div>
                       ))}

@@ -5,7 +5,7 @@ import {
   type CascadeDB
 } from '../../src/lib/db'
 import { buildLectureNotesPrompt } from '../../src/lib/promptBuilders'
-import { getAIConfig, getApiKey, normalizeBaseUrl, isLocalEndpoint } from './aiConfigStore'
+import { getAIConfig, getApiKey, normalizeBaseUrl, isLocalEndpoint, DEFAULT_MODEL } from './aiConfigStore'
 import { TranscriptionService, type TranscriptionResult } from './transcriptionService'
 
 interface LectureNotesServiceOptions {
@@ -71,7 +71,7 @@ class LectureNotesServiceManager {
 
     // OpenAI-compatible
     const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
-    const model = config.model || 'deepseek-chat'
+    const model = config.model || DEFAULT_MODEL
     const url = `${baseUrl}/v1/chat/completions`
     const isLocal = isLocalEndpoint(baseUrl)
     const authKey = apiKey || (isLocal ? 'ollama' : '')

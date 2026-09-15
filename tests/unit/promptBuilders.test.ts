@@ -2,7 +2,8 @@ import {
   parseCardGenerationResponse,
   parseEvaluationResponse,
   buildCardGenerationPrompt,
-  buildEvaluationPrompt
+  buildEvaluationPrompt,
+  buildFormatMathEquationsPrompt
 } from '../../src/lib/promptBuilders'
 
 describe('Prompt Builders', () => {
@@ -169,6 +170,19 @@ describe('Prompt Builders', () => {
       expect(prompt).toContain('"correct"')
       expect(prompt).toContain('"score"')
       expect(prompt).toContain('"feedback"')
+    })
+  })
+
+  describe('buildFormatMathEquationsPrompt', () => {
+    it('includes input text to format', () => {
+      const prompt = buildFormatMathEquationsPrompt('Pythagorean: a^2 + b^2 = c^2')
+      expect(prompt).toContain('Pythagorean: a^2 + b^2 = c^2')
+    })
+
+    it('instructs LaTeX delimiters formatting', () => {
+      const prompt = buildFormatMathEquationsPrompt('x^3')
+      expect(prompt).toContain('LaTeX')
+      expect(prompt).toContain('$')
     })
   })
 })

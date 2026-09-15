@@ -444,4 +444,41 @@ describe('CardImportModal', () => {
       })
     )
   })
+
+  it('auto-formats math equations to LaTeX when clicking Auto-Format Math button', async () => {
+    window.electronAPI.formatMathEquations = jest.fn().mockResolvedValue({
+      success: true,
+      text: 'Pythagorean Theorem...$a^2 + b^2 = c^2$'
+    })
+
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Switch to manual tab
+    const manualTabBtn = screen.getByRole('button', { name: /manual & file import/i })
+    fireEvent.click(manualTabBtn)
+
+    const manualTextarea = screen.getByPlaceholderText(/Term\.\.\.Definition/i)
+    fireEvent.change(manualTextarea, {
+      target: { value: 'Pythagorean Theorem...a^2 + b^2 = c^2' }
+    })
+
+    const formatBtn = screen.getByRole('button', { name: /auto-format math/i })
+    await React.act(async () => {
+      fireEvent.click(formatBtn)
+    })
+
+    expect(window.electronAPI.formatMathEquations).toHaveBeenCalledWith('Pythagorean Theorem...a^2 + b^2 = c^2')
+    expect(manualTextarea).toHaveValue('Pythagorean Theorem...$a^2 + b^2 = c^2$')
+  })
 })
+

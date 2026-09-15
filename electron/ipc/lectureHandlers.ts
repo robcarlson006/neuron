@@ -4,6 +4,7 @@ import { LectureAudioService } from './lectureAudioService'
 import type { CascadeDB } from '../../src/lib/db'
 import type { Lecture } from '../../src/types'
 import { LocalWhisperService } from './localWhisperService'
+import { TranscriptionService } from './transcriptionService'
 
 export function setLectureDatabase(database: Database.Database | CascadeDB): void {
   LectureAudioService.init(database)
@@ -92,6 +93,13 @@ export function registerLectureHandlers(): void {
     return false
   })
 
+  ipcMain.handle(
+    'lecture:testTranscriptionConnection',
+    async (_event, params: { provider: string; apiKey?: string }) => {
+      return TranscriptionService.testConnection(params)
+    }
+  )
+
   // ── Local Whisper Models ──
   ipcMain.handle('whisper:listModels', async () => {
     return LocalWhisperService.listModels()
@@ -111,6 +119,10 @@ export function registerLectureHandlers(): void {
 
   ipcMain.handle('whisper:getModelStatus', async (_event, modelId: string) => {
     return LocalWhisperService.getModelStatus(modelId)
+  })
+
+  ipcMain.handle('whisper:findBinary', async () => {
+    return LocalWhisperService.findWhisperBinary()
   })
 }
 

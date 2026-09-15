@@ -314,7 +314,7 @@ export const DB_SCHEMA = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_id INTEGER NOT NULL,
     title TEXT NOT NULL DEFAULT 'New Chat',
-    model TEXT NOT NULL DEFAULT 'deepseek-chat',
+    model TEXT NOT NULL DEFAULT 'deepseek-flash',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
@@ -490,6 +490,65 @@ export const DB_SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS idx_lectures_subject
     ON lectures (subject_id);
+
+  CREATE TABLE IF NOT EXISTS practice_problems (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    module_id INTEGER,
+    topic_id INTEGER,
+    material_id INTEGER,
+    title TEXT NOT NULL,
+    problem_text TEXT NOT NULL,
+    solution_steps TEXT,
+    final_answer TEXT,
+    difficulty INTEGER DEFAULT 2,
+    principles_json TEXT DEFAULT '[]',
+    is_ai_generated INTEGER DEFAULT 0,
+    parent_problem_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (module_id) REFERENCES syllabus_modules(id) ON DELETE SET NULL,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_practice_problems_subject ON practice_problems (subject_id);
+  CREATE INDEX IF NOT EXISTS idx_practice_problems_module ON practice_problems (module_id);
+  CREATE INDEX IF NOT EXISTS idx_practice_problems_topic ON practice_problems (topic_id);
+
+  CREATE TABLE IF NOT EXISTS practice_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    module_id INTEGER,
+    topic_id INTEGER,
+    total_problems INTEGER NOT NULL,
+    completed_problems INTEGER DEFAULT 0,
+    correct_problems INTEGER DEFAULT 0,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    summary TEXT,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_practice_sessions_subject ON practice_sessions (subject_id);
+
+  CREATE TABLE IF NOT EXISTS practice_problem_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    problem_id INTEGER NOT NULL,
+    user_answer TEXT,
+    is_correct INTEGER DEFAULT 0,
+    tutor_conversation_id INTEGER,
+    feedback TEXT,
+    time_spent_seconds INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES practice_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (problem_id) REFERENCES practice_problems(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_practice_attempts_session ON practice_problem_attempts (session_id);
 `
 
 export const MIGRATIONS_SQL = [
@@ -575,6 +634,58 @@ export const MIGRATIONS_SQL = [
   // V4.3: Lecture audio recording & notes
   "CREATE TABLE IF NOT EXISTS lectures (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL, audio_path TEXT NOT NULL, audio_mime_type TEXT NOT NULL DEFAULT 'audio/webm', duration_seconds INTEGER NOT NULL DEFAULT 0, file_size_bytes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'recording' CHECK(status IN ('recording', 'recorded', 'transcribing', 'ready', 'failed')), raw_transcript TEXT, error_message TEXT, material_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL)",
   "CREATE INDEX IF NOT EXISTS idx_lectures_subject ON lectures (subject_id)",
+  // V4.4: Practice Problems & Lab
+  `CREATE TABLE IF NOT EXISTS practice_problems (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    module_id INTEGER,
+    topic_id INTEGER,
+    material_id INTEGER,
+    title TEXT NOT NULL,
+    problem_text TEXT NOT NULL,
+    solution_steps TEXT,
+    final_answer TEXT,
+    difficulty INTEGER DEFAULT 2,
+    principles_json TEXT DEFAULT '[]',
+    is_ai_generated INTEGER DEFAULT 0,
+    parent_problem_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (module_id) REFERENCES syllabus_modules(id) ON DELETE SET NULL,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_practice_problems_subject ON practice_problems (subject_id)",
+  `CREATE TABLE IF NOT EXISTS practice_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    module_id INTEGER,
+    topic_id INTEGER,
+    total_problems INTEGER NOT NULL,
+    completed_problems INTEGER DEFAULT 0,
+    correct_problems INTEGER DEFAULT 0,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    summary TEXT,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_practice_sessions_subject ON practice_sessions (subject_id)",
+  `CREATE TABLE IF NOT EXISTS practice_problem_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    problem_id INTEGER NOT NULL,
+    user_answer TEXT,
+    is_correct INTEGER DEFAULT 0,
+    tutor_conversation_id INTEGER,
+    feedback TEXT,
+    time_spent_seconds INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES practice_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (problem_id) REFERENCES practice_problems(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_practice_attempts_session ON practice_problem_attempts (session_id)",
 ]
 
 export const MASTERED_INTERVAL = 21

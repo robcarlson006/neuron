@@ -228,5 +228,44 @@ describe('deleteCardCascade & deleteCardsCascade', () => {
 
     db.close()
   })
+
+  it('removes cards when a subject is archived and ensures queries exclude archived subjects', () => {
+    const db = createFreshDatabase()
+    const userId = insert(db, 'INSERT INTO users (name) VALUES (?)', 'Alice')
+    const activeSubjectId = insert(db, 'INSERT INTO subjects (user_id, name, status) VALUES (?, ?, ?)', userId, 'Active Subject', 'active')
+    const archivedSubjectId = insert(db, 'INSERT INTO subjects (user_id, name, status) VALUES (?, ?, ?)', userId, 'Archived Subject', 'active')
+
+    const activeCardId = seedCardWithAllChildren(db, userId, activeSubjectId, 'Active Q')
+    const archivedCardId = seedCardWithAllChildren(db, userId, archivedSubjectId, 'Archived Q')
+
+    // Simulate archiving the second subject
+    db.prepare('UPDATE subjects SET status = ? WHERE id = ?').run('archived', archivedSubjectId)
+    const cardsToDelete = db.prepare('SELECT id FROM cards WHERE subject_id = ?').all(archivedSubjectId) as { id: number }[]
+    if (cardsToDelete.length > 0) {
+      deleteCardsCascade(db, cardsToDelete.map(c => c.id))
+    }
+
+    // Archived cards should be deleted
+    expect(db.prepare('SELECT COUNT(*) AS c FROM cards WHERE subject_id = ?').get(archivedSubjectId).c).toBe(0)
+    expect(db.prepare('SELECT COUNT(*) AS c FROM card_schedule WHERE card_id = ?').get(archivedCardId).c).toBe(0)
+
+    // Active cards should still remain
+    expect(db.prepare('SELECT COUNT(*) AS c FROM cards WHERE subject_id = ?').get(activeSubjectId).c).toBe(1)
+    expect(db.prepare('SELECT COUNT(*) AS c FROM card_schedule WHERE card_id = ?').get(activeCardId).c).toBe(1)
+
+    // Query for due cards with subject status check
+    const dueCards = db.prepare(`
+      SELECT c.*, cs.interval, cs.repetitions, cs.ease_factor, cs.due_date, cs.last_reviewed_at
+      FROM cards c
+      JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+      JOIN subjects s ON s.id = c.subject_id
+      WHERE s.status != 'archived'
+    `).all(userId) as any[]
+
+    expect(dueCards.length).toBe(1)
+    expect(dueCards[0].id).toBe(activeCardId)
+
+    db.close()
+  })
 })
 

@@ -11,6 +11,67 @@
 
 import type { ParsedCard } from '../types'
 
+/**
+ * Strips unnecessary square brackets around terms, concepts, questions, or answers
+ * (e.g. "[Mitochondria]" -> "Mitochondria", "[Action Potential] is ..." -> "Action Potential is ...",
+ * "What is the role of [chloroplasts] in [photosynthesis]?" -> "What is the role of chloroplasts in photosynthesis?")
+ * while preserving legitimate brackets such as:
+ * - LaTeX math ($...$ or $$...$$)
+ * - Code blocks and array indexing (arr[i])
+ * - Markdown links ([text](url))
+ * - Fill-in-the-blank placeholders ([___], [...])
+ * - Numeric citations ([1], [2])
+ */
+export function cleanCardBrackets(text: string): string {
+  if (!text || typeof text !== 'string') return ''
+
+  // Step 1: Protect LaTeX math expressions ($...$ or $$...$$) and code blocks (`...`)
+  const protectedBlocks: string[] = []
+  let placeholderIndex = 0
+
+  let protectedText = text.replace(/(\$\$[\s\S]*?\$\$|\$[^$\n]+?\$|`[^`\n]+?`)/g, (match) => {
+    const placeholder = `___PROTECTED_BLOCK_${placeholderIndex++}___`
+    protectedBlocks.push(match)
+    return placeholder
+  })
+
+  // Step 2: Protect markdown links [text](url)
+  protectedText = protectedText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match) => {
+    const placeholder = `___PROTECTED_BLOCK_${placeholderIndex++}___`
+    protectedBlocks.push(match)
+    return placeholder
+  })
+
+  // Step 3: Protect blank placeholders like [___], [...], [..], [?]
+  protectedText = protectedText.replace(/\[([\s_.\-?]+)\]/g, (match) => {
+    const placeholder = `___PROTECTED_BLOCK_${placeholderIndex++}___`
+    protectedBlocks.push(match)
+    return placeholder
+  })
+
+  // Step 4: Protect code array indices like arr[i], items[0], data[key]
+  protectedText = protectedText.replace(/(\w+)\[([a-zA-Z0-9_$]+)\]/g, (_match, p1, p2) => {
+    const placeholder = `___PROTECTED_BLOCK_${placeholderIndex++}___`
+    protectedBlocks.push(`${p1}[${p2}]`)
+    return placeholder
+  })
+
+  // Step 5: Clean unnecessary brackets wrapping whole text or individual terms/phrases
+  let cleaned = protectedText.replace(/\[([^\]]+)\]/g, (_match, inner) => {
+    return inner.trim()
+  })
+
+  // If text starts with [ and ends with ] that might have been unclosed or outer-wrapped
+  cleaned = cleaned.replace(/^\[\s*(.*?)\s*\]$/, '$1')
+
+  // Step 6: Restore protected blocks using function callback to avoid $$ string replacement escape
+  for (let i = 0; i < protectedBlocks.length; i++) {
+    cleaned = cleaned.replace(`___PROTECTED_BLOCK_${i}___`, () => protectedBlocks[i])
+  }
+
+  return cleaned.trim()
+}
+
 function cleanCardFront(rawFront: string): string {
   let cleaned = rawFront.trim()
   // Strip outer bold/italic if entire string is wrapped in **...** or *...*
@@ -19,6 +80,8 @@ function cleanCardFront(rawFront: string): string {
   cleaned = cleaned.replace(/^(?:(?:Card\s*\d+|Q\d+|\d+)[.:)]\s*|[-*•]\s*)/i, '').trim()
   // In case outer bold was after the number: "1. **Term**" -> "**Term**" -> "Term"
   cleaned = cleaned.replace(/^\*{1,3}(.+?)\*{1,3}$/s, '$1').trim()
+  // Clean unnecessary brackets
+  cleaned = cleanCardBrackets(cleaned)
   return cleaned
 }
 
@@ -26,6 +89,8 @@ function cleanCardBack(rawBack: string): string {
   let cleaned = rawBack.trim()
   // Strip leading bullet or dash if present
   cleaned = cleaned.replace(/^[-*•]\s*/, '').trim()
+  // Clean unnecessary brackets
+  cleaned = cleanCardBrackets(cleaned)
   return cleaned
 }
 

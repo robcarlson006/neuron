@@ -3,7 +3,8 @@ import {
   sanitizeApiKey,
   saveApiKey,
   getApiKey,
-  setAIDatabase
+  setAIDatabase,
+  getAIConfig
 } from '../../electron/ipc/aiConfigStore'
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -196,6 +197,27 @@ describe('API Key Protection & Recovery', () => {
 
       const recovered = getApiKey()
       expect(recovered).toBe('sk-hex-recovered-key')
+    })
+  })
+
+  describe('getAIConfig model migration', () => {
+    it('remaps a stored retired deepseek-chat model to deepseek-flash and persists the fix', () => {
+      db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('ai_model', 'deepseek-chat')
+      setAIDatabase(db)
+
+      const config = getAIConfig()
+      expect(config.model).toBe('deepseek-flash')
+
+      const persisted = db.prepare('SELECT value FROM app_meta WHERE key = ?').get('ai_model') as { value: string }
+      expect(persisted.value).toBe('deepseek-flash')
+    })
+
+    it('leaves an already-valid model unchanged', () => {
+      db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('ai_model', 'deepseek-flash')
+      setAIDatabase(db)
+
+      const config = getAIConfig()
+      expect(config.model).toBe('deepseek-flash')
     })
   })
 })

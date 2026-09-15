@@ -33,7 +33,7 @@ const mockElectronAPI = {
   parseFile: jest.fn().mockResolvedValue({ filename: 'test.pdf', fileType: 'pdf', contentText: '', originalLength: 0 }),
   generateCards: jest.fn().mockResolvedValue({ flashcards: [], active_recall: [] }),
   evaluateAnswer: jest.fn().mockResolvedValue({ correct: true, score: 5, feedback: 'Great!' }),
-  getAIConfig: jest.fn().mockResolvedValue({ provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', apiKey: 'sk-...' }),
+  getAIConfig: jest.fn().mockResolvedValue({ provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: 'sk-...' }),
   saveAIConfig: jest.fn().mockResolvedValue({ success: true }),
   testAIConnection: jest.fn().mockResolvedValue({ success: true, message: 'OK', latencyMs: 500 }),
   getMasteryStats: jest.fn().mockResolvedValue([]),

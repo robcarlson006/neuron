@@ -59,7 +59,7 @@ function ensureConversationRecord(sessionId: number): void {
       const now = new Date().toISOString()
       db.prepare(`
         INSERT OR IGNORE INTO conversations (id, subject_id, title, model, created_at, updated_at)
-        VALUES (?, ?, 'Tutor Session', 'deepseek-chat', ?, ?)
+        VALUES (?, ?, 'Tutor Session', 'deepseek-flash', ?, ?)
       `).run(sessionId, subjectId, now, now)
     }
   } catch {
@@ -988,17 +988,19 @@ Create a balanced MIX of flashcards (term -> concise definition) and active reca
 
 Generate 6-10 cards total. Format each card on its own line using this exact format:
 
-**[Term or Question]** -> [Concise Answer or Definition]
+**Term or Question** -> Concise Answer or Definition
 
 STRICT DESIGN RULES (CRITICAL):
-1. ATOMICITY (Minimum Information Principle): Each card must test exactly ONE idea, mechanism, or fact. Never create compound cards or multi-item lists.
-2. CONCISENESS (NO LONG ANSWERS):
+1. STRICT SOURCE GROUNDING (NOTEBOOKLM MODE): All generated cards MUST be derived strictly and exclusively from the SESSION CONTENT above. Absolutely NO hallucinations, outside knowledge, or facts not mentioned in the session.
+2. ATOMICITY (Minimum Information Principle): Each card must test exactly ONE idea, mechanism, or fact. Never create compound cards or multi-item lists.
+3. CONCISENESS (NO LONG ANSWERS):
    - Front: 1 clear question or term (max 15 words). Do NOT include numbering (like "1.") inside the bold tags.
    - Back: 1 to 2 short, punchy sentences (STRICTLY under 30 words). Get straight to the point—no fluff, filler, or textbook paragraphs.
-3. HIGH YIELD: Focus on the core mechanism or conceptual distinction that matters most for exam mastery.
-4. For mathematical expressions, use proper LaTeX in $...$ or $$...$$ format (e.g. $E = mc^2$).
-5. STRICT ANTI-DUPLICATION: Do NOT duplicate any existing cards listed above. Focus on fresh takeaways from this session.
-6. Return ONLY the formatted cards. No introductory text, numbering outside format, or commentary.`
+4. HIGH YIELD: Focus on the core mechanism or conceptual distinction that matters most for exam mastery.
+5. For mathematical expressions, use proper LaTeX in $...$ or $$...$$ format (e.g. $E = mc^2$).
+6. STRICT ANTI-DUPLICATION: Do NOT duplicate any existing cards listed above. Focus on fresh takeaways from this session.
+7. NO BRACKETS: Do NOT wrap terms, questions, or answers in square brackets (e.g. write "Mitochondria -> Powerhouse of the cell", NOT "[Mitochondria] -> [Powerhouse of the cell]").
+8. Return ONLY the formatted cards. No introductory text, numbering outside format, or commentary.`
 
     const config = getAIConfig()
     const apiKey = getApiKey()
@@ -1138,10 +1140,14 @@ STRICT DESIGN RULES (CRITICAL):
             '',
             `SPECIFIC MATERIAL STUDY FOCUS:`,
             `The student is studying ONLY the specific material: "${mat.filename}".`,
-            `Base all questions, explanations, active recall challenges, and feedback STRICTLY on the contents of this material below:`,
             `--- MATERIAL CONTENT START ---`,
             mat.content_text.substring(0, 16000),
             `--- MATERIAL CONTENT END ---`,
+            '',
+            `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
+            `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback STRICTLY and EXCLUSIVELY on the content present in the specific material above.`,
+            `2. NO EXTERNAL KNOWLEDGE / NO HALLUCINATIONS: Do NOT introduce or quiz on any external concepts, theories, or outside knowledge not explicitly found in the document above.`,
+            `3. UNUPLOADED MATERIAL HANDLING: If the student asks about a concept not present in this document, politely state that it is not covered in "${mat.filename}" and decline to quiz on it. NEVER use pre-trained knowledge to fill in gaps.`,
             ''
           ].join('\n')
         }
@@ -1152,10 +1158,14 @@ STRICT DESIGN RULES (CRITICAL):
       materialContextBlock = [
         '',
         `SPECIFIC MATERIAL STUDY FOCUS:`,
-        `Base all questions, explanations, and feedback STRICTLY on the content provided below:`,
         `--- MATERIAL CONTENT START ---`,
         params.materialContent.substring(0, 16000),
         `--- MATERIAL CONTENT END ---`,
+        '',
+        `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
+        `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback STRICTLY and EXCLUSIVELY on the content provided above.`,
+        `2. NO EXTERNAL KNOWLEDGE / NO HALLUCINATIONS: Do NOT introduce or quiz on any external concepts, theories, or outside knowledge not explicitly found in the material above.`,
+        `3. UNUPLOADED MATERIAL HANDLING: If the student asks about a concept not present in this text, politely state that it is not in the uploaded material and decline to quiz on it. NEVER use pre-trained knowledge to fill in gaps.`,
         ''
       ].join('\n')
     } else {
@@ -1178,7 +1188,19 @@ STRICT DESIGN RULES (CRITICAL):
             `--- COURSE MATERIALS START ---`,
             combined,
             `--- COURSE MATERIALS END ---`,
-            `Thoroughly draw upon these source materials to ground your Socratic questioning, test core mechanisms, verify accuracy, and quote relevant formulas or explanations when guiding the student.`,
+            '',
+            `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
+            `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback STRICTLY and EXCLUSIVELY on the content present in the uploaded source materials above.`,
+            `2. NO EXTERNAL KNOWLEDGE / NO HALLUCINATIONS: Even if you possess extensive general knowledge about this subject, or even if upcoming chapters/assignments (e.g. Chapter 5, quizzes, exam dates) are mentioned on a syllabus/slide, you MUST NOT quiz the student on, define, or teach concepts from unuploaded chapters or outside materials.`,
+            `3. UNUPLOADED MATERIAL HANDLING: If the student asks about a topic not in the uploaded documents, or if a syllabus topic has no uploaded document text, explicitly and honestly tell them: "This material is not in your uploaded documents. Please upload the notes or slides for this topic to study it." NEVER quiz them on unuploaded material or use pre-trained knowledge to fill in gaps.`,
+            ''
+          ].join('\n')
+        } else {
+          materialContextBlock = [
+            '',
+            `NOTICE: No study materials or lecture notes have been uploaded for this subject yet.`,
+            `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
+            `Politely inform the student that they should upload lecture slides, notes, or readings for this subject so you can tutor and quiz them based strictly on their actual class materials. Do NOT quiz them using pre-trained knowledge.`,
             ''
           ].join('\n')
         }
@@ -1218,45 +1240,47 @@ Sentence 2: A specific question about [topic].
 Example: "Welcome! Let's explore the Prologue of The Alchemist. What lesson does the narrator draw from the myth of Narcissus and the lake?"
 
 PEDAGOGICAL RULES:
-1. Ask ONE question at a time — start with recall, progress to comprehension, then application
-2. After the student answers, give brief corrective feedback (what they got right, what they missed)
-3. If correct: increase difficulty or move to next concept. If wrong: explain simply, then ask a gentler follow-up
-4. Use questions that require genuine thinking — not just yes/no
-5. Suggest the deep dive phase when the student has demonstrated solid understanding across 3+ concepts
-6. Keep responses conversational but structured. Use bullet points for feedback when helpful.
-7. When time is up, include [SESSION_END] in your final response.
-8. For formulas: wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Use proper LaTeX, never ^ for exponents.${syllabusContext}`,
+1. STRICT SOURCE GROUNDING (NOTEBOOKLM MODE): Ask questions ONLY about concepts, mechanisms, and terms that are explicitly present in the student's uploaded source materials. NEVER quiz on unuploaded chapters, outside knowledge, or future syllabus mentions without uploaded text.
+2. Ask ONE question at a time — start with recall, progress to comprehension, then application
+3. After the student answers, give brief corrective feedback (what they got right, what they missed) strictly based on the uploaded materials
+4. If correct: increase difficulty or move to next concept in the materials. If wrong: explain simply using the source materials, then ask a gentler follow-up
+5. Use questions that require genuine thinking — not just yes/no
+6. Suggest the deep dive phase when the student has demonstrated solid understanding across 3+ concepts
+7. Keep responses conversational but structured. Use bullet points for feedback when helpful.
+8. When time is up, include [SESSION_END] in your final response.
+9. For formulas: wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Use proper LaTeX, never ^ for exponents.${syllabusContext}`,
 
       socratic: `You are now in the SOCRATIC DEEP DIVE phase for "${className}".
 
 PEDAGOGICAL METHOD — Socratic Deep Dive:
-1. Ask "why" and "how" questions that probe deeper understanding
-2. Challenge the student to explain concepts in their own words as if teaching a beginner
-3. Ask them to apply concepts to novel scenarios they haven't seen before
-4. Ask them to connect this topic to previously covered material
-5. Present a claim (sometimes incorrect) and ask them to evaluate it
-6. When they struggle, scaffold: break the question down, don't give the answer
-7. When instructed that time is up, include [SESSION_END] in your final response.
-8. When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$.
+1. STRICT SOURCE GROUNDING (NOTEBOOKLM MODE): Probe deeply into concepts and mechanisms strictly found within the uploaded materials. NEVER introduce or quiz on outside or unuploaded chapters.
+2. Ask "why" and "how" questions that probe deeper understanding
+3. Challenge the student to explain concepts in their own words as if teaching a beginner
+4. Ask them to apply concepts to scenarios grounded in the uploaded material
+5. Ask them to connect concepts across the uploaded material
+6. Present a claim (sometimes incorrect) based on the uploaded material and ask them to evaluate it
+7. When they struggle, scaffold: break the question down, don't give the answer
+8. When instructed that time is up, include [SESSION_END] in your final response.
+9. When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$.
 
-Your goal: push beyond surface understanding. If the student can explain it simply, connect it across topics, and apply it to new situations — they've truly mastered it.${syllabusContext}`,
+Your goal: push beyond surface understanding of the uploaded material. If the student can explain it simply, connect it across topics, and apply it to new situations — they've truly mastered it.${syllabusContext}`,
 
       summary: `You are wrapping up a tutoring session for "${className}".
 
 PEDAGOGICAL METHOD — Session Summary Phase:
-1. Summarize the key concepts that were covered
+1. Summarize the key concepts from the uploaded materials that were covered
 2. Identify what the student understood well (be specific)
 3. Identify areas that still need work (be specific and constructive)
-4. Generate 5-7 study cards in this format (one per line):
+4. Generate 5-7 study cards based strictly on the uploaded source material in this format (one per line):
    **[Term or Question]** -> [Answer or Definition]
-5. Mix flashcards AND active recall questions
+5. Mix flashcards AND active recall questions grounded in the materials
 6. Cover BOTH strong and weak areas (strong needs maintenance too!)
 7. End with a clear recommendation for what to study next${syllabusContext}
 8. When showing formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents.`
     }
 
     const systemInstruction = phaseInstructions[params.phase] ||
-      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn.${syllabusContext}`
+      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics.${syllabusContext}`
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemInstruction }

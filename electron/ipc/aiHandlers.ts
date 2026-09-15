@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import {
   buildCardGenerationPrompt,
   buildEvaluationPrompt,
+  buildFormatMathEquationsPrompt,
   parseCardGenerationResponse,
   parseEvaluationResponse
 } from '../../src/lib/promptBuilders'
@@ -14,7 +15,8 @@ import {
   normalizeBaseUrl,
   isLocalEndpoint,
   isMaskedKey,
-  sanitizeApiKey
+  sanitizeApiKey,
+  DEFAULT_MODEL
 } from './aiConfigStore'
 
 /** Default request timeout. Card generation/evaluation can be slow, so be generous. */
@@ -69,7 +71,7 @@ async function callAI(
 
     // OpenAI-compatible API (DeepSeek, OpenAI, Ollama, etc.)
     const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
-    const model = config.model || 'deepseek-chat'
+    const model = config.model || DEFAULT_MODEL
     const url = `${baseUrl}/v1/chat/completions`
     const isLocal = isLocalEndpoint(baseUrl)
     const authKey = config.apiKey || (isLocal ? 'ollama' : '')
@@ -162,6 +164,49 @@ export function registerAIHandlers(): void {
       return parseEvaluationResponse(responseText)
     }
   )
+
+  // ── Format math / LaTeX in text ─────────────────────────────────────────────
+
+  ipcMain.handle('ai:formatMathEquations', async (_event, text: string) => {
+    if (!text || !text.trim()) {
+      return { success: true, text: '' }
+    }
+    const config = getAIConfig()
+    const apiKey = getApiKey()
+    const isLocal = isLocalEndpoint(config.baseUrl)
+    if (!apiKey && !isLocal) {
+      return { success: false, error: 'AI API key not configured. Go to Settings to configure your AI provider.' }
+    }
+
+    try {
+      const prompt = buildFormatMathEquationsPrompt(text)
+      let formattedText: string
+      if (config.provider === 'gemini') {
+        formattedText = await callAI(prompt, { ...config, apiKey })
+      } else {
+        formattedText = await callAIMessages(
+          [{ role: 'user', content: prompt }],
+          { ...config, apiKey }
+        )
+      }
+
+      // Strip accidental wrapping markdown code fences
+      let cleaned = (formattedText || '').trim()
+      if (cleaned.startsWith('```') && cleaned.endsWith('```')) {
+        const lines = cleaned.split('\n')
+        if (lines.length >= 2) {
+          cleaned = lines.slice(1, -1).join('\n').trim()
+        }
+      }
+
+      return { success: true, text: cleaned }
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to format math equations'
+      }
+    }
+  })
 
   // ── Get AI config ───────────────────────────────────────────────────────────
 
@@ -284,7 +329,7 @@ export async function* streamAI(
 
   // OpenAI-compatible format
   const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
-  const model = config.model || 'deepseek-chat'
+  const model = config.model || DEFAULT_MODEL
   const url = `${baseUrl}/v1/chat/completions`
   const isLocal = isLocalEndpoint(baseUrl)
   const authKey = config.apiKey || (isLocal ? 'ollama' : '')
@@ -387,7 +432,7 @@ export async function* streamAI(
 
 /**
  * Non-streaming call to an AI provider using a messages array.
- * Supports OpenAI-compatible providers only.
+ * Supports both OpenAI-compatible providers (DeepSeek, OpenAI, Ollama) and Google Gemini.
  * Optionally accepts a response_format parameter (e.g. { type: 'json_object' }).
  */
 export async function callAIMessages(
@@ -395,16 +440,60 @@ export async function callAIMessages(
   config: { provider: string; baseUrl: string; model: string; apiKey: string },
   responseFormat?: { type: 'json_object' | 'text' }
 ): Promise<string> {
-  const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
-  const model = config.model || 'deepseek-chat'
-  const url = `${baseUrl}/v1/chat/completions`
-  const isLocal = isLocalEndpoint(baseUrl)
-  const authKey = config.apiKey || (isLocal ? 'ollama' : '')
-
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
 
   try {
+    if (config.provider === 'gemini') {
+      const baseUrl = config.baseUrl || 'https://generativelanguage.googleapis.com'
+      const model = config.model || 'gemini-2.0-flash'
+      const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`
+
+      const contents = messages.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }))
+
+      const body: Record<string, unknown> = {
+        contents,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 8192
+        }
+      }
+      if (responseFormat?.type === 'json_object') {
+        (body.generationConfig as Record<string, unknown>).responseMimeType = 'application/json'
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': config.apiKey
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Gemini API error (${response.status}): ${errorText.substring(0, 500)}`)
+      }
+
+      const data = await response.json()
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+      if (typeof text !== 'string') {
+        throw new Error('Gemini API returned unexpected response structure')
+      }
+      return text
+    }
+
+    const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
+    const model = config.model || DEFAULT_MODEL
+    const url = `${baseUrl}/v1/chat/completions`
+    const isLocal = isLocalEndpoint(baseUrl)
+    const authKey = config.apiKey || (isLocal ? 'ollama' : '')
+
     const body: Record<string, unknown> = {
       model,
       messages,

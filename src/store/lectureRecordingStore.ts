@@ -29,8 +29,9 @@ let timerInterval: ReturnType<typeof setInterval> | null = null
 let audioContext: AudioContext | null = null
 let analyserNode: AnalyserNode | null = null
 let animFrameId: number | null = null
+const pendingChunkPromises = new Set<Promise<any>>()
 
-function cleanupAudioPipeline(): void {
+function cleanupAudioNodesAndStream(): void {
   if (timerInterval) {
     clearInterval(timerInterval)
     timerInterval = null
@@ -39,20 +40,10 @@ function cleanupAudioPipeline(): void {
     cancelAnimationFrame(animFrameId)
     animFrameId = null
   }
-  if (activeMediaRecorder && activeMediaRecorder.state !== 'inactive') {
-    try {
-      activeMediaRecorder.stop()
-    } catch {
-      // ignore
-    }
-  }
-  activeMediaRecorder = null
-
   if (activeMediaStream) {
     activeMediaStream.getTracks().forEach((track) => track.stop())
     activeMediaStream = null
   }
-
   if (audioContext && audioContext.state !== 'closed') {
     try {
       audioContext.close()
@@ -62,6 +53,37 @@ function cleanupAudioPipeline(): void {
     audioContext = null
   }
   analyserNode = null
+}
+
+async function gracefulStopRecorder(): Promise<void> {
+  if (activeMediaRecorder && activeMediaRecorder.state !== 'inactive') {
+    await new Promise<void>((resolve) => {
+      const recorder = activeMediaRecorder!
+      recorder.onstop = () => resolve()
+      try {
+        recorder.stop()
+      } catch {
+        resolve()
+      }
+    })
+  }
+  activeMediaRecorder = null
+  // Wait for all in-flight chunk sends to finish
+  if (pendingChunkPromises.size > 0) {
+    await Promise.all(Array.from(pendingChunkPromises))
+  }
+}
+
+function cleanupAudioPipeline(): void {
+  if (activeMediaRecorder && activeMediaRecorder.state !== 'inactive') {
+    try {
+      activeMediaRecorder.stop()
+    } catch {
+      // ignore
+    }
+  }
+  activeMediaRecorder = null
+  cleanupAudioNodesAndStream()
 }
 
 export const useLectureRecordingStore = create<LectureRecordingState>((set, get) => ({
@@ -171,14 +193,20 @@ export const useLectureRecordingStore = create<LectureRecordingState>((set, get)
       const recorder = new MediaRecorder(stream, recorderOptions)
       activeMediaRecorder = recorder
 
-      recorder.ondataavailable = async (event) => {
+      recorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
-          try {
-            const buffer = await event.data.arrayBuffer()
-            await window.electronAPI.sendLectureAudioChunk(sessionId, buffer)
-          } catch (err) {
-            console.error('Error sending audio chunk:', err)
-          }
+          const chunkPromise = (async () => {
+            try {
+              const buffer = await event.data.arrayBuffer()
+              if (window.electronAPI) {
+                await window.electronAPI.sendLectureAudioChunk(sessionId, buffer)
+              }
+            } catch (err) {
+              console.error('Error sending audio chunk:', err)
+            }
+          })()
+          pendingChunkPromises.add(chunkPromise)
+          chunkPromise.finally(() => pendingChunkPromises.delete(chunkPromise))
         }
       }
 
@@ -240,7 +268,8 @@ export const useLectureRecordingStore = create<LectureRecordingState>((set, get)
     if (!sessionId) return null
 
     try {
-      cleanupAudioPipeline()
+      await gracefulStopRecorder()
+      cleanupAudioNodesAndStream()
 
       let result: { lectureId: number } | null = null
       if (window.electronAPI) {

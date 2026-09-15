@@ -18,6 +18,7 @@ import { registerCalendarHandlers, setCalendarDatabase } from './ipc/calendarHan
 import { registerLocalEngineHandlers, setLocalEngineWindowGetter, stopEngine } from './ipc/localEngine'
 import { registerFolderHandlers, setFolderDatabase } from './ipc/folderHandlers'
 import { registerLectureHandlers, setLectureDatabase, setOnRecordingFinalized } from './ipc/lectureHandlers'
+import { registerPracticeHandlers, setPracticeDatabase } from './ipc/practiceHandlers'
 import { LectureNotesService } from './ipc/lectureNotesService'
 import { LocalWhisperService } from './ipc/localWhisperService'
 import { TranscriptionService } from './ipc/transcriptionService'
@@ -224,6 +225,8 @@ app.whenReady().then(async () => {
   registerLocalEngineHandlers()
   setFolderDatabase(db)
   registerFolderHandlers()
+  setPracticeDatabase(db)
+  registerPracticeHandlers()
   setLectureDatabase(db)
   registerLectureHandlers()
   TranscriptionService.setDatabase(db)

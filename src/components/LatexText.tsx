@@ -13,6 +13,9 @@ interface Props {
  * - $...$ or \(...\) — inline math
  */
 export default function LatexText({ children, className }: Props): React.JSX.Element {
+  if (!children || typeof children !== 'string') {
+    return <span className={className}>{children || ''}</span>
+  }
   const parts = splitLatex(children)
 
   return (

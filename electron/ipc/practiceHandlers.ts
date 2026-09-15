@@ -1,0 +1,605 @@
+import { ipcMain } from "electron"
+import Database from "better-sqlite3"
+import { callAIMessages } from "./aiHandlers"
+import { getAIConfig, getApiKey } from "./aiConfigStore"
+import {
+  buildExtractPracticeProblemsPrompt,
+  buildGenerateVariantPrompt,
+  buildEvaluatePracticeAttemptPrompt
+} from "../../src/lib/practicePrompts"
+import { cleanMarkdownFences } from "../../src/lib/jsonRepair"
+import type {
+  PracticeProblem,
+  PracticeSession,
+  PracticeProblemAttempt,
+  PracticeSessionConfig,
+  PracticeEvaluationResult,
+  ExtractedPracticeProblem
+} from "../../src/types"
+
+let db: Database.Database
+
+export function setPracticeDatabase(database: Database.Database): void {
+  db = database
+}
+
+export function registerPracticeHandlers(): void {
+  // ── 1. List Problems ─────────────────────────────────────────────────────
+  ipcMain.handle(
+    "practice:listProblems",
+    (_event, subjectId: number, moduleId?: number, topicId?: number) => {
+      try {
+        let query = "SELECT * FROM practice_problems WHERE subject_id = ?"
+        const params: unknown[] = [subjectId]
+
+        if (topicId) {
+          query += " AND topic_id = ?"
+          params.push(topicId)
+        } else if (moduleId) {
+          query += " AND module_id = ?"
+          params.push(moduleId)
+        }
+
+        query += " ORDER BY id ASC"
+        return db.prepare(query).all(...params) as PracticeProblem[]
+      } catch (err) {
+        console.error("practice:listProblems error:", err)
+        return []
+      }
+    }
+  )
+
+  // ── 2. Get Problem ───────────────────────────────────────────────────────
+  ipcMain.handle("practice:getProblem", (_event, problemId: number) => {
+    try {
+      return (db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(problemId) as PracticeProblem) || null
+    } catch (err) {
+      console.error("practice:getProblem error:", err)
+      return null
+    }
+  })
+
+  // ── 3. Create Problem ────────────────────────────────────────────────────
+  ipcMain.handle("practice:createProblem", (_event, problem: Partial<PracticeProblem>) => {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO practice_problems (
+          subject_id, module_id, topic_id, material_id,
+          title, problem_text, solution_steps, final_answer,
+          difficulty, principles_json, is_ai_generated, parent_problem_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      const res = stmt.run(
+        problem.subject_id,
+        problem.module_id || null,
+        problem.topic_id || null,
+        problem.material_id || null,
+        problem.title || "Practice Problem",
+        problem.problem_text || "",
+        problem.solution_steps || null,
+        problem.final_answer || null,
+        problem.difficulty || 2,
+        problem.principles_json || "[]",
+        problem.is_ai_generated || 0,
+        problem.parent_problem_id || null
+      )
+      return db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
+    } catch (err) {
+      console.error("practice:createProblem error:", err)
+      throw err
+    }
+  })
+
+  // ── 4. Delete Problem ────────────────────────────────────────────────────
+  ipcMain.handle("practice:deleteProblem", (_event, problemId: number) => {
+    try {
+      db.prepare("DELETE FROM practice_problems WHERE id = ?").run(problemId)
+      return { success: true }
+    } catch (err) {
+      console.error("practice:deleteProblem error:", err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // ── 5. Extract Problems from Material ────────────────────────────────────
+  ipcMain.handle(
+    "practice:extractFromMaterial",
+    async (_event, subjectId: number, materialId: number, moduleId?: number, topicId?: number) => {
+      try {
+        const material = db.prepare("SELECT * FROM materials WHERE id = ?").get(materialId) as
+          | { filename: string; content_text: string }
+          | undefined
+        if (!material || !material.content_text) {
+          throw new Error("Material has no readable text content.")
+        }
+
+        const subject = db.prepare("SELECT name FROM subjects WHERE id = ?").get(subjectId) as
+          | { name: string }
+          | undefined
+
+        let moduleTitle: string | undefined
+        if (moduleId) {
+          const mod = db.prepare("SELECT title FROM syllabus_modules WHERE id = ?").get(moduleId) as { title: string } | undefined
+          moduleTitle = mod?.title
+        }
+
+        let topicTitle: string | undefined
+        if (topicId) {
+          const top = db.prepare("SELECT title FROM module_topics WHERE id = ?").get(topicId) as { title: string } | undefined
+          topicTitle = top?.title
+        }
+
+        const prompt = buildExtractPracticeProblemsPrompt(
+          material.content_text,
+          subject?.name || "Subject",
+          moduleTitle,
+          topicTitle
+        )
+
+        const config = getAIConfig()
+        const apiKey = getApiKey()
+        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+
+        const responseText = await callAIMessages(
+          [{ role: "user", content: prompt }],
+          { ...config, apiKey },
+          { type: "json_object" }
+        )
+
+        const cleanedJson = cleanMarkdownFences(responseText)
+        let parsed: { problems?: ExtractedPracticeProblem[] } = {}
+        try {
+          parsed = JSON.parse(cleanedJson)
+        } catch (e) {
+          // If direct parse fails, try extracting array
+          const match = cleanedJson.match(/\{.*"problems"\s*:\s*\[([\s\S]*?)\]\s*\}/)
+          if (match) {
+            parsed = JSON.parse(match[0])
+          } else {
+            throw new Error("Failed to parse extracted practice problems JSON from AI.")
+          }
+        }
+
+        const problems = parsed.problems || []
+        const created: PracticeProblem[] = []
+
+        const insertStmt = db.prepare(`
+          INSERT INTO practice_problems (
+            subject_id, module_id, topic_id, material_id,
+            title, problem_text, solution_steps, final_answer,
+            difficulty, principles_json, is_ai_generated
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `)
+
+        for (const p of problems) {
+          if (!p.problem_text) continue
+          const res = insertStmt.run(
+            subjectId,
+            moduleId || null,
+            topicId || null,
+            materialId,
+            p.title || "Practice Problem",
+            p.problem_text,
+            p.solution_steps || null,
+            p.final_answer || null,
+            p.difficulty || 2,
+            JSON.stringify(p.principles || [])
+          )
+          const row = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
+          if (row) created.push(row)
+        }
+
+        return { success: true, count: created.length, problems: created }
+      } catch (err) {
+        console.error("practice:extractFromMaterial error:", err)
+        return { success: false, count: 0, error: String(err) }
+      }
+    }
+  )
+
+  // ── 6. Extract Problems from Text ────────────────────────────────────────
+  ipcMain.handle(
+    "practice:extractFromText",
+    async (_event, subjectId: number, text: string, moduleId?: number, topicId?: number) => {
+      try {
+        if (!text || text.trim().length < 20) {
+          throw new Error("Text is too short to extract practice problems.")
+        }
+
+        const subject = db.prepare("SELECT name FROM subjects WHERE id = ?").get(subjectId) as
+          | { name: string }
+          | undefined
+
+        let moduleTitle: string | undefined
+        if (moduleId) {
+          const mod = db.prepare("SELECT title FROM syllabus_modules WHERE id = ?").get(moduleId) as { title: string } | undefined
+          moduleTitle = mod?.title
+        }
+
+        let topicTitle: string | undefined
+        if (topicId) {
+          const top = db.prepare("SELECT title FROM module_topics WHERE id = ?").get(topicId) as { title: string } | undefined
+          topicTitle = top?.title
+        }
+
+        const prompt = buildExtractPracticeProblemsPrompt(
+          text,
+          subject?.name || "Subject",
+          moduleTitle,
+          topicTitle
+        )
+
+        const config = getAIConfig()
+        const apiKey = getApiKey()
+        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+
+        const responseText = await callAIMessages(
+          [{ role: "user", content: prompt }],
+          { ...config, apiKey },
+          { type: "json_object" }
+        )
+
+        const cleanedJson = cleanMarkdownFences(responseText)
+        let parsed: { problems?: ExtractedPracticeProblem[] } = {}
+        try {
+          parsed = JSON.parse(cleanedJson)
+        } catch {
+          const match = cleanedJson.match(/\{.*"problems"\s*:\s*\[([\s\S]*?)\]\s*\}/)
+          if (match) parsed = JSON.parse(match[0])
+          else throw new Error("Failed to parse extracted practice problems JSON.")
+        }
+
+        const problems = parsed.problems || []
+        const created: PracticeProblem[] = []
+
+        const insertStmt = db.prepare(`
+          INSERT INTO practice_problems (
+            subject_id, module_id, topic_id,
+            title, problem_text, solution_steps, final_answer,
+            difficulty, principles_json, is_ai_generated
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `)
+
+        for (const p of problems) {
+          if (!p.problem_text) continue
+          const res = insertStmt.run(
+            subjectId,
+            moduleId || null,
+            topicId || null,
+            p.title || "Practice Problem",
+            p.problem_text,
+            p.solution_steps || null,
+            p.final_answer || null,
+            p.difficulty || 2,
+            JSON.stringify(p.principles || [])
+          )
+          const row = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
+          if (row) created.push(row)
+        }
+
+        return { success: true, count: created.length, problems: created }
+      } catch (err) {
+        console.error("practice:extractFromText error:", err)
+        return { success: false, count: 0, error: String(err) }
+      }
+    }
+  )
+
+  // ── 7. Generate Isomorphic Variant ───────────────────────────────────────
+  ipcMain.handle(
+    "practice:generateVariant",
+    async (_event, problemId: number, userStruggles?: string) => {
+      try {
+        const baseProblem = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(problemId) as PracticeProblem | undefined
+        if (!baseProblem) throw new Error("Base practice problem not found.")
+
+        const prompt = buildGenerateVariantPrompt(baseProblem, userStruggles)
+
+        const config = getAIConfig()
+        const apiKey = getApiKey()
+        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+
+        const responseText = await callAIMessages(
+          [{ role: "user", content: prompt }],
+          { ...config, apiKey },
+          { type: "json_object" }
+        )
+
+        const cleanedJson = cleanMarkdownFences(responseText)
+        let parsed: ExtractedPracticeProblem
+        try {
+          parsed = JSON.parse(cleanedJson)
+        } catch {
+          throw new Error("Failed to parse generated variant JSON.")
+        }
+
+        const stmt = db.prepare(`
+          INSERT INTO practice_problems (
+            subject_id, module_id, topic_id, material_id,
+            title, problem_text, solution_steps, final_answer,
+            difficulty, principles_json, is_ai_generated, parent_problem_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        `)
+
+        const res = stmt.run(
+          baseProblem.subject_id,
+          baseProblem.module_id,
+          baseProblem.topic_id,
+          baseProblem.material_id,
+          parsed.title || `Variant: ${baseProblem.title}`,
+          parsed.problem_text,
+          parsed.solution_steps,
+          parsed.final_answer,
+          parsed.difficulty || baseProblem.difficulty,
+          JSON.stringify(parsed.principles || []),
+          baseProblem.id
+        )
+
+        const variant = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
+        return { success: true, variant }
+      } catch (err) {
+        console.error("practice:generateVariant error:", err)
+        return { success: false, error: String(err) }
+      }
+    }
+  )
+
+  // ── 8. Create Practice Session ───────────────────────────────────────────
+  ipcMain.handle("practice:createSession", (_event, config: PracticeSessionConfig) => {
+    try {
+      // 1. Find candidate problems
+      let query = "SELECT * FROM practice_problems WHERE subject_id = ?"
+      const params: unknown[] = [config.subjectId]
+
+      if (config.topicId) {
+        query += " AND topic_id = ?"
+        params.push(config.topicId)
+      } else if (config.moduleId) {
+        query += " AND module_id = ?"
+        params.push(config.moduleId)
+      }
+
+      query += " ORDER BY is_ai_generated ASC, RANDOM()"
+      const allProblems = db.prepare(query).all(...params) as PracticeProblem[]
+
+      const selectedProblems = config.problemCount && config.problemCount < 999
+        ? allProblems.slice(0, config.problemCount)
+        : allProblems
+
+      const stmt = db.prepare(`
+        INSERT INTO practice_sessions (
+          subject_id, user_id, module_id, topic_id, total_problems
+        ) VALUES (?, ?, ?, ?, ?)
+      `)
+      const res = stmt.run(
+        config.subjectId,
+        config.userId,
+        config.moduleId || null,
+        config.topicId || null,
+        selectedProblems.length
+      )
+
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(res.lastInsertRowid) as PracticeSession
+
+      return { session, problems: selectedProblems }
+    } catch (err) {
+      console.error("practice:createSession error:", err)
+      throw err
+    }
+  })
+
+  // ── 9. Get Practice Session ──────────────────────────────────────────────
+  ipcMain.handle("practice:getSession", (_event, sessionId: number) => {
+    try {
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+      if (!session) return null
+
+      const attempts = db.prepare(`
+        SELECT a.*, p.title as problem_title, p.problem_text, p.difficulty, p.principles_json
+        FROM practice_problem_attempts a
+        JOIN practice_problems p ON a.problem_id = p.id
+        WHERE a.session_id = ?
+        ORDER BY a.id ASC
+      `).all(sessionId) as (PracticeProblemAttempt & { problem_title: string; problem_text: string })[]
+
+      return { session, attempts }
+    } catch (err) {
+      console.error("practice:getSession error:", err)
+      return null
+    }
+  })
+
+  // ── 10. Submit Attempt & Evaluate ────────────────────────────────────────
+  ipcMain.handle(
+    "practice:submitAttempt",
+    async (_event, sessionId: number, problemId: number, userAnswer: string, timeSpentSeconds: number) => {
+      try {
+        const problem = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(problemId) as PracticeProblem | undefined
+        if (!problem) throw new Error("Problem not found.")
+
+        const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+        if (!session) throw new Error("Practice session not found.")
+
+        // Run AI evaluation
+        const prompt = buildEvaluatePracticeAttemptPrompt(problem, userAnswer)
+        const config = getAIConfig()
+        const apiKey = getApiKey()
+        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+
+        const responseText = await callAIMessages(
+          [{ role: "user", content: prompt }],
+          { ...config, apiKey },
+          { type: "json_object" }
+        )
+
+        const cleanedJson = cleanMarkdownFences(responseText)
+        let evalResult: PracticeEvaluationResult
+        try {
+          evalResult = JSON.parse(cleanedJson)
+        } catch {
+          evalResult = {
+            is_correct: false,
+            feedback: responseText,
+            step_analysis: [],
+            identified_errors: []
+          }
+        }
+
+        const isCorrectNum = evalResult.is_correct ? 1 : 0
+
+        // Record attempt
+        const insertStmt = db.prepare(`
+          INSERT INTO practice_problem_attempts (
+            session_id, problem_id, user_answer, is_correct, feedback, time_spent_seconds
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        const attemptRes = insertStmt.run(
+          sessionId,
+          problemId,
+          userAnswer,
+          isCorrectNum,
+          evalResult.feedback,
+          timeSpentSeconds || 0
+        )
+
+        // Update session aggregate stats
+        db.prepare(`
+          UPDATE practice_sessions
+          SET completed_problems = completed_problems + 1,
+              correct_problems = correct_problems + ?
+          WHERE id = ?
+        `).run(isCorrectNum, sessionId)
+
+        // Memory Integration: Update tutor_topic_memories & concept_mastery
+        try {
+          let topicName = "General Practice"
+          if (problem.topic_id) {
+            const t = db.prepare("SELECT title FROM module_topics WHERE id = ?").get(problem.topic_id) as { title: string } | undefined
+            if (t?.title) topicName = t.title
+          } else if (problem.module_id) {
+            const m = db.prepare("SELECT title FROM syllabus_modules WHERE id = ?").get(problem.module_id) as { title: string } | undefined
+            if (m?.title) topicName = m.title
+          }
+
+          const existingMem = db.prepare(`
+            SELECT * FROM tutor_topic_memories
+            WHERE user_id = ? AND subject_id = ? AND topic = ?
+          `).get(session.user_id, session.subject_id, topicName) as { id: number; mastery_level: string; struggles?: string; strengths?: string } | undefined
+
+          const principles: string[] = JSON.parse(problem.principles_json || "[]")
+          const errorType = evalResult.error_type || (isCorrectNum === 1 ? "correct" : "conceptual_misconception")
+          const errorPrefix = errorType === "execution_slip" ? "[Calculation Slip] " : errorType === "boundary_condition_error" ? "[Boundary / Constraint] " : ""
+          const errorSummary = (evalResult.identified_errors || []).join("; ")
+          const detailedStruggle = errorSummary ? `${errorPrefix}${errorSummary}` : (evalResult.pedagogical_remedy || "Review derivation")
+          const stepSummary = (evalResult.step_analysis || []).join("; ")
+
+          if (existingMem) {
+            let newLevel = existingMem.mastery_level
+            if (isCorrectNum === 1) {
+              newLevel = existingMem.mastery_level === "struggling" ? "developing" : "good"
+            } else if (errorType === "execution_slip") {
+              // Don't downgrade heavily for simple arithmetic slip if conceptual setup was good
+              newLevel = existingMem.mastery_level === "mastered" ? "good" : existingMem.mastery_level
+            } else {
+              newLevel = existingMem.mastery_level === "good" || existingMem.mastery_level === "mastered" ? "developing" : "struggling"
+            }
+
+            db.prepare(`
+              UPDATE tutor_topic_memories
+              SET mastery_level = ?,
+                  struggles = CASE WHEN ? = 0 THEN ? ELSE struggles END,
+                  strengths = CASE WHEN ? = 1 THEN ? ELSE strengths END,
+                  last_studied_at = datetime('now')
+              WHERE id = ?
+            `).run(newLevel, isCorrectNum, detailedStruggle, isCorrectNum, stepSummary, existingMem.id)
+          } else {
+            db.prepare(`
+              INSERT INTO tutor_topic_memories (
+                user_id, subject_id, topic, mastery_level, strengths, struggles
+              ) VALUES (?, ?, ?, ?, ?, ?)
+            `).run(
+              session.user_id,
+              session.subject_id,
+              topicName,
+              isCorrectNum === 1 ? "good" : (errorType === "execution_slip" ? "developing" : "struggling"),
+              isCorrectNum === 1 ? stepSummary : null,
+              isCorrectNum === 0 ? detailedStruggle : null
+            )
+          }
+
+          // Also record into concept_mastery if principles exist
+          for (const p of principles) {
+            if (!p || typeof p !== "string") continue
+            // Differentiate delta: slips don't penalize concept mastery like misconceptions do
+            const delta = isCorrectNum === 1
+              ? 0.15
+              : (errorType === "execution_slip" ? 0.0 : -0.12)
+            db.prepare(`
+              INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations)
+              VALUES (?, ?, ?, ?, 1)
+              ON CONFLICT(user_id, subject_id, concept) DO UPDATE SET
+                mastery_prob = MAX(0.1, MIN(0.99, mastery_prob + ?)),
+                observations = observations + 1,
+                updated_at = datetime('now')
+            `).run(session.user_id, session.subject_id, p, isCorrectNum === 1 ? 0.6 : 0.25, delta)
+          }
+        } catch (memErr) {
+          console.warn("Could not update topic memory from practice attempt:", memErr)
+        }
+
+        const attempt = db.prepare("SELECT * FROM practice_problem_attempts WHERE id = ?").get(attemptRes.lastInsertRowid) as PracticeProblemAttempt
+
+        return { success: true, evaluation: evalResult, attempt }
+      } catch (err) {
+        console.error("practice:submitAttempt error:", err)
+        return { success: false, error: String(err) }
+      }
+    }
+  )
+
+  // ── 11. End Practice Session ─────────────────────────────────────────────
+  ipcMain.handle("practice:endSession", (_event, sessionId: number, summary?: string) => {
+    try {
+      db.prepare(`
+        UPDATE practice_sessions
+        SET ended_at = datetime(now),
+            summary = ?
+        WHERE id = ?
+      `).run(summary || null, sessionId)
+      return { success: true }
+    } catch (err) {
+      console.error("practice:endSession error:", err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // ── 12. Get Stats ────────────────────────────────────────────────────────
+  ipcMain.handle("practice:getStats", (_event, subjectId: number, userId: number) => {
+    try {
+      const totalProblemsRow = db.prepare("SELECT COUNT(*) as count FROM practice_problems WHERE subject_id = ?").get(subjectId) as { count: number }
+      const sessions = db.prepare(`
+        SELECT COUNT(*) as total_sessions,
+               SUM(completed_problems) as total_completed,
+               SUM(correct_problems) as total_correct
+        FROM practice_sessions
+        WHERE subject_id = ? AND user_id = ?
+      `).get(subjectId, userId) as { total_sessions: number; total_completed: number; total_correct: number }
+
+      const totalProblems = totalProblemsRow?.count || 0
+      const totalCompleted = sessions?.total_completed || 0
+      const totalCorrect = sessions?.total_correct || 0
+      const accuracy = totalCompleted > 0 ? Math.round((totalCorrect / totalCompleted) * 100) : 0
+
+      return {
+        totalProblems,
+        totalSessions: sessions?.total_sessions || 0,
+        totalCompleted,
+        totalCorrect,
+        accuracy
+      }
+    } catch (err) {
+      console.error("practice:getStats error:", err)
+      return { totalProblems: 0, totalSessions: 0, totalCompleted: 0, totalCorrect: 0, accuracy: 0 }
+    }
+  })
+}

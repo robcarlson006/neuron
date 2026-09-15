@@ -1,14 +1,4 @@
-/**
- * Robust JSON repair and parsing utility for AI outputs.
- * Safely handles:
- * - Conversational preambles and postambles wrapping code blocks
- * - Markdown code fences at arbitrary positions
- * - Unescaped literal newlines and control characters in string literals
- * - Truncated strings / unterminated quotes at arbitrary byte cuts
- * - Incomplete keys, dangling colons, empty unclosed objects
- * - Unbalanced brackets and braces across arbitrary nesting depths
- * - Regex entity recovery fallback for severely malformed streams
- */
+import { cleanCardBrackets } from './cardParser'
 
 export interface ParsedAICardsPayload {
   flashcards?: Array<{
@@ -353,18 +343,43 @@ function normalizeAICardsPayload(raw: unknown): ParsedAICardsPayload {
     if (!item || typeof item !== 'object') return
     const rec = item as Record<string, unknown>
 
-    const front = String(rec.front || rec.Front || rec.prompt || rec.Prompt || rec.question || rec.Question || rec.term || rec.Term || '').trim()
-    const back = String(rec.back || rec.Back || rec.answer || rec.Answer || rec.model_answer || rec.modelAnswer || rec.Model_Answer || rec.definition || rec.Definition || '').trim()
-    const concept = typeof rec.concept === 'string' ? rec.concept.trim() : typeof rec.Concept === 'string' ? rec.Concept.trim() : typeof rec.topic === 'string' ? rec.topic.trim() : typeof rec.Topic === 'string' ? rec.Topic.trim() : undefined
+    const rawFront = String(
+      rec.front || rec.Front || rec.prompt || rec.Prompt || rec.question || rec.Question ||
+      rec.term || rec.Term || rec.q || rec.Q || rec.title || rec.Title || rec.cloze || rec.Cloze ||
+      rec.name || rec.Name || rec.item || rec.Item || ''
+    ).trim()
+    const rawBack = String(
+      rec.back || rec.Back || rec.answer || rec.Answer || rec.model_answer || rec.modelAnswer ||
+      rec.Model_Answer || rec.definition || rec.Definition || rec.a || rec.A || rec.explanation ||
+      rec.Explanation || rec.response || rec.Response || rec.content || rec.Content ||
+      rec.detail || rec.details || rec.Details || rec.meaning || rec.Meaning || ''
+    ).trim()
+    const front = cleanCardBrackets(rawFront)
+    const back = cleanCardBrackets(rawBack)
+    const rawConcept = typeof rec.concept === 'string' ? rec.concept.trim() :
+      typeof rec.Concept === 'string' ? rec.Concept.trim() :
+      typeof rec.topic === 'string' ? rec.topic.trim() :
+      typeof rec.Topic === 'string' ? rec.Topic.trim() :
+      typeof rec.category === 'string' ? rec.category.trim() :
+      typeof rec.Category === 'string' ? rec.Category.trim() :
+      typeof rec.theme === 'string' ? rec.theme.trim() : undefined
+    const concept = rawConcept ? cleanCardBrackets(rawConcept) : undefined
     const cardSubtype = typeof rec.card_subtype === 'string' ? rec.card_subtype : typeof rec.subtype === 'string' ? rec.subtype : undefined
     const concreteExample = typeof rec.concrete_example === 'string' ? rec.concrete_example : typeof rec.example === 'string' ? rec.example : undefined
     const commonMistake = typeof rec.common_mistake === 'string' ? rec.common_mistake : typeof rec.mistake === 'string' ? rec.mistake : undefined
     const mnemonic = typeof rec.mnemonic === 'string' ? rec.mnemonic : undefined
     const type = typeof rec.type === 'string' ? rec.type : undefined
 
-    const hasQuestion = Boolean(rec.question || rec.Question)
-    const hasFront = Boolean(rec.front || rec.Front || rec.term || rec.Term || rec.prompt || rec.Prompt)
-    const isRecall = type === 'active_recall' || contextKey === 'active_recall' || contextKey === 'questions' || (type !== 'flashcard' && hasQuestion && !hasFront)
+    let isRecall = false
+    if (type === 'active_recall' || contextKey === 'active_recall' || contextKey === 'questions' || contextKey === 'qa_pairs') {
+      isRecall = true
+    } else if (type === 'flashcard' || contextKey === 'flashcards' || contextKey === 'flashcard' || contextKey === 'cards' || contextKey === 'deck') {
+      isRecall = false
+    } else if (Boolean(rec.model_answer || rec.modelAnswer || rec.Model_Answer)) {
+      isRecall = true
+    } else {
+      isRecall = false
+    }
 
     if (front || back) {
       allCards.push({
@@ -401,34 +416,59 @@ function normalizeAICardsPayload(raw: unknown): ParsedAICardsPayload {
     }
   }
 
-  // Handle top-level array
-  if (Array.isArray(raw)) {
-    raw.forEach((item) => extractItem(item))
-    return { flashcards, active_recall: activeRecall, cards: allCards }
-  }
+  // Recursive tree walker to extract cards from any structure (arrays, nested objects, topic groups)
+  const visited = new Set<unknown>()
+  const walk = (node: unknown, currentContextKey?: string) => {
+    if (!node || typeof node !== 'object' || visited.has(node)) return
+    visited.add(node)
 
-  const obj = raw as Record<string, unknown>
-
-  // Known candidate array properties
-  const arrayKeys = ['flashcards', 'active_recall', 'cards', 'deck', 'items', 'data', 'result', 'results', 'questions', 'qa_pairs', 'notes']
-
-  for (const key of arrayKeys) {
-    if (Array.isArray(obj[key])) {
-      (obj[key] as unknown[]).forEach((item) => extractItem(item, key))
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (item && typeof item === 'object') {
+          const asRec = item as Record<string, unknown>
+          const hasCardFields = Boolean(
+            asRec.front || asRec.Front || asRec.term || asRec.Term || asRec.question || asRec.Question ||
+            asRec.prompt || asRec.Prompt || asRec.q || asRec.Q || asRec.cloze || asRec.Cloze || asRec.name || asRec.title
+          ) && Boolean(
+            asRec.back || asRec.Back || asRec.answer || asRec.Answer || asRec.model_answer || asRec.modelAnswer ||
+            asRec.definition || asRec.Definition || asRec.a || asRec.A || asRec.explanation || asRec.response || asRec.content
+          )
+          if (hasCardFields) {
+            extractItem(item, currentContextKey)
+          } else {
+            walk(item, currentContextKey)
+          }
+        }
+      }
+      return
     }
-  }
 
-  // If nothing extracted yet, check any remaining array properties
-  if (flashcards.length === 0 && activeRecall.length === 0 && allCards.length === 0) {
-    for (const key of Object.keys(obj)) {
-      if (Array.isArray(obj[key])) {
-        (obj[key] as unknown[]).forEach((item) => extractItem(item, key))
+    const obj = node as Record<string, unknown>
+    // Check if the object itself represents a single card
+    const hasCardFields = Boolean(
+      obj.front || obj.Front || obj.term || obj.Term || obj.question || obj.Question ||
+      obj.prompt || obj.Prompt || obj.q || obj.Q || obj.cloze || obj.Cloze || obj.name || obj.title
+    ) && Boolean(
+      obj.back || obj.Back || obj.answer || obj.Answer || obj.model_answer || obj.modelAnswer ||
+      obj.definition || obj.Definition || obj.a || obj.A || obj.explanation || obj.response || obj.content
+    )
+    if (hasCardFields && !obj.flashcards && !obj.cards && !obj.active_recall && !obj.questions) {
+      extractItem(obj, currentContextKey)
+      return
+    }
+
+    // Process properties
+    for (const [key, val] of Object.entries(obj)) {
+      if (val && typeof val === 'object') {
+        walk(val, key)
       }
     }
   }
 
+  walk(raw)
+
   return {
-    ...obj,
+    ...(raw as Record<string, unknown>),
     flashcards,
     active_recall: activeRecall,
     cards: allCards
@@ -449,7 +489,10 @@ export function safeParseAICards(rawText: string): ParsedAICardsPayload {
   try {
     const parsed = JSON.parse(cleaned)
     if (parsed && typeof parsed === 'object') {
-      return normalizeAICardsPayload(parsed)
+      const result = normalizeAICardsPayload(parsed)
+      if (result.flashcards?.length || result.active_recall?.length || result.cards?.length) {
+        return result
+      }
     }
   } catch {
     // Continue to repair
@@ -460,7 +503,10 @@ export function safeParseAICards(rawText: string): ParsedAICardsPayload {
     const repaired = repairJSONString(cleaned)
     const parsed = JSON.parse(repaired)
     if (parsed && typeof parsed === 'object') {
-      return normalizeAICardsPayload(parsed)
+      const result = normalizeAICardsPayload(parsed)
+      if (result.flashcards?.length || result.active_recall?.length || result.cards?.length) {
+        return result
+      }
     }
   } catch {
     // Continue to regex recovery
@@ -471,14 +517,14 @@ export function safeParseAICards(rawText: string): ParsedAICardsPayload {
   const active_recall: NonNullable<ParsedAICardsPayload['active_recall']> = []
   const cards: NonNullable<ParsedAICardsPayload['cards']> = []
 
-  // Extract flashcard-like objects: { "front": "...", "back": "..." }
-  const fcRegex = /\{\s*"(?:front|Front|term|Term)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"(?:back|Back|definition|Definition|answer|Answer)"\s*:\s*"((?:[^"\\]|\\.)*)"(?:[^{}]*?"(?:concept|Concept|topic|Topic)"\s*:\s*"((?:[^"\\]|\\.)*)")?[^}]*?\}/g
+  // Extract flashcard-like objects: { "front" / "term" / "prompt" / "q" / "question": "...", "back" / "answer" / "definition" / "model_answer" / "a": "..." }
+  const fcRegex = /\{\s*"(?:front|Front|term|Term|prompt|Prompt|question|Question|q|Q)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"(?:back|Back|definition|Definition|answer|Answer|model_answer|modelAnswer|Model_Answer|a|A|explanation|Explanation)"\s*:\s*"((?:[^"\\]|\\.)*)"(?:[^{}]*?"(?:concept|Concept|topic|Topic|category|Category)"\s*:\s*"((?:[^"\\]|\\.)*)")?[^}]*?\}/g
   let match: RegExpExecArray | null
   while ((match = fcRegex.exec(cleaned)) !== null) {
     try {
-      const front = match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-      const back = match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-      const concept = match[3] ? match[3].replace(/\\"/g, '"').replace(/\\\\/g, '\\') : undefined
+      const front = cleanCardBrackets(match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\'))
+      const back = cleanCardBrackets(match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\'))
+      const concept = match[3] ? cleanCardBrackets(match[3].replace(/\\"/g, '"').replace(/\\\\/g, '\\')) : undefined
       if (front.trim() && back.trim()) {
         flashcards.push({ front: front.trim(), back: back.trim(), concept: concept?.trim() })
         cards.push({ type: 'flashcard', front: front.trim(), back: back.trim(), concept: concept?.trim() })
@@ -492,15 +538,32 @@ export function safeParseAICards(rawText: string): ParsedAICardsPayload {
   const arRegex = /\{\s*"(?:question|Question)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"(?:model_answer|modelAnswer|Model_Answer|answer|Answer)"\s*:\s*"((?:[^"\\]|\\.)*)"(?:[^{}]*?"(?:concept|Concept|topic|Topic)"\s*:\s*"((?:[^"\\]|\\.)*)")?[^}]*?\}/g
   while ((match = arRegex.exec(cleaned)) !== null) {
     try {
-      const question = match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-      const model_answer = match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-      const concept = match[3] ? match[3].replace(/\\"/g, '"').replace(/\\\\/g, '\\') : undefined
+      const question = cleanCardBrackets(match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\'))
+      const model_answer = cleanCardBrackets(match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\'))
+      const concept = match[3] ? cleanCardBrackets(match[3].replace(/\\"/g, '"').replace(/\\\\/g, '\\')) : undefined
       if (question.trim() && model_answer.trim()) {
-        active_recall.push({ question: question.trim(), model_answer: model_answer.trim(), concept: concept?.trim() })
-        cards.push({ type: 'active_recall', front: question.trim(), back: model_answer.trim(), question: question.trim(), model_answer: model_answer.trim(), concept: concept?.trim() })
+        // Avoid duplicate if already extracted by fcRegex
+        if (!flashcards.some(fc => fc.front === question.trim())) {
+          active_recall.push({ question: question.trim(), model_answer: model_answer.trim(), concept: concept?.trim() })
+          cards.push({ type: 'active_recall', front: question.trim(), back: model_answer.trim(), question: question.trim(), model_answer: model_answer.trim(), concept: concept?.trim() })
+        }
       }
     } catch {
       // Ignore bad match
+    }
+  }
+
+  // 4. Additional fallback: extract plain text pairs if JSON brackets failed completely
+  if (flashcards.length === 0 && active_recall.length === 0 && cards.length === 0) {
+    const textPairRegex = /(?:(?:^|\n)(?:\*\*|__)?(?:Front|Question|Term|Q)\s*(?:\d+)?(?:\*\*|__)?\s*[:：]\s*(.+?)\s*(?:\n(?:\*\*|__)?(?:Back|Answer|Definition|A)\s*(?:\d+)?(?:\*\*|__)?\s*[:：]\s*(.+?)))(?=\n(?:\*\*|__)?(?:Front|Question|Term|Q)|\n*$)/gi
+    let textMatch: RegExpExecArray | null
+    while ((textMatch = textPairRegex.exec(rawText)) !== null) {
+      const front = cleanCardBrackets(textMatch[1].trim())
+      const back = cleanCardBrackets(textMatch[2].trim())
+      if (front && back) {
+        flashcards.push({ front, back })
+        cards.push({ type: 'flashcard', front, back })
+      }
     }
   }
 

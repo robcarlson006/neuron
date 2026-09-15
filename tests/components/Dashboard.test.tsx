@@ -183,4 +183,44 @@ describe('Dashboard Component', () => {
       expect(subjectsLabel).toBeInTheDocument()
     })
   })
+
+  it('renders archived classes section when archived subjects exist', async () => {
+    mockUseAppStore.mockReturnValue({
+      user: mockUser,
+      subjects: [
+        ...mockSubjects,
+        {
+          id: 2,
+          user_id: 1,
+          name: 'Archived Physics',
+          status: 'archived' as const,
+          course_code: 'PHY-201',
+          created_at: new Date().toISOString()
+        }
+      ],
+      theme: 'light',
+      isLoading: false,
+      error: null,
+      setUser: jest.fn(),
+      setSubjects: jest.fn(),
+      setTheme: jest.fn(),
+      setLoading: jest.fn(),
+      setError: jest.fn(),
+      toggleTheme: jest.fn(),
+      updateSubject: jest.fn(),
+      removeSubject: jest.fn(),
+      addSubject: jest.fn()
+    })
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Archived Classes/i)).toBeInTheDocument()
+      expect(screen.getByText(/Show Archived/i)).toBeInTheDocument()
+    })
+  })
 })

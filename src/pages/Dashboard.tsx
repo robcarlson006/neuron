@@ -37,10 +37,11 @@ export default function Dashboard({
   const [showFocusModal, setShowFocusModal] = useState(false)
   const [showGamification, setShowGamification] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
 
   useEffect(() => {
     if (user) loadDashboard()
-  }, [user, subjects.length])
+  }, [user, subjects])
 
   async function loadDashboard(): Promise<void> {
     if (!user) return
@@ -120,6 +121,7 @@ export default function Dashboard({
     try {
       const updated = await window.electronAPI.saveSubject({ ...subject, status })
       updateSubject(updated)
+      await loadDashboard()
     } catch (err) {
       console.error('Status change error:', err)
     }
@@ -139,6 +141,7 @@ export default function Dashboard({
 
   const activeSubjectStats = subjectStats.filter(s => s.subject.status !== 'archived')
   const ongoingSubjectStats = subjectStats.filter(s => s.subject.status === 'ongoing')
+  const archivedSubjectStats = subjectStats.filter(s => s.subject.status === 'archived')
   const firstName = user?.name?.split(' ')[0] ?? 'there'
 
   return (
@@ -301,6 +304,41 @@ export default function Dashboard({
           </div>
         )}
       </div>
+
+      {/* Archived Classes section */}
+      {archivedSubjectStats.length > 0 && (
+        <div className="mt-10 pt-6 border-t border-slate-200 dark:border-slate-800">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📦</span>
+              <h2 className="text-lg font-semibold text-slate-700 dark:text-slate-300">
+                Archived Classes
+              </h2>
+              <span className="badge-slate">{archivedSubjectStats.length}</span>
+            </div>
+            <button
+              onClick={() => setShowArchived(prev => !prev)}
+              className="text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5"
+            >
+              <span>{showArchived ? 'Hide Archived' : 'Show Archived'}</span>
+              <span className="text-[10px]">{showArchived ? '▲' : '▼'}</span>
+            </button>
+          </div>
+
+          {showArchived && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {archivedSubjectStats.map(stats => (
+                <SubjectCard
+                  key={stats.subject.id}
+                  data={stats}
+                  onDelete={handleDeleteSubject}
+                  onStatusChange={handleStatusChange}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Focus Mode Modal */}
       {showFocusModal && user && (
