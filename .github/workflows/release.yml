@@ -11,6 +11,9 @@ on:
 permissions:
   contents: write
 
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
+
 jobs:
   check-version:
     name: Check if version changed
@@ -84,7 +87,6 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload Mac artifacts
@@ -117,8 +119,6 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows artifacts
         uses: softprops/action-gh-release@v2
@@ -149,8 +149,6 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Linux artifacts
         uses: softprops/action-gh-release@v2
