@@ -7,8 +7,9 @@
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "postinstall": "electron-builder install-app-deps",
+    "build": "electron-vite build && electron-builder",
+    "compile": "electron-vite build",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:mac:arm64": "electron-vite build && electron-builder --mac --arm64",
     "build:mac:x64": "electron-vite build && electron-builder --mac --x64",
@@ -25,18 +26,31 @@
     "appId": "com.neuron.app",
     "productName": "Neuron",
     "directories": {
-      "output": "dist",
-      "buildResources": "build"
+      "output": "dist"
     },
     "files": [
       "out/**/*"
     ],
+    "icon": "build/icon",
     "mac": {
       "category": "public.app-category.education",
       "icon": "build/icon.icns",
+      "identity": null,
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ]
     },
     "win": {
