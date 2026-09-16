@@ -69,17 +69,25 @@ export function stem(word: string): string {
     .replace(/(?:ate|ates|ated|ating)$/, '')
 }
 
+/**
+ * Short domain-specific acronyms and terms that should not be dropped by the 4-letter threshold
+ */
+const SHORT_DOMAIN_TERMS = new Set([
+  'atp', 'dna', 'rna', 'mrna', 'trna', 'ph', 'gdp', 'roi', 'ecg', 'eeg', 'nadh',
+  'fadh2', 'co2', 'h2o', 'o2', 'cpi', 'llm', 'ai', 'cpu', 'ram', 'sql', 'api', 'ion'
+])
+
 export function extractKeyConcepts(text: string): string[] {
   // Capture quoted terms, capitalized words, acronyms, or substantive words
   const clean = text.replace(/[$]/g, '')
   const quoted = clean.match(/"([^"]+)"|'([^']+)'/g)?.map(q => q.replace(/['"]/g, '').trim()) || []
-  const capitalized = (clean.match(/\b[A-Z][a-zA-Z0-9_-]+\b/g) || [])
+  const capitalized = (clean.match(/\b(?:[A-Z]{2,5}|[A-Z][a-zA-Z0-9_-]+|p[Hh])\b/g) || [])
     .filter(w => !STOP_WORDS.has(w.toLowerCase()))
   const significantWords = clean
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter(w => w.length >= 4 && !STOP_WORDS.has(w))
+    .filter(w => (w.length >= 4 || SHORT_DOMAIN_TERMS.has(w)) && !STOP_WORDS.has(w))
 
   const all = [...quoted, ...capitalized, ...significantWords]
   const unique = Array.from(new Set(all.map(w => w.toLowerCase())))
@@ -177,16 +185,21 @@ export function evaluateSemantically(
   const conceptScore = concepts.length > 0 ? matchedConcepts.length / concepts.length : wordOverlap
   let combined = wordOverlap * 0.4 + conceptScore * 0.6
 
-  // Check for negation mismatch penalty
-  if (detectNegationMismatch(studentAnswer, modelAnswer)) {
-    combined = Math.max(0, combined - 0.3)
+  // Check for negation mismatch penalty - strict veto to prevent false positives
+  const hasNegationMismatch = detectNegationMismatch(studentAnswer, modelAnswer)
+  if (hasNegationMismatch) {
+    // If student contradicts the model answer polarity, hard-cap score at 0.30
+    // so quality is strictly 1 ('Wrong') and correct is false
+    combined = Math.min(0.30, Math.max(0, combined - 0.4))
   }
 
   const roundedScore = Math.round(combined * 100) / 100
   const { quality, diagnosticQuality } = scoreToQuality(roundedScore)
 
   let feedback = ''
-  if (roundedScore >= 0.85) {
+  if (hasNegationMismatch) {
+    feedback = 'Polarity conflict: your answer contradicts or negates the model answer.'
+  } else if (roundedScore >= 0.85) {
     feedback = 'Excellent answer! You captured all essential points.'
   } else if (roundedScore >= 0.65) {
     feedback = 'Strong answer. You understood the core concept well.'

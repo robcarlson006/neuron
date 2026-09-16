@@ -53,14 +53,23 @@ STUDENT ANSWER: ${studentAnswer}
 
 Evaluate the student's answer and respond in JSON:
 {
-  "correct": true or false,
+  "key_points_analyzed": [
+    { "point": "core fact or concept from model answer", "status": "recalled" }
+  ],
+  "contradictions_or_misconceptions": "Identify any factual errors, inverted relationships, or state 'None'.",
+  "feedback": "Specific, constructive feedback. What did they get right? What did they miss? Pinpoint any misconceptions.",
   "score": 0-5,
-  "feedback": "Specific, constructive feedback. What did they get right? What did they miss? What is the key concept they should understand?",
-  "matched_concepts": ["concept or keyword they successfully recalled"],
-  "missing_concepts": ["concept or keyword they missed or omitted"]
+  "correct": true or false
 }
 
-Be fair but academically rigorous. Partial credit answers that capture the core concept should be marked correct.
+GRADING CRITERIA & RULES:
+1. Deconstruct the model answer into 1-3 atomic key points and assess coverage.
+2. POLARITY & CONTRADICTION VETO: If the student asserts a direct factual contradiction, inverted cause-effect, or major misconception, score MUST be capped at 1 and correct MUST be false, even if other terms match.
+3. Be fair to paraphrases and synonyms: capture of the core concept in the student's own words counts as 'recalled'.
+4. Partial credit (score 3) if key points are partially recalled without major errors.
+5. Score scale: 5 = Full recall of core concepts; 3-4 = Partial recall with minor omissions; 1-2 = Significant errors or omissions; 0 = Blank or completely irrelevant.
+6. Order your thought process: analyze key points and misconceptions FIRST, then write feedback, and determine the score LAST.
+
 Return ONLY valid JSON.`
 }
 
@@ -126,13 +135,24 @@ export function parseEvaluationResponse(responseText: string): EvaluationResult 
     throw new Error('Invalid evaluation response: missing feedback field')
   }
 
-  const matched_concepts = Array.isArray(parsed.matched_concepts)
-    ? parsed.matched_concepts.filter((c: unknown) => typeof c === 'string')
-    : undefined
+  let matched_concepts: string[] | undefined
+  let missing_concepts: string[] | undefined
 
-  const missing_concepts = Array.isArray(parsed.missing_concepts)
-    ? parsed.missing_concepts.filter((c: unknown) => typeof c === 'string')
-    : undefined
+  if (Array.isArray(parsed.key_points_analyzed)) {
+    matched_concepts = parsed.key_points_analyzed
+      .filter((k: any) => k && (k.status === 'recalled' || k.status === 'partially_recalled'))
+      .map((k: any) => (typeof k.point === 'string' ? k.point : String(k?.point || k)))
+    missing_concepts = parsed.key_points_analyzed
+      .filter((k: any) => k && k.status === 'missed')
+      .map((k: any) => (typeof k.point === 'string' ? k.point : String(k?.point || k)))
+  } else {
+    if (Array.isArray(parsed.matched_concepts)) {
+      matched_concepts = parsed.matched_concepts.filter((c: unknown) => typeof c === 'string')
+    }
+    if (Array.isArray(parsed.missing_concepts)) {
+      missing_concepts = parsed.missing_concepts.filter((c: unknown) => typeof c === 'string')
+    }
+  }
 
   return {
     correct: parsed.correct,

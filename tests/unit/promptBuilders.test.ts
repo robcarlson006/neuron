@@ -115,6 +115,25 @@ describe('Prompt Builders', () => {
       expect(result.missing_concepts).toEqual(['Oxidative'])
     })
 
+    it('parses reasoning-first response with key_points_analyzed', () => {
+      const json = JSON.stringify({
+        key_points_analyzed: [
+          { point: 'Lowers activation energy', status: 'recalled' },
+          { point: 'Remains unconsumed', status: 'missed' }
+        ],
+        contradictions_or_misconceptions: 'None',
+        feedback: 'Good recall on activation energy.',
+        score: 3,
+        correct: true
+      })
+      const result = parseEvaluationResponse(json)
+      expect(result.correct).toBe(true)
+      expect(result.score).toBe(3)
+      expect(result.feedback).toBe('Good recall on activation energy.')
+      expect(result.matched_concepts).toEqual(['Lowers activation energy'])
+      expect(result.missing_concepts).toEqual(['Remains unconsumed'])
+    })
+
     it('throws on missing correct field', () => {
       const json = JSON.stringify({ score: 3, feedback: 'ok' })
       expect(() => parseEvaluationResponse(json)).toThrow('missing correct field')

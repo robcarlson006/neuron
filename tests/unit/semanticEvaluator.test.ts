@@ -42,6 +42,13 @@ describe('semanticEvaluator', () => {
       expect(concepts).toContain('mitochondria')
       expect(concepts).toContain('nadh')
     })
+
+    it('preserves short domain acronyms (e.g. ATP, DNA, pH, GDP)', () => {
+      const concepts = extractKeyConcepts('Blood pH is regulated by buffers to protect DNA and ATP synthesis.')
+      expect(concepts).toContain('ph')
+      expect(concepts).toContain('dna')
+      expect(concepts).toContain('atp')
+    })
   })
 
   describe('detectNegationMismatch', () => {
@@ -111,6 +118,15 @@ describe('semanticEvaluator', () => {
       const affirmative = evaluateSemantically('The cell membrane is permeable to water molecules.', model)
       const negated = evaluateSemantically('The cell membrane is not permeable to water molecules.', model)
       expect(negated.score).toBeLessThan(affirmative.score)
+    })
+
+    it('applies strict veto on negation mismatch to ensure quality is 1 (Wrong)', () => {
+      const model = 'The cell membrane is permeable to water.'
+      const negated = evaluateSemantically('The cell membrane is not permeable to water molecules.', model)
+      expect(negated.correct).toBe(false)
+      expect(negated.quality).toBe(1)
+      expect(negated.score).toBeLessThanOrEqual(0.30)
+      expect(negated.feedback).toContain('Polarity conflict')
     })
   })
 
