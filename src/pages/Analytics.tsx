@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import ProgressChart from '../components/ProgressChart'
+import LatexText from '../components/LatexText'
 import type { ReviewLog, Card, MCStats, ConceptMastery, RetentionForecastPoint, CompletedTaskStats } from '../types'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 
@@ -711,7 +712,7 @@ export default function Analytics(): React.JSX.Element {
                       key={card.id}
                       className="flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
                     >
-                      <p className="text-sm text-slate-700 dark:text-slate-300 truncate flex-1">{card.front}</p>
+                      <div className="text-sm text-slate-700 dark:text-slate-300 truncate flex-1"><LatexText forceInline>{card.front}</LatexText></div>
                       <div className="flex gap-0.5 flex-shrink-0">
                         {[1, 2, 3, 4, 5].map(star => (
                           <span

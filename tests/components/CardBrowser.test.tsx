@@ -197,4 +197,30 @@ describe('CardBrowser - Material-Based Organization & Search', () => {
 
     expect(onDeleteCards).toHaveBeenCalledWith(expect.arrayContaining([1, 2, 3]))
   })
+
+  it('renders math equations in card front and back via KaTeX', () => {
+    const mathCards: Card[] = [
+      {
+        id: 99,
+        subject_id: 10,
+        type: 'flashcard',
+        front: 'Differentiate $f(x)=x^3+3$.',
+        back: '$f\'(x)=3x^2$',
+        is_manual: 1,
+        created_at: '2026-09-16T12:00:00Z'
+      }
+    ]
+
+    const { container } = render(
+      <CardBrowser
+        cards={mathCards}
+        folders={[]}
+        materials={[]}
+      />
+    )
+
+    // KaTeX elements should be rendered inside the card item
+    const katexElements = container.querySelectorAll('.katex')
+    expect(katexElements.length).toBeGreaterThanOrEqual(2)
+  })
 })

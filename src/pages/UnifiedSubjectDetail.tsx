@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import PomodoroWidget from '../components/PomodoroWidget'
 import CardBrowser from '../components/CardBrowser'
+import LatexText from '../components/LatexText'
 import CurriculumView from '../components/classes/CurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
@@ -1962,11 +1963,11 @@ function CardDetailModal({
         </div>
         <div className="mb-4">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">{card.type === 'flashcard' ? 'Term' : 'Question'}</p>
-          <p className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">{card.front}</p>
+          <div className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4"><LatexText>{card.front}</LatexText></div>
         </div>
         <div className="mb-5">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">{card.type === 'flashcard' ? 'Definition' : 'Model Answer'}</p>
-          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">{card.back}</p>
+          <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4"><LatexText>{card.back}</LatexText></div>
         </div>
         <div className="grid grid-cols-3 gap-3 mb-5">
           <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">

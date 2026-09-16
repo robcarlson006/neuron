@@ -5,14 +5,16 @@ import 'katex/dist/katex.min.css'
 interface Props {
   children: string
   className?: string
+  forceInline?: boolean
 }
 
 /**
  * Renders text that may contain LaTeX in multiple formats:
  * - $$...$$ or \[...\] — display (block) math
  * - $...$ or \(...\) — inline math
+ * - \begin{env}...\end{env} — LaTeX block environments
  */
-export default function LatexText({ children, className }: Props): React.JSX.Element {
+export default function LatexText({ children, className, forceInline = false }: Props): React.JSX.Element {
   if (!children || typeof children !== 'string') {
     return <span className={className}>{children || ''}</span>
   }
@@ -22,7 +24,7 @@ export default function LatexText({ children, className }: Props): React.JSX.Ele
     <span className={className}>
       {parts.map((part, i) =>
         part.type === 'math' ? (
-          <KatexSpan key={i} latex={part.content} displayMode={part.display} />
+          <KatexSpan key={i} latex={part.content} displayMode={forceInline ? false : part.display} />
         ) : (
           <span key={i}>{part.content}</span>
         )
@@ -67,11 +69,13 @@ interface TextPart {
 // Group 1: $$...$$ → display math
 // Group 2: \[...\] → display math
 // Group 3: \(...\) → inline math
-// Group 4: $...$ → inline math (no newlines, no nested $ to avoid false positives)
-const LATEX_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^$\n]+?)\$/g
+// Group 4: \begin{env}...\end{env} → display math
+// Group 6: $...$ → inline math (no newlines, no nested $ to avoid false positives)
+const LATEX_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\4\}|\$([^$\n]+?)\$/g
 
 function splitLatex(text: string): TextPart[] {
   const parts: TextPart[] = []
+  LATEX_REGEX.lastIndex = 0
 
   let lastIndex = 0
   let match: RegExpExecArray | null
@@ -89,10 +93,13 @@ function splitLatex(text: string): TextPart[] {
       parts.push({ type: 'math', content: match[2].trim(), display: true })
     } else if (match[3] !== undefined) {
       // \(...\) → inline math
-      parts.push({ type: 'math', content: match[3], display: false })
+      parts.push({ type: 'math', content: match[3].trim(), display: false })
     } else if (match[4] !== undefined) {
+      // \begin{env}...\end{env} → display math
+      parts.push({ type: 'math', content: match[0].trim(), display: true })
+    } else if (match[6] !== undefined) {
       // $...$ → inline math
-      parts.push({ type: 'math', content: match[4], display: false })
+      parts.push({ type: 'math', content: match[6].trim(), display: false })
     }
 
     lastIndex = LATEX_REGEX.lastIndex

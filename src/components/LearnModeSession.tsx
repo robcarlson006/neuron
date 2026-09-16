@@ -578,9 +578,9 @@ export default function LearnModeSession({
                     </p>
 
                     {writtenFeedback && (
-                      <p className="text-xs text-slate-600 dark:text-slate-300 mb-2 leading-relaxed">
-                        {writtenFeedback}
-                      </p>
+                      <div className="text-xs text-slate-600 dark:text-slate-300 mb-2 leading-relaxed">
+                        <LatexText>{writtenFeedback}</LatexText>
+                      </div>
                     )}
 
                     {writtenResult === 'incorrect' && (

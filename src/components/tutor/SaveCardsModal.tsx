@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { parseCardsFromText, getCardTypeLabel } from '../../lib/cardParser'
+import LatexText from '../LatexText'
 
 interface SaveCardsModalProps {
   subjectId: number
@@ -192,8 +193,8 @@ export default function SaveCardsModal({
                     {card.type === 'flashcard' ? 'FC' : 'AR'}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{card.front}</p>
-                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 line-clamp-2">{card.back}</p>
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate"><LatexText forceInline>{card.front}</LatexText></div>
+                    <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 line-clamp-2"><LatexText forceInline>{card.back}</LatexText></div>
                   </div>
                   <div className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
                     isSelected

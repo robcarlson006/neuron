@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react'
 import type { Card, CardFolder, CardSchedule, Material } from '../types'
+import LatexText from './LatexText'
 
 interface CardBrowserProps {
   cards: Card[]
@@ -291,13 +292,13 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
             )}
           </div>
 
-          <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
-            {card.front.length > 110 ? card.front.slice(0, 110) + '...' : card.front}
-          </p>
+          <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+            <LatexText forceInline>{card.front}</LatexText>
+          </div>
           {card.back && (
-            <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-              {card.back.length > 120 ? card.back.slice(0, 120) + '...' : card.back}
-            </p>
+            <div className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+              <LatexText forceInline>{card.back}</LatexText>
+            </div>
           )}
         </div>
 

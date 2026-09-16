@@ -1,5 +1,6 @@
 import React from 'react'
 import type { AutoGradeResult } from '../lib/semanticEvaluator'
+import LatexText from './LatexText'
 
 interface AutoGradeFeedbackProps {
   result: AutoGradeResult | null
@@ -88,9 +89,9 @@ export default function AutoGradeFeedback({
       </div>
 
       {/* Feedback text */}
-      <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
-        {result.feedback}
-      </p>
+      <div className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
+        <LatexText>{result.feedback}</LatexText>
+      </div>
 
       {/* Concept tags */}
       {!compact && (result.matchedConcepts.length > 0 || result.missingConcepts.length > 0) && (

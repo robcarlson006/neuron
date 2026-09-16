@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
 import { parseCardsFromText } from '../../lib/cardParser'
+import LatexText from '../LatexText'
 import type { ParsedCard, DuplicateCheckResult } from '../../types'
 
 interface TutorCardReviewModalProps {
@@ -245,12 +246,12 @@ export default function TutorCardReviewModal({
                       </div>
                       <div className="flex items-start gap-2">
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-slate-700 dark:text-slate-200 leading-relaxed">
-                            {card.front}
-                          </p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1">
-                            {card.back}
-                          </p>
+                          <div className="text-xs font-medium text-slate-700 dark:text-slate-200 leading-relaxed">
+                            <LatexText>{card.front}</LatexText>
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1">
+                            <LatexText>{card.back}</LatexText>
+                          </div>
                         </div>
                       </div>
                     </div>

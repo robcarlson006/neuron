@@ -433,15 +433,14 @@ class LocalWhisperServiceManager {
     // 3. Prepare temporary 16kHz WAV file
     const tempDir = this.getModelsDir()
     const tempWav = join(tempDir, `temp_transcribe_${Date.now()}.wav`)
-    const tempJsonBase = join(tempDir, `temp_transcribe_${Date.now()}`)
-    const tempJsonFile = `${tempJsonBase}.json`
+    const tempJsonFile = `${tempWav}.json`
 
     try {
       await this.convertTo16kWav(audioPath, tempWav)
 
       // 4. Run whisper-cli
       await new Promise<void>((resolve, reject) => {
-        const args = ['-m', modelPath!, '-f', tempWav, '-oj', '-of', tempJsonBase]
+        const args = ['-m', modelPath!, '-f', tempWav, '-oj']
         const proc = spawn(whisperBin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
         let stderr = ''
 
@@ -512,8 +511,9 @@ class LocalWhisperServiceManager {
   }
 
   private parseWhisperTimestamp(ts: string): number {
-    // format: "00:01:23.456" or "01:23.456"
-    const parts = ts.split(':')
+    // format: "00:01:23.456" or "01:23.456" or "00:00:05,000"
+    const normalized = ts.replace(',', '.')
+    const parts = normalized.split(':')
     if (parts.length === 3) {
       const h = parseFloat(parts[0]) || 0
       const m = parseFloat(parts[1]) || 0
@@ -524,7 +524,7 @@ class LocalWhisperServiceManager {
       const s = parseFloat(parts[1]) || 0
       return m * 60 + s
     }
-    return parseFloat(ts) || 0
+    return parseFloat(normalized) || 0
   }
 }
 
