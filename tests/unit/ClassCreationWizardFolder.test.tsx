@@ -203,6 +203,52 @@ describe('ClassCreationWizard — Linked Folder Integration', () => {
       expect(onCloseMock).toHaveBeenCalledTimes(1)
     })
   })
+
+  it('allows moving past Step 2 of 5 (Materials) without uploading materials or linking a folder', async () => {
+    render(<ClassCreationWizard onClose={onCloseMock} />)
+    await navigateToMaterialsStep()
+
+    // Without uploading files or linking a folder, click Continue
+    const continueButton = screen.getByRole('button', { name: /Continue/i })
+    expect(continueButton).not.toBeDisabled()
+    fireEvent.click(continueButton)
+
+    // Should successfully advance to Step 3: Deadlines
+    await waitFor(() => {
+      expect(screen.getByText(/Add key dates for this class/i)).toBeInTheDocument()
+      expect(screen.getByText(/Step 3 of 5/i)).toBeInTheDocument()
+    })
+
+    // Continue to Step 4: Syllabus
+    fireEvent.click(screen.getByRole('button', { name: /Continue/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/How do you want to set up the syllabus/i)).toBeInTheDocument()
+      expect(screen.getByText(/Requires materials/i)).toBeInTheDocument()
+    })
+
+    // Continue to Step 5: Review
+    fireEvent.click(screen.getByRole('button', { name: /Continue/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/No materials uploaded/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Create Class/i })).toBeInTheDocument()
+    })
+
+    // Click Create Class
+    fireEvent.click(screen.getByRole('button', { name: /Create Class/i }))
+    await waitFor(() => {
+      expect(window.electronAPI.classCreate).toHaveBeenCalledTimes(1)
+      expect(window.electronAPI.classCreate).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          name: 'Biology 101',
+          materials: [],
+          syllabusOption: 'later',
+          linkedFolderPath: null
+        })
+      )
+      expect(onCloseMock).toHaveBeenCalledTimes(1)
+    })
+  })
 })
 
 describe('classHandlers — class:create linkedFolderPath handling', () => {

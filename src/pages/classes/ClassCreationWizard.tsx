@@ -56,6 +56,9 @@ export default function ClassCreationWizard({
   // Step 4: Syllabus
   const [syllabusOption, setSyllabusOption] = useState<'generate' | 'later'>('generate')
 
+  const hasMaterials = pendingFiles.length > 0 || !!linkedFolderPath
+  const effectiveSyllabusOption = hasMaterials ? syllabusOption : 'later'
+
   // ── Folder selection ──
 
   async function handleSelectFolder(): Promise<void> {
@@ -129,7 +132,7 @@ export default function ClassCreationWizard({
   }
 
   function canProceedFromMaterials(): boolean {
-    return pendingFiles.length > 0 || !!linkedFolderPath
+    return true
   }
 
   // ── Create ──
@@ -162,7 +165,7 @@ export default function ClassCreationWizard({
           deadline_date: d.deadline_date,
           deadline_type: d.deadline_type
         })),
-        syllabusOption,
+        syllabusOption: effectiveSyllabusOption,
         linkedFolderPath: linkedFolderPath || null
       }
 
@@ -283,7 +286,7 @@ export default function ClassCreationWizard({
     return (
       <div className="space-y-4">
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Upload your study materials — lecture notes, textbook chapters, slides, or any course content.
+          Upload your study materials (optional) — lecture notes, textbook chapters, slides, or any course content.
           Neuron will extract the text and use it to build your curriculum.
         </p>
 
@@ -414,9 +417,13 @@ export default function ClassCreationWizard({
         </p>
 
         <button
-          onClick={() => setSyllabusOption('generate')}
+          type="button"
+          onClick={() => hasMaterials && setSyllabusOption('generate')}
+          disabled={!hasMaterials}
           className={`w-full text-left p-4 rounded-xl border transition-all ${
-            syllabusOption === 'generate'
+            !hasMaterials
+              ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-slate-800'
+              : effectiveSyllabusOption === 'generate'
               ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20'
               : 'border-slate-300 dark:border-slate-600 hover:border-slate-400'
           }`}
@@ -424,18 +431,28 @@ export default function ClassCreationWizard({
           <div className="flex items-start gap-3">
             <span className="text-xl mt-0.5">🤖</span>
             <div>
-              <p className="font-medium text-slate-800 dark:text-slate-200">Auto-generate from materials</p>
+              <div className="flex items-center gap-2">
+                <p className="font-medium text-slate-800 dark:text-slate-200">Auto-generate from materials</p>
+                {!hasMaterials && (
+                  <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                    Requires materials
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                Neuron's AI will analyze your files and create a structured syllabus with modules, topics, and prerequisites.
+                {hasMaterials
+                  ? "Neuron's AI will analyze your files and create a structured syllabus with modules, topics, and prerequisites."
+                  : 'Upload materials or link a folder in Step 2 to enable AI syllabus generation.'}
               </p>
             </div>
           </div>
         </button>
 
         <button
+          type="button"
           onClick={() => setSyllabusOption('later')}
           className={`w-full text-left p-4 rounded-xl border transition-all ${
-            syllabusOption === 'later'
+            effectiveSyllabusOption === 'later'
               ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20'
               : 'border-slate-300 dark:border-slate-600 hover:border-slate-400'
           }`}
@@ -526,7 +543,7 @@ export default function ClassCreationWizard({
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50">
           <p className="font-semibold text-slate-800 dark:text-slate-200 text-sm">Syllabus</p>
           <p className="text-sm text-slate-500 mt-1">
-            {syllabusOption === 'generate'
+            {effectiveSyllabusOption === 'generate'
               ? '🤖 Auto-generate from materials (AI will create modules and topics)'
               : '✏️ I will set it up manually'}
           </p>
@@ -567,7 +584,6 @@ export default function ClassCreationWizard({
 
   function goNext(): void {
     if (step === 'info' && !canProceedFromInfo()) return
-    if (step === 'materials' && !canProceedFromMaterials()) return
     const nextIndex = currentIndex + 1
     if (nextIndex < stepOrder.length) {
       setStep(stepOrder[nextIndex])
@@ -587,10 +603,6 @@ export default function ClassCreationWizard({
     if (isLastStep) {
       await handleCreate()
     } else {
-      // Parse files when leaving the materials step
-      if (step === 'materials' && pendingFiles.length > 0 && parsedFiles.length === 0) {
-        await parsePendingFiles()
-      }
       goNext()
     }
   }
