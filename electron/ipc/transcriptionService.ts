@@ -104,6 +104,50 @@ class TranscriptionServiceManager {
     const buffer = options.audioBuffer || (await fs.promises.readFile(options.audioPath))
     const filename = path.basename(options.audioPath) || 'lecture.webm'
 
+    const MAX_CHUNK_SIZE = 24 * 1024 * 1024 // 24MB API payload limit
+    if (buffer.length > MAX_CHUNK_SIZE) {
+      const chunkResults: TranscriptionResult[] = []
+      const totalChunks = Math.ceil(buffer.length / MAX_CHUNK_SIZE)
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * MAX_CHUNK_SIZE
+        const end = Math.min(buffer.length, (i + 1) * MAX_CHUNK_SIZE)
+        const chunkBuffer = buffer.subarray(start, end)
+        const chunkRes = await this.transcribeWithOpenAICompatible({
+          ...options,
+          audioBuffer: Buffer.from(chunkBuffer)
+        })
+        chunkResults.push(chunkRes)
+      }
+
+      let stitchedText = ''
+      const stitchedSegments: TranscriptionSegment[] = []
+      let timeOffset = 0
+
+      for (const res of chunkResults) {
+        if (res.text) {
+          stitchedText += (stitchedText ? ' ' : '') + res.text
+        }
+        if (res.segments) {
+          for (const seg of res.segments) {
+            stitchedSegments.push({
+              start: seg.start + timeOffset,
+              end: seg.end + timeOffset,
+              text: seg.text
+            })
+          }
+        }
+        timeOffset += res.durationSeconds || 0
+      }
+
+      const totalDuration = Math.round(timeOffset)
+      return {
+        text: stitchedText,
+        timestampedText: this.formatSegmentsToTimestampedText(stitchedSegments, stitchedText),
+        durationSeconds: totalDuration,
+        segments: stitchedSegments
+      }
+    }
+
     const formData = new FormData()
     const blob = new Blob([new Uint8Array(buffer)], { type: 'audio/webm' })
     formData.append('file', blob, filename)
@@ -152,7 +196,7 @@ class TranscriptionServiceManager {
   }): Promise<TranscriptionResult> {
     const buffer = await fs.promises.readFile(options.audioPath)
     const base64Audio = buffer.toString('base64')
-    const model = options.model || 'gemini-3.6-flash'
+    const model = options.model || 'gemini-2.0-flash'
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${options.apiKey}`
 
     const prompt =
@@ -223,24 +267,32 @@ class TranscriptionServiceManager {
         const models = LocalWhisperService.listModels()
         const readyModel = models.find((m) => m.status === 'ready')
         const binary = LocalWhisperService.findWhisperBinary()
+        const ffmpeg = LocalWhisperService.findFfmpegBinary()
 
         if (!readyModel) {
           return {
             success: false,
-            message: 'No local Whisper model downloaded yet. Please download Whisper Base or Tiny.',
+            message: 'No local Whisper model downloaded yet. Please download Whisper Base or Tiny below.',
             latencyMs: Date.now() - startTime
           }
         }
         if (!binary) {
           return {
             success: false,
-            message: `Model ready (${readyModel.name}), but whisper-cli was not found in PATH or local-ai/bin.`,
+            message: `Model ready (${readyModel.name}), but whisper-cli was not found. Install it with: "brew install whisper-cpp" or place it in local-ai/bin.`,
+            latencyMs: Date.now() - startTime
+          }
+        }
+        if (!ffmpeg) {
+          return {
+            success: false,
+            message: `Model (${readyModel.name}) and whisper-cli ready, but ffmpeg was not found. Install it with: "brew install ffmpeg".`,
             latencyMs: Date.now() - startTime
           }
         }
         return {
           success: true,
-          message: `Local engine ready (${readyModel.name}, binary: ${path.basename(binary)})`,
+          message: `Local engine ready (${readyModel.name}, binary: ${path.basename(binary)}, ffmpeg detected)`,
           latencyMs: Date.now() - startTime
         }
       }
@@ -298,7 +350,7 @@ class TranscriptionServiceManager {
         if (!key) throw new Error('No Google Gemini API key provided')
 
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -355,10 +407,26 @@ class TranscriptionServiceManager {
     audioPath: string,
     options?: { provider?: string; apiKey?: string }
   ): Promise<TranscriptionResult> {
+    const explicitKey = options?.apiKey
     const chosenProvider = options?.provider || this.readMeta('transcription_provider') || 'auto'
-    const groqKey = options?.apiKey || this.readMeta('transcription_groq_key') || (getApiKey()?.startsWith('gsk_') ? getApiKey() : '')
-    const openaiKey = options?.apiKey || this.readMeta('transcription_openai_key') || (getApiKey()?.startsWith('sk-') ? getApiKey() : '')
-    const geminiKey = options?.apiKey || this.readMeta('transcription_gemini_key') || (getApiKey()?.startsWith('AIza') || getApiKey()?.startsWith('AQ.') ? getApiKey() : '')
+
+    let groqKey = this.readMeta('transcription_groq_key') || (getApiKey()?.startsWith('gsk_') ? getApiKey() : '')
+    let openaiKey = this.readMeta('transcription_openai_key') || (getApiKey()?.startsWith('sk-') ? getApiKey() : '')
+    let geminiKey = this.readMeta('transcription_gemini_key') || (getApiKey()?.startsWith('AIza') || getApiKey()?.startsWith('AQ.') ? getApiKey() : '')
+
+    if (explicitKey) {
+      if (chosenProvider === 'groq' || explicitKey.startsWith('gsk_')) {
+        groqKey = explicitKey
+      } else if (chosenProvider === 'openai' || explicitKey.startsWith('sk-')) {
+        openaiKey = explicitKey
+      } else if (chosenProvider === 'gemini' || explicitKey.startsWith('AIza') || explicitKey.startsWith('AQ.')) {
+        geminiKey = explicitKey
+      } else {
+        if (chosenProvider === 'openai') openaiKey = explicitKey
+        else if (chosenProvider === 'gemini') geminiKey = explicitKey
+        else groqKey = explicitKey
+      }
+    }
 
     if (chosenProvider === 'local') {
       return this.transcribeWithLocalWhisper(audioPath)

@@ -16,6 +16,7 @@ const mockElectronAPI = {
   getSchedule: jest.fn().mockResolvedValue(null),
   updateSchedule: jest.fn().mockResolvedValue({ success: true }),
   getDueCards: jest.fn().mockResolvedValue([]),
+  getAllCardsWithSchedule: jest.fn().mockResolvedValue([]),
   getAllSchedules: jest.fn().mockResolvedValue([]),
   processReview: jest.fn().mockResolvedValue({ sm2Result: {}, success: true }),
   saveReviewLog: jest.fn().mockResolvedValue({ id: 1 }),
@@ -115,8 +116,11 @@ const mockElectronAPI = {
   unlinkFolderFromClass: jest.fn().mockResolvedValue({ success: true }),
   syncClassFolder: jest.fn().mockResolvedValue({ success: true, addedCount: 0, updatedCount: 0 }),
   openFolder: jest.fn().mockResolvedValue(undefined),
-  getFolderStatus: jest.fn().mockResolvedValue({ isWatching: false, status: 'idle' }),
-  onFolderSync: jest.fn().mockReturnValue(() => {}),
+  // Study Sessions
+  startStudySession: jest.fn().mockResolvedValue({ id: 101, user_id: 1, subject_id: 1, started_at: new Date().toISOString() }),
+  endStudySession: jest.fn().mockResolvedValue({ success: true }),
+  getRecentStudySessions: jest.fn().mockResolvedValue([]),
+  getInterleavedDueCards: jest.fn().mockResolvedValue([]),
 }
 
 Object.defineProperty(window, 'electronAPI', {
@@ -127,6 +131,5 @@ Object.defineProperty(window, 'electronAPI', {
 // Mock react-router-dom
 jest.mock('react-router-dom', () => ({
   ...jest.requireActual('react-router-dom'),
-  useNavigate: () => jest.fn(),
-  useParams: () => ({})
+  useNavigate: () => jest.fn()
 }))

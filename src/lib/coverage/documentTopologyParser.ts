@@ -85,7 +85,6 @@ export function parseDocumentTopology(
  */
 function parseSlideDeckTopology(text: string): DocumentTopology {
   // Try splitting by standard slide delimiters: [Slide X], Slide X:, or --- dividers
-  const slideRegex = /(?:^|\n)(?:\[Slide\s*(\d+)\]|Slide\s*(\d+):|(?:\s*---\s*\n(?=#|\w)))/i
   const rawParts = text.split(/(?=(?:^|\n)(?:\[Slide\s*\d+\]|Slide\s*\d+:|---\s*\n))/i)
 
   const chunks: AtomicChunk[] = []

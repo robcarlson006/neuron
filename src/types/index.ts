@@ -558,6 +558,23 @@ export interface SyllabusModule {
   topic_count?: number
 }
 
+export type TopicRetentionStatus = 'fresh' | 'fading' | 'overdue'
+
+export interface TopicSpacedMemory {
+  id: number
+  topic_id: number
+  user_id: number
+  subject_id: number
+  stability: number
+  difficulty: number
+  retrievability: number
+  reps: number
+  lapses: number
+  last_studied_at: string
+  next_review_due: string
+  status: TopicRetentionStatus
+}
+
 export interface ModuleTopic {
   id: number
   module_id: number
@@ -568,17 +585,26 @@ export interface ModuleTopic {
   created_at: string
   completed?: boolean
   studied?: boolean
+  has_new_material?: boolean | number
+  is_gap?: boolean | number
+  // SRS retention fields
+  retrievability?: number
+  retention_status?: TopicRetentionStatus
+  next_review_due?: string
+  stability?: number
+  days_overdue?: number
 }
 
-/** Result of an incremental syllabus update (syllabus:updateFromMaterials).
- * `new_module_count`/`new_topic_count` are counts of rows ADDED by the update —
- * existing modules and topics are never modified or deleted. */
+/** Result of a syllabus update or reconciliation (syllabus:updateFromMaterials or syllabus:generateFromMaterials). */
 export interface SyllabusUpdateResult {
   modules: SyllabusModule[]
   new_module_count: number
   new_topic_count: number
   processed_material_count: number
   needs_updates: boolean
+  preserved_completed_count?: number
+  gap_topic_count?: number
+  updated_topic_count?: number
 }
 
 // ── Tutor Session Types ───────────────────────────────────────────────────
@@ -587,6 +613,12 @@ export interface TutorSession {
   id: number
   subject_id: number
   user_id: number
+  title?: string
+  last_message_at?: number | string
+  is_pinned?: boolean | number
+  last_message_preview?: string
+  message_count?: number
+  subject_name?: string
   session_type: 'tutor' | 'general' | 'quiz'
   phase: 'structured_qa' | 'socratic' | 'summary' | 'complete'
   module_id?: number
@@ -675,6 +707,8 @@ export interface TutorStreamParams {
   targetTopics?: string[]
   isFillGaps?: boolean
   gapTopics?: string[]
+  isSpacedReview?: boolean
+  spacedReviewTopics?: string[]
 }
 
 export interface TutorSessionConfig {
@@ -689,6 +723,8 @@ export interface TutorSessionConfig {
   target_topics?: string[]
   is_fill_gaps?: boolean
   gap_topics?: string[]
+  is_spaced_review?: boolean
+  spaced_review_topics?: string[]
 }
 
 export interface TutorSessionRuntime {
@@ -1028,6 +1064,26 @@ export interface PracticeEvaluationResult {
   key_principles?: string[]
   suggested_next_action?: 'continue' | 'variant' | 'review_concept'
 }
+
+export interface AutonomousPracticeGenOptions {
+  subjectId: number
+  userId: number
+  moduleId?: number | null
+  topicId?: number | null
+  materialId?: number | null
+  count?: number
+  autoCount?: boolean
+  difficultyFocus?: 'adaptive' | 'remediate_struggles' | 'foundational' | 'challenge'
+}
+
+export interface AutonomousPracticeGenResult {
+  success: boolean
+  count: number
+  problems?: PracticeProblem[]
+  error?: string
+  rationale?: string
+}
+
 
 
 

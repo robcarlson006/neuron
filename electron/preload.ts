@@ -10,7 +10,8 @@ import type {
   TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
   HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus,
   FolderSyncResult, FolderSyncEvent, Lecture,
-  PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult
+  PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult,
+  AutonomousPracticeGenOptions, AutonomousPracticeGenResult
 } from '../src/types'
 
 const electronAPI = {
@@ -312,13 +313,17 @@ const electronAPI = {
 
   // ── Tutor Sessions ──
   tutorCreateSession: (subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: {
-    duration_minutes: number | null; depth_level: number; never_studied: number
+    duration_minutes: number | null; depth_level: number; never_studied: number; title?: string
   }): Promise<TutorSession> =>
     ipcRenderer.invoke('tutor:createSession', subjectId, userId, sessionType, moduleId, config),
   tutorGetSession: (sessionId: number): Promise<{ session: TutorSession; messages: Message[] } | null> =>
     ipcRenderer.invoke('tutor:getSession', sessionId),
-  tutorListSessions: (subjectId: number, limit?: number): Promise<TutorSession[]> =>
+  tutorListSessions: (subjectId?: number | null, limit?: number): Promise<TutorSession[]> =>
     ipcRenderer.invoke('tutor:listSessions', subjectId, limit),
+  tutorUpdateSessionTitle: (sessionId: number, title: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('tutor:updateSessionTitle', sessionId, title),
+  tutorToggleSessionPin: (sessionId: number, isPinned: boolean): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('tutor:toggleSessionPin', sessionId, isPinned),
   tutorUpdateSessionPhase: (sessionId: number, phase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:updateSessionPhase', sessionId, phase),
   tutorEndSession: (sessionId: number, summary?: string, options?: { targetTopics?: string[]; moduleId?: number }): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
@@ -343,6 +348,10 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:updateMastery', userId, subjectId, topic, score),
   tutorStreamChat: (params: TutorStreamParams) =>
     ipcRenderer.invoke('tutor:streamTutorChat', params),
+  tutorGetSubjectRetentionSummary: (userId: number, subjectId: number): Promise<import('../src/lib/memory/topicSrsEngine').SubjectRetentionSummary> =>
+    ipcRenderer.invoke('tutor:getSubjectRetentionSummary', userId, subjectId),
+  tutorGetTopDueMaintenanceTopics: (userId: number, limit?: number): Promise<import('../src/lib/memory/topicSrsEngine').TopicRetentionMetrics[]> =>
+    ipcRenderer.invoke('tutor:getTopDueMaintenanceTopics', userId, limit),
   onTutorChunk: (cb: (chunk: { conversationId: number; content: string; type: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; content: string; type: string }): void => cb(data)
     ipcRenderer.on('tutor:chunk', handler)
@@ -620,6 +629,8 @@ const electronAPI = {
     ipcRenderer.invoke('practice:endSession', sessionId, summary),
   practiceGetStats: (subjectId: number, userId: number): Promise<{ totalProblems: number; totalSessions: number; totalCompleted: number; totalCorrect: number; accuracy: number }> =>
     ipcRenderer.invoke('practice:getStats', subjectId, userId),
+  practiceAutonomousGenerate: (options: AutonomousPracticeGenOptions): Promise<AutonomousPracticeGenResult> =>
+    ipcRenderer.invoke('practice:autonomousGenerate', options),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

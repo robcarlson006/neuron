@@ -291,7 +291,9 @@ function ClassRedirect(): React.JSX.Element {
                   <Route path="/analytics" element={<Analytics />} />
                   <Route path="/tutor" element={<TutorHub />} />
                   <Route path="/tutor/general" element={<GeneralChat />} />
+                  <Route path="/tutor/general/session/:sessionId" element={<GeneralChat />} />
                   <Route path="/tutor/:classId" element={<TutorSession />} />
+                  <Route path="/tutor/:classId/session/:sessionId" element={<TutorSession />} />
                   <Route path="/settings" element={<Settings onStartDemo={handleStartDemo} />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Route>

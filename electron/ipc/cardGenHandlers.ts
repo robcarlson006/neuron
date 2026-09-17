@@ -128,6 +128,10 @@ export function registerCardGenerationHandlers(): void {
         if (mod) moduleTitle = mod.title
       }
 
+      const config = getAIConfig()
+      const apiKey = getApiKey()
+      if (!apiKey) throw new Error('AI API key not configured.')
+
       const existingCards = db.prepare(
         'SELECT front, back FROM cards WHERE subject_id = ? AND material_id IS NOT NULL'
       ).all(subjectId) as { front: string; back: string }[]

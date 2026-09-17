@@ -934,7 +934,7 @@ function SubjectDetailStudyMenu({ subjectId, disabled, folderId }: { subjectId: 
     ? [
         {
           label: 'Flashcards',
-          desc: 'Flip through cards in this folder — no schedule impact',
+          desc: 'Study cards in this folder with progress tracking',
           route: `/study/${subjectId}?folderId=${folderId}`,
           dot: 'bg-violet-500'
         },

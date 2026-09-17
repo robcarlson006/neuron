@@ -78,6 +78,20 @@ export default function ClassOverview(): React.JSX.Element {
     }
   }
 
+  function handleStartSpacedReview(moduleId?: number, selectedTopics?: string[]): void {
+    if (subject) {
+      const config: import('../../types').TutorSessionConfig = {
+        duration_minutes: 15,
+        depth_level: 3,
+        never_studied: false,
+        module_id: moduleId,
+        is_spaced_review: true,
+        spaced_review_topics: selectedTopics
+      }
+      navigate(`/tutor/${subjectId}?config=${encodeURIComponent(JSON.stringify(config))}`)
+    }
+  }
+
   async function handleGenerateCards(moduleId: number, options?: import('../../types').ModuleCardGenOptions): Promise<void> {
     setLoadingCards(prev => ({ ...prev, [moduleId]: true }))
     try {
@@ -231,6 +245,7 @@ export default function ClassOverview(): React.JSX.Element {
           modules={modules}
           subjectName={subject.name}
           onStartTutor={handleStartTutor}
+          onStartSpacedReview={handleStartSpacedReview}
           onGenerateCards={handleGenerateCards}
           onToggleTopic={handleToggleTopic}
           loadingCards={loadingCards}
@@ -243,16 +258,15 @@ export default function ClassOverview(): React.JSX.Element {
             <button
               onClick={async () => {
                 const ok = confirm(
-                  'Regenerate the entire syllabus from ALL materials?\n\n' +
-                  'This rebuilds every module from scratch. Existing completion progress on ' +
-                  'modules with matching titles will be preserved, but topics may be reordered ' +
-                  'or renamed by the AI.\n\nContinue?'
+                  'Reconcile and restructure the syllabus from ALL materials?\n\n' +
+                  'This organizes your curriculum into the most logical pedagogical sequence. ' +
+                  'All topic completions and study history will be preserved, and any newly identified topics will be highlighted.\n\nContinue?'
                 )
                 if (!ok) return
                 try {
                   const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
                   if (result?.length) {
-                    addToast({ type: 'success', title: 'Syllabus Regenerated', message: `${result.length} modules generated.` })
+                    addToast({ type: 'success', title: 'Syllabus Reconciled', message: `${result.length} modules organized. Your progress was preserved.` })
                     loadClassData()
                   }
                 } catch {

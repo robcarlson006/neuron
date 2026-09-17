@@ -5,6 +5,7 @@ import { getAIConfig, getApiKey } from './aiConfigStore'
 import { safeParseAIJson } from '../../src/lib/jsonRepair'
 import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
+import { syncModuleCompletionStatus } from './tutorHandlers'
 
 let db: Database.Database
 
@@ -17,44 +18,466 @@ function parseAIJson<T>(responseText: string): T {
   return safeParseAIJson<T>(responseText, {} as T)
 }
 
+export interface ParsedReconciledTopic {
+  title: string
+  description?: string | null
+  matched_previous_topic?: string | null
+  coverage_delta?: 'identical' | 'deepened' | 'new_topic' | 'new_prerequisite'
+}
+
+export interface ParsedReconciledModule {
+  title: string
+  description?: string | null
+  chapter_number?: number | null
+  chapter_title?: string | null
+  page_start?: number | null
+  page_end?: number | null
+  hours_estimated?: number | null
+  prerequisites?: string | null
+  topics: ParsedReconciledTopic[]
+}
+
+/** Helper to run commands inside a transaction across better-sqlite3 and node:sqlite */
+function runInTransaction<T>(database: any, fn: () => T): T {
+  if (typeof database.transaction === 'function') {
+    return database.transaction(fn)()
+  }
+  database.exec('BEGIN')
+  try {
+    const res = fn()
+    database.exec('COMMIT')
+    return res
+  } catch (err) {
+    database.exec('ROLLBACK')
+    throw err
+  }
+}
+
+/** Normalizes a string for robust matching across renames and spacing changes */
+function normText(str: string): string {
+  return (str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /**
- * Full syllabus generation from ALL of a subject's materials. Destructive by
- * design (it is only ever triggered by an explicit user action), but preserves
- * module completion statuses by matching module titles before/after the rebuild,
- * and marks every material as syllabus_processed.
+ * Reconciles an existing syllabus with a new curriculum structure:
+ * - Updates existing module_topics in place, preserving primary keys, study logs, practice problems, and flashcards.
+ * - Marks deepened topics with has_new_material = 1 without wiping their completed status.
+ * - Flags newly introduced topics as gaps (is_gap = 1).
+ * - Synchronizes module statuses using syncModuleCompletionStatus.
  */
-async function generateFromAllMaterials(subjectId: number) {
+export function reconcileCurriculum(
+  database: any,
+  subjectId: number,
+  parsedModules: ParsedReconciledModule[],
+  userId?: number,
+  materialModuleAssignments?: { material_filename: string; module_title: string }[]
+) {
+  let actualUserId = userId
+  if (!actualUserId) {
+    try {
+      const u = database.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined
+      actualUserId = u?.id || 1
+    } catch {
+      actualUserId = 1
+    }
+  }
+
+  const subject = database.prepare('SELECT id, name, subject_type, time_commitment_minutes FROM subjects WHERE id = ?').get(subjectId) as
+    { id: number; name: string; subject_type?: string; time_commitment_minutes?: number } | undefined
+  const isBook = subject?.subject_type === 'book'
+  const hoursPerWeek = Math.max(1, Math.round((subject?.time_commitment_minutes || 60) / 60))
+
+  const existingModules = database.prepare(
+    'SELECT * FROM syllabus_modules WHERE subject_id = ? ORDER BY sort_order ASC'
+  ).all(subjectId) as (SyllabusModule & { status: string })[]
+
+  const existingTopics = database.prepare(`
+    SELECT mt.id, mt.module_id, sm.title as module_title, mt.title, mt.description, mt.sort_order,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM module_topic_study_log sl WHERE sl.topic_id = mt.id AND sl.user_id = ?
+      ) THEN 1 ELSE 0 END as completed,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM practice_problems pp WHERE pp.topic_id = mt.id
+      ) THEN 1 ELSE 0 END as has_problems,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM cards c WHERE c.topic_id = mt.id
+      ) THEN 1 ELSE 0 END as has_cards
+    FROM module_topics mt
+    JOIN syllabus_modules sm ON sm.id = mt.module_id
+    WHERE sm.subject_id = ?
+    ORDER BY sm.sort_order ASC, mt.sort_order ASC
+  `).all(actualUserId, subjectId) as {
+    id: number
+    module_id: number
+    module_title: string
+    title: string
+    description: string | null
+    sort_order: number
+    completed: number
+    has_problems: number
+    has_cards: number
+  }[]
+
+  const isInitialGeneration = existingModules.length === 0 && existingTopics.length === 0
+
+  return runInTransaction(database, () => {
+    const usedExistingTopicIds = new Set<number>()
+    const usedExistingModuleIds = new Set<number>()
+    let preservedCompletedCount = 0
+    let gapTopicCount = 0
+    let updatedTopicCount = 0
+    let newModuleCount = 0
+    let newTopicCount = 0
+
+    interface PlannedTopic {
+      topicData: ParsedReconciledTopic
+      existingTopicId?: number
+      isGap: boolean
+      hasNewMaterial: boolean
+      isCompleted: boolean
+    }
+
+    interface PlannedModule {
+      moduleData: ParsedReconciledModule
+      existingModuleId?: number
+      topics: PlannedTopic[]
+    }
+
+    const plannedModules: PlannedModule[] = []
+
+    for (const newMod of parsedModules) {
+      let matchedModule = existingModules.find(
+        m => !usedExistingModuleIds.has(m.id) && normText(m.title) === normText(newMod.title)
+      )
+
+      const plannedTopics: PlannedTopic[] = []
+
+      for (const newTop of newMod.topics || []) {
+        let matchedTopic: typeof existingTopics[0] | undefined = undefined
+
+        // 1. Check AI-specified matched_previous_topic
+        if (newTop.matched_previous_topic) {
+          const normMatch = normText(newTop.matched_previous_topic)
+          matchedTopic = existingTopics.find(
+            t => !usedExistingTopicIds.has(t.id) && normText(t.title) === normMatch
+          )
+        }
+
+        // 2. Exact or normalized title match
+        if (!matchedTopic) {
+          const normTitle = normText(newTop.title)
+          matchedTopic = existingTopics.find(
+            t => !usedExistingTopicIds.has(t.id) && normText(t.title) === normTitle
+          )
+        }
+
+        // 3. Substring similarity match (for slight renames like "Glycolysis pathway" -> "Glycolysis")
+        if (!matchedTopic && newTop.title.length > 5) {
+          const normNew = normText(newTop.title)
+          matchedTopic = existingTopics.find(t => {
+            if (usedExistingTopicIds.has(t.id)) return false
+            const normOld = normText(t.title)
+            if (normNew.length === 0 || normOld.length === 0) return false
+            return (normNew.includes(normOld) || normOld.includes(normNew)) &&
+              Math.min(normNew.length, normOld.length) / Math.max(normNew.length, normOld.length) >= 0.65
+          })
+        }
+
+        if (matchedTopic) {
+          usedExistingTopicIds.add(matchedTopic.id)
+          const isDeepened = newTop.coverage_delta === 'deepened'
+          if (matchedTopic.completed) preservedCompletedCount++
+          if (isDeepened) updatedTopicCount++
+
+          plannedTopics.push({
+            topicData: newTop,
+            existingTopicId: matchedTopic.id,
+            isGap: false,
+            hasNewMaterial: isDeepened,
+            isCompleted: Boolean(matchedTopic.completed)
+          })
+        } else {
+          // Brand-new topic introduced
+          const isGap = !isInitialGeneration
+          if (isGap) gapTopicCount++
+          newTopicCount++
+
+          plannedTopics.push({
+            topicData: newTop,
+            isGap,
+            hasNewMaterial: false,
+            isCompleted: false
+          })
+        }
+      }
+
+      // If module wasn't matched by title, match to the existing module that shares the most topics
+      if (!matchedModule && plannedTopics.length > 0) {
+        const candidateCounts = new Map<number, number>()
+        for (const pt of plannedTopics) {
+          if (pt.existingTopicId) {
+            const oldTopic = existingTopics.find(t => t.id === pt.existingTopicId)
+            if (oldTopic && !usedExistingModuleIds.has(oldTopic.module_id)) {
+              candidateCounts.set(oldTopic.module_id, (candidateCounts.get(oldTopic.module_id) || 0) + 1)
+            }
+          }
+        }
+        let bestModId: number | null = null
+        let maxCount = 0
+        for (const [modId, count] of candidateCounts.entries()) {
+          if (count > maxCount) {
+            maxCount = count
+            bestModId = modId
+          }
+        }
+        if (bestModId) {
+          matchedModule = existingModules.find(m => m.id === bestModId)
+        }
+      }
+
+      if (matchedModule) {
+        usedExistingModuleIds.add(matchedModule.id)
+      } else {
+        newModuleCount++
+      }
+
+      plannedModules.push({
+        moduleData: newMod,
+        existingModuleId: matchedModule?.id,
+        topics: plannedTopics
+      })
+    }
+
+    // Execute Module and Topic Updates / Inserts
+    const activeModuleIds: number[] = []
+
+    for (let i = 0; i < plannedModules.length; i++) {
+      const plan = plannedModules[i]
+      const mod = plan.moduleData
+      let moduleId: number
+
+      if (plan.existingModuleId) {
+        moduleId = plan.existingModuleId
+        database.prepare(`
+          UPDATE syllabus_modules
+          SET title = ?, description = ?, hours_estimated = ?, sort_order = ?,
+              chapter_number = ?, chapter_title = ?, page_start = ?, page_end = ?, prerequisites = ?
+          WHERE id = ?
+        `).run(
+          mod.title, mod.description || null,
+          mod.hours_estimated || hoursPerWeek, i,
+          isBook ? (mod.chapter_number || i + 1) : null,
+          isBook ? mod.title : null,
+          isBook ? (mod.page_start || null) : null,
+          isBook ? (mod.page_end || null) : null,
+          mod.prerequisites || null,
+          moduleId
+        )
+      } else {
+        const insertRes = database.prepare(`
+          INSERT INTO syllabus_modules
+            (subject_id, title, description, week_number, status, hours_estimated, sort_order,
+             chapter_number, chapter_title, page_start, page_end, prerequisites)
+          VALUES (?, ?, ?, null, 'pending', ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          subjectId, mod.title, mod.description || null,
+          mod.hours_estimated || hoursPerWeek, i,
+          isBook ? (mod.chapter_number || i + 1) : null,
+          isBook ? mod.title : null,
+          isBook ? (mod.page_start || null) : null,
+          isBook ? (mod.page_end || null) : null,
+          mod.prerequisites || null
+        )
+        moduleId = Number(insertRes.lastInsertRowid)
+      }
+      activeModuleIds.push(moduleId)
+
+      // Re-anchor or insert topics
+      for (let j = 0; j < plan.topics.length; j++) {
+        const tp = plan.topics[j]
+        if (tp.existingTopicId) {
+          database.prepare(`
+            UPDATE module_topics
+            SET module_id = ?, title = ?, description = ?, sort_order = ?,
+                has_new_material = ?, is_gap = ?
+            WHERE id = ?
+          `).run(
+            moduleId, tp.topicData.title, tp.topicData.description || null, j,
+            tp.hasNewMaterial ? 1 : 0, tp.isGap ? 1 : 0,
+            tp.existingTopicId
+          )
+        } else {
+          database.prepare(`
+            INSERT INTO module_topics (module_id, title, description, sort_order, has_new_material, is_gap)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(
+            moduleId, tp.topicData.title, tp.topicData.description || null, j,
+            tp.hasNewMaterial ? 1 : 0, tp.isGap ? 1 : 0
+          )
+        }
+      }
+    }
+
+    // Safely handle unmapped topics from previous generation
+    const unmappedTopics = existingTopics.filter(t => !usedExistingTopicIds.has(t.id))
+    for (const ut of unmappedTopics) {
+      if (ut.completed || ut.has_problems || ut.has_cards) {
+        // Keep progress and problem links intact by assigning to the last active module
+        const fallbackModuleId = activeModuleIds[activeModuleIds.length - 1] || ut.module_id
+        database.prepare('UPDATE module_topics SET module_id = ? WHERE id = ?').run(fallbackModuleId, ut.id)
+      } else {
+        database.prepare('DELETE FROM module_topics WHERE id = ?').run(ut.id)
+      }
+    }
+
+    // Delete unused empty modules
+    if (activeModuleIds.length > 0) {
+      const placeholders = activeModuleIds.map(() => '?').join(',')
+      database.prepare(`
+        DELETE FROM syllabus_modules
+        WHERE subject_id = ?
+          AND id NOT IN (${placeholders})
+          AND id NOT IN (SELECT DISTINCT module_id FROM module_topics)
+      `).run(subjectId, ...activeModuleIds)
+    }
+
+    // Synchronize module completion statuses
+    for (const modId of activeModuleIds) {
+      syncModuleCompletionStatus(database, modId, actualUserId)
+    }
+
+    // Mark materials and subject as processed
+    database.prepare('UPDATE materials SET syllabus_processed = 1 WHERE subject_id = ?').run(subjectId)
+    database.prepare('UPDATE subjects SET syllabus_generated = 1 WHERE id = ?').run(subjectId)
+
+    // Apply material assignments if any
+    if (materialModuleAssignments && Array.isArray(materialModuleAssignments)) {
+      for (const assignment of materialModuleAssignments) {
+        if (!assignment?.material_filename || !assignment?.module_title) continue
+        const mat = database.prepare('SELECT id FROM materials WHERE subject_id = ? AND filename = ?')
+          .get(subjectId, assignment.material_filename) as { id: number } | undefined
+        const target = database.prepare('SELECT id FROM syllabus_modules WHERE subject_id = ? AND title = ?')
+          .get(subjectId, assignment.module_title) as { id: number } | undefined
+        if (mat && target) {
+          database.prepare('UPDATE materials SET module_id = ? WHERE id = ?').run(target.id, mat.id)
+        }
+      }
+    }
+
+    const modules = listModulesWithCountsHelper(database, subjectId)
+
+    return {
+      modules,
+      new_module_count: newModuleCount,
+      new_topic_count: newTopicCount,
+      preserved_completed_count: preservedCompletedCount,
+      gap_topic_count: gapTopicCount,
+      updated_topic_count: updatedTopicCount,
+      processed_material_count: 0,
+      needs_updates: newModuleCount > 0 || newTopicCount > 0 || gapTopicCount > 0 || updatedTopicCount > 0
+    }
+  })
+}
+
+/** Helper to list modules with counts */
+function listModulesWithCountsHelper(database: any, subjectId: number) {
+  return database.prepare(`
+    SELECT m.*,
+      (SELECT COUNT(*) FROM module_topics t WHERE t.module_id = m.id) as topic_count
+    FROM syllabus_modules m
+    WHERE m.subject_id = ?
+    ORDER BY m.sort_order ASC
+  `).all(subjectId)
+}
+
+/**
+ * Reconciles syllabus with AI across ALL materials while preserving learner progress.
+ */
+async function reconcileSyllabusFromAI(subjectId: number, targetMaterialIds?: number[]) {
   const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subjectId) as
-    { name: string; time_commitment_minutes: number; subject_type?: string; total_pages?: number; total_chapters?: number } | undefined
+    { id: number; name: string; time_commitment_minutes: number; subject_type?: string; total_pages?: number; total_chapters?: number } | undefined
   if (!subject) throw new Error('Subject not found')
 
-    const materials = db.prepare(
+  let materials: { id: number; filename: string; content_text: string }[]
+  if (targetMaterialIds && targetMaterialIds.length > 0) {
+    materials = db.prepare(
+      `SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND id IN (${targetMaterialIds.map(() => '?').join(',')})`
+    ).all(subjectId, ...targetMaterialIds) as typeof materials
+  } else {
+    materials = db.prepare(
       'SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL'
-    ).all(subjectId) as { id: number; filename: string; content_text: string }[]
+    ).all(subjectId) as typeof materials
+  }
 
-    if (materials.length === 0) throw new Error('No materials with content found')
+  if (materials.length === 0) throw new Error('No materials with content found')
 
-    // Build comprehensive material overview across all sections
-    const materialSummaries = materials.map(m =>
-      buildComprehensiveOutline(m.content_text, m.filename)
-    ).join('\n\n---\n\n')
+  let actualUserId: number = 1
+  try {
+    const u = db.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined
+    if (u?.id) actualUserId = u.id
+  } catch { /* ignore */ }
 
-    const weeklyHours = subject.time_commitment_minutes || 60
-    const hoursPerWeek = Math.max(1, Math.round(weeklyHours / 60))
-    const isBook = subject?.subject_type === 'book'
+  // Snapshot existing modules and topics
+  const existingModules = db.prepare(
+    'SELECT id, title, description, status FROM syllabus_modules WHERE subject_id = ? ORDER BY sort_order ASC'
+  ).all(subjectId) as { id: number; title: string; description: string | null; status: string }[]
 
-    let prompt: string
-    if (isBook) {
-      prompt = `You are an expert curriculum designer. Create a detailed syllabus for a book called "${subject.name}" based on the following source materials.
+  const existingTopics = db.prepare(`
+    SELECT mt.id, mt.module_id, sm.title as module_title, mt.title,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM module_topic_study_log sl WHERE sl.topic_id = mt.id AND sl.user_id = ?
+      ) THEN 1 ELSE 0 END as completed
+    FROM module_topics mt
+    JOIN syllabus_modules sm ON sm.id = mt.module_id
+    WHERE sm.subject_id = ?
+    ORDER BY sm.sort_order ASC, mt.sort_order ASC
+  `).all(actualUserId, subjectId) as { id: number; module_id: number; module_title: string; title: string; completed: number }[]
 
+  const materialSummaries = materials.map(m =>
+    buildComprehensiveOutline(m.content_text, m.filename)
+  ).join('\n\n---\n\n')
+
+  const weeklyHours = subject.time_commitment_minutes || 60
+  const hoursPerWeek = Math.max(1, Math.round(weeklyHours / 60))
+  const isBook = subject?.subject_type === 'book'
+
+  let existingContext = ''
+  if (existingTopics.length > 0) {
+    existingContext = `
+EXISTING SYLLABUS AND STUDENT PROGRESS:
+The student already has an existing syllabus and has completed some topics:
+${existingModules.map(m => {
+  const modTopics = existingTopics.filter(t => t.module_id === m.id)
+  return `Module "${m.title}":\n` + (modTopics.length > 0
+    ? modTopics.map(t => `  - "${t.title}" [${t.completed ? 'COMPLETED by student' : 'Pending'}]`).join('\n')
+    : '  (None)')
+}).join('\n\n')}
+
+CRITICAL CONTINUITY REQUIREMENTS:
+- You may reorganize modules, create new modules, reorder concepts, or merge/split them to create the best pedagogical sequence across ALL materials.
+- For EVERY topic you output:
+  * "matched_previous_topic": If this topic covers or corresponds to an existing topic from the list above, provide the EXACT title of that existing topic from the list. If it is genuinely a new topic/concept, provide null.
+  * "coverage_delta":
+      "identical" - Same scope/concept as the matched previous topic.
+      "deepened" - Extends or adds substantial new depth/concepts to the matched previous topic from the new material.
+      "new_topic" - Genuinely new topic introduced by the materials.
+      "new_prerequisite" - A foundational or prerequisite concept introduced before other concepts.
+`
+  }
+
+  const prompt = isBook
+    ? `You are an expert curriculum designer. Create a detailed syllabus for a book called "${subject.name}" based on the following source materials.
 The student reads approximately ${hoursPerWeek} hour(s) per week.
+The book has approximately ${subject.total_pages || '?'} pages across ${subject.total_chapters || '?'} chapters.
+
+${existingContext}
 
 SOURCE MATERIALS:
 ${materialSummaries}
-
-Based on these materials, generate a syllabus broken into chapters and topics. Each module represents one book chapter. Each topic is a specific concept from that chapter.
-
-The book has approximately ${subject.total_pages || '?'} pages across ${subject.total_chapters || '?'} chapters. Distribute pages evenly.
 
 Respond in JSON format:
 {
@@ -68,141 +491,97 @@ Respond in JSON format:
       "hours_estimated": ${hoursPerWeek},
       "prerequisites": "Start here — no prerequisites",
       "topics": [
-        { "title": "Topic title", "description": "What this topic covers" }
+        {
+          "title": "Topic title",
+          "description": "What this topic covers",
+          "matched_previous_topic": null,
+          "coverage_delta": "identical"
+        }
       ]
     }
   ]
 }
 
 Rules:
-- Create one module per chapter
-- Each module should have 2-5 topics
-- Chapters should progress logically
-- Each chapter needs prerequisites field (e.g., "Read Chapters 1-2 first")
-- Estimate reasonable page ranges based on total pages and chapters
+- Organize chapters logically.
 - Return ONLY valid JSON. No markdown. No commentary.`
-    } else {
-      prompt = `You are an expert curriculum designer. Create a detailed syllabus for "${subject.name}" based on the following source materials.
+    : `You are an expert curriculum designer. Create a detailed, logically ordered syllabus for "${subject.name}" based on the source materials.
+The student can commit approximately ${hoursPerWeek} hour(s) per week.
 
-The student can commit approximately ${hoursPerWeek} hour(s) per week to this class.
+${existingContext}
 
 SOURCE MATERIALS:
 ${materialSummaries}
-
-Based on these materials, organize the content into major topics and subtopics. Each module represents one key subject topic. Each topic within a module is a specific subtopic, concept, or skill to master.
 
 Respond in JSON format:
 {
   "modules": [
     {
       "title": "Topic Name",
-      "description": "Brief description of what this topic covers",
+      "description": "Brief description of what this module covers",
       "hours_estimated": ${hoursPerWeek},
-      "prerequisites": "Start here — no prerequisites",
+      "prerequisites": "Prerequisites description",
       "topics": [
-        { "title": "Subtopic title", "description": "What this subtopic covers" }
+        {
+          "title": "Subtopic title",
+          "description": "What this subtopic covers",
+          "matched_previous_topic": null,
+          "coverage_delta": "identical"
+        }
       ]
     }
+  ],
+  "material_module_assignments": [
+    { "material_filename": "filename.pdf", "module_title": "Module Title" }
   ]
 }
 
 Rules:
-- Organize and sort materials logically by topic
-- The title of each module must be the descriptive topic name (do NOT use "Week 1", "Week 2", "Module 1", etc.)
-- Create 4-12 topic modules depending on the material volume
-- Each module should have 2-5 subtopics
-- Topics should progress logically (foundations first, then advanced)
-- Subtopics should be specific, teachable concepts
-- Each module needs prerequisites field (e.g., "Complete [Previous Topic] first")
+- Organize materials logically by topic (foundations first, then advanced).
+- Module titles must be descriptive topic names (do NOT use "Week 1", "Week 2").
+- Each module should have 2-5 subtopics.
 - Return ONLY valid JSON. No markdown. No commentary.`
-    }
 
-    const config = getAIConfig()
-    const apiKey = getApiKey()
-    if (!apiKey) throw new Error('AI API key not configured. Go to Settings to configure your AI provider.')
+  const config = getAIConfig()
+  const apiKey = getApiKey()
+  if (!apiKey) throw new Error('AI API key not configured. Go to Settings to configure your AI provider.')
 
-    const responseText = await callAIMessages(
-      [{ role: 'user', content: prompt }],
-      { ...config, apiKey },
-      { type: 'json_object' }
-    )
+  const responseText = await callAIMessages(
+    [{ role: 'user', content: prompt }],
+    { ...config, apiKey },
+    { type: 'json_object' }
+  )
 
-    const parsed = parseAIJson<{
-      modules: {
-        title: string
-        description?: string
-        week_number?: number
-        chapter_number?: number
-        chapter_title?: string
-        page_start?: number
-        page_end?: number
-        hours_estimated?: number
-        prerequisites?: string
-        topics?: { title: string; description?: string }[]
-      }[]
-    }>(responseText)
+  const parsed = parseAIJson<{
+    modules: ParsedReconciledModule[]
+    material_module_assignments?: { material_filename: string; module_title: string }[]
+  }>(responseText)
 
-    if (!parsed.modules || !Array.isArray(parsed.modules)) {
-      throw new Error('Invalid syllabus response: missing modules array')
-    }
+  if (!parsed.modules || !Array.isArray(parsed.modules)) {
+    throw new Error('Invalid syllabus response: missing modules array')
+  }
 
-    // Snapshot completion statuses before the wipe so student progress on
-    // matching titles survives regeneration.
-    const previousStatuses = db.prepare(
-      'SELECT title, status FROM syllabus_modules WHERE subject_id = ?'
-    ).all(subjectId) as { title: string; status: string }[]
+  const result = reconcileCurriculum(
+    db,
+    subjectId,
+    parsed.modules,
+    actualUserId,
+    parsed.material_module_assignments
+  )
 
-    // Insert modules and topics in a transaction
-    const insertSyllabus = db.transaction((modules: typeof parsed.modules) => {
-      // Clear existing syllabus for regeneration
-      db.prepare('DELETE FROM module_topics WHERE module_id IN (SELECT id FROM syllabus_modules WHERE subject_id = ?)').run(subjectId)
-      db.prepare('DELETE FROM syllabus_modules WHERE subject_id = ?').run(subjectId)
+  return {
+    ...result,
+    processed_material_count: materials.length
+  }
+}
 
-      for (let i = 0; i < modules.length; i++) {
-        const mod = modules[i]
-        const previousStatus =
-          previousStatuses.find(p => p.title === mod.title)?.status || 'pending'
-        const modResult = db.prepare(`
-          INSERT INTO syllabus_modules
-            (subject_id, title, description, week_number, status, hours_estimated, sort_order,
-             chapter_number, chapter_title, page_start, page_end, prerequisites)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          subjectId, mod.title, mod.description || null,
-          null,
-          previousStatus,
-          mod.hours_estimated || hoursPerWeek, i,
-          isBook ? (mod.chapter_number || i + 1) : null,
-          isBook ? mod.title : null,
-          isBook ? (mod.page_start || null) : null,
-          isBook ? (mod.page_end || null) : null,
-          mod.prerequisites || null
-        )
-
-        const moduleId = modResult.lastInsertRowid as number
-
-        if (mod.topics && Array.isArray(mod.topics)) {
-          for (let j = 0; j < mod.topics.length; j++) {
-            const topic = mod.topics[j]
-            db.prepare(`
-              INSERT INTO module_topics (module_id, title, description, sort_order)
-              VALUES (?, ?, ?, ?)
-            `).run(moduleId, topic.title, topic.description || null, j)
-          }
-        }
-      }
-
-      // Every material has now been folded into this fresh syllabus.
-      db.prepare('UPDATE materials SET syllabus_processed = 1 WHERE subject_id = ?').run(subjectId)
-    })
-
-    insertSyllabus(parsed.modules)
-
-    // Mark subject as having syllabus generated
-    db.prepare('UPDATE subjects SET syllabus_generated = 1 WHERE id = ?').run(subjectId)
-
-    // Return all modules with topic counts
-    return listModulesWithCounts(subjectId)
+/**
+ * Full syllabus generation / reconciliation from ALL of a subject's materials.
+ * Preserves all topic progress, completed study logs, cards, and practice problems.
+ */
+async function generateFromAllMaterials(subjectId: number) {
+  const result = await reconcileSyllabusFromAI(subjectId)
+  return result.modules
 }
 
 export function registerSyllabusHandlers(): void {
@@ -245,46 +624,25 @@ export function registerSyllabusHandlers(): void {
     prerequisites?: string
     topics: { title: string; description?: string }[]
   }[]) => {
-    // Snapshot completion statuses so a manual save that reuses titles keeps progress.
-    const previousStatuses = db.prepare(
-      'SELECT title, status FROM syllabus_modules WHERE subject_id = ?'
-    ).all(subjectId) as { title: string; status: string }[]
+    const formattedModules: ParsedReconciledModule[] = modules.map(m => ({
+      title: m.title,
+      description: m.description || null,
+      chapter_number: m.chapter_number ?? null,
+      chapter_title: m.chapter_title ?? null,
+      page_start: m.page_start ?? null,
+      page_end: m.page_end ?? null,
+      hours_estimated: m.hours_estimated ?? null,
+      prerequisites: m.prerequisites ?? null,
+      topics: (m.topics || []).map(t => ({
+        title: t.title,
+        description: t.description || null,
+        matched_previous_topic: t.title,
+        coverage_delta: 'identical'
+      }))
+    }))
 
-    const insertSyllabus = db.transaction(() => {
-      db.prepare('DELETE FROM module_topics WHERE module_id IN (SELECT id FROM syllabus_modules WHERE subject_id = ?)').run(subjectId)
-      db.prepare('DELETE FROM syllabus_modules WHERE subject_id = ?').run(subjectId)
-      db.prepare('UPDATE subjects SET syllabus_generated = 1 WHERE id = ?').run(subjectId)
-
-      for (let i = 0; i < modules.length; i++) {
-        const mod = modules[i]
-        const previousStatus =
-          previousStatuses.find(p => p.title === mod.title)?.status || 'pending'
-        const modResult = db.prepare(`
-          INSERT INTO syllabus_modules
-            (subject_id, title, description, week_number, status, hours_estimated, sort_order,
-             page_start, page_end, chapter_number, chapter_title, prerequisites)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          subjectId, mod.title, mod.description || null,
-          mod.week_number || null, previousStatus, mod.hours_estimated || 1, i,
-          mod.page_start ?? null, mod.page_end ?? null,
-          mod.chapter_number ?? null, mod.chapter_title ?? null,
-          mod.prerequisites ?? null
-        )
-
-        const moduleId = modResult.lastInsertRowid as number
-        for (let j = 0; j < mod.topics.length; j++) {
-          const topic = mod.topics[j]
-          db.prepare(`
-            INSERT INTO module_topics (module_id, title, description, sort_order)
-            VALUES (?, ?, ?, ?)
-          `).run(moduleId, topic.title, topic.description || null, j)
-        }
-      }
-    })
-    insertSyllabus()
-
-    return listModulesWithCounts(subjectId)
+    const result = reconcileCurriculum(db, subjectId, formattedModules)
+    return result.modules
   })
 
   // ── Analyze deadline changes ───────────────────────────────────────────
@@ -349,262 +707,20 @@ Return ONLY valid JSON. No markdown.`
   })
 }
 
-// ── Shared helpers ───────────────────────────────────────────────────────
-
-function listModulesWithCounts(subjectId: number) {
-  return db.prepare(`
-    SELECT m.*,
-      (SELECT COUNT(*) FROM module_topics t WHERE t.module_id = m.id) as topic_count
-    FROM syllabus_modules m
-    WHERE m.subject_id = ?
-    ORDER BY m.sort_order ASC
-  `).all(subjectId)
-}
-
-interface NewModuleInput {
-  title: string
-  description?: string | null
-  week_number?: number | null
-  chapter_number?: number | null
-  chapter_title?: string | null
-  page_start?: number | null
-  page_end?: number | null
-  hours_estimated?: number | null
-  prerequisites?: string | null
-  topics?: { title: string; description?: string | null }[]
-}
-
 interface UpdateFromMaterialsResult {
-  modules: ReturnType<typeof listModulesWithCounts>
+  modules: any[]
   new_module_count: number
   new_topic_count: number
   processed_material_count: number
   needs_updates: boolean
+  preserved_completed_count?: number
+  gap_topic_count?: number
+  updated_topic_count?: number
 }
 
-/**
- * Incrementally fold unprocessed materials into an existing syllabus WITHOUT
- * touching any existing module or topic rows. The AI proposes brand-new modules
- * and/or extra topics appended to existing ones; nothing is ever deleted here.
- *
- * If explicit materialIds are given they are used, otherwise every material of
- * the subject with syllabus_processed = 0 is picked up. When the subject has no
- * syllabus at all, this delegates to a full generation instead.
- */
 async function updateFromMaterials(
   subjectId: number,
-  materialIds: number[]
+  materialIds?: number[]
 ): Promise<UpdateFromMaterialsResult> {
-  const subject = db.prepare('SELECT id, name, subject_type FROM subjects WHERE id = ?').get(subjectId) as
-    { id: number; name: string; subject_type?: string } | undefined
-  if (!subject) throw new Error('Subject not found')
-
-  const isBook = subject.subject_type === 'book'
-
-  // ── Select materials to process ──
-  let materials: { id: number; filename: string; content_text: string }[]
-  if (materialIds.length > 0) {
-    materials = db.prepare(
-      `SELECT id, filename, content_text FROM materials
-       WHERE subject_id = ? AND content_text IS NOT NULL AND id IN (${materialIds.map(() => '?').join(',')})`
-    ).all(subjectId, ...materialIds) as typeof materials
-  } else {
-    materials = db.prepare(
-      `SELECT id, filename, content_text FROM materials
-       WHERE subject_id = ? AND content_text IS NOT NULL AND syllabus_processed = 0`
-    ).all(subjectId) as typeof materials
-  }
-
-  // No syllabus yet (or no modules for some reason) → full generation covers it.
-  const moduleCount = db.prepare(
-    'SELECT COUNT(*) as count FROM syllabus_modules WHERE subject_id = ?'
-  ).get(subjectId) as { count: number }
-
-  if (moduleCount.count === 0 || materials.length === 0) {
-    await generateFromAllMaterials(subjectId)
-    const modules = listModulesWithCounts(subjectId)
-    return {
-      modules,
-      new_module_count: modules.length,
-      new_topic_count: (modules as { topic_count: number }[]).reduce((sum, m) => sum + m.topic_count, 0),
-      processed_material_count: materials.length,
-      needs_updates: true
-    }
-  }
-
-  // ── Build AI context: existing modules WITH their topics ──
-  const existingModules = listModulesWithCounts(subjectId) as (SyllabusModule & { topic_count: number })[]
-  const existingContext = existingModules.map(m => {
-    const topics = db.prepare(
-      'SELECT title FROM module_topics WHERE module_id = ? ORDER BY sort_order ASC'
-    ).all(m.id) as { title: string }[]
-    return `- ${m.title}: ${m.description || ''}\n  Topics: ${topics.map(t => t.title).join('; ') || '(none)'}`
-  }).join('\n')
-
-  const materialText = materials.map(m =>
-    buildComprehensiveOutline(m.content_text, m.filename)
-  ).join('\n\n---\n\n')
-
-  const prompt = `You are an expert curriculum designer. A student is studying "${subject.name}" and has added NEW study materials to their ${isBook ? 'book' : 'subject'}.
-
-EXISTING SYLLABUS — these modules already exist and MUST NOT be replaced or restructured:
-${existingContext}
-
-NEW MATERIALS:
-${materialText}
-
-Integrate the new material into the syllabus INCREMENTALLY:
-1. If the new material covers entirely new ground, propose new modules that continue logically after the existing ones.
-2. If the new material deepens or extends an EXISTING module's coverage, propose additional topics to APPEND to that module (its existing topics stay untouched).
-3. You may blend old and new: e.g. a synthesis topic in an existing module that connects prior topics with concepts from the new material.
-4. NEVER propose rewording, reordering, merging or deleting existing modules or their topics.
-
-Respond in JSON:
-{
-  "needs_updates": true,
-  "new_modules": [
-    {
-      "title": "${isBook ? 'Chapter Title' : 'Descriptive Topic Name'}",
-      "description": "Description",
-      ${isBook ? '"chapter_number": 5,\n      "page_start": 120,\n      "page_end": 150,' : ''}
-      "hours_estimated": 2,
-      "prerequisites": "Start here or reference prior topics",
-      "topics": [
-        { "title": "Subtopic title", "description": "What this subtopic covers" }
-      ]
-    }
-  ],
-  "appended_topics": [
-    {
-      "module_title": "Title of an EXISTING module exactly as listed above",
-      "topics": [
-        { "title": "New topic title", "description": "What this topic adds" }
-      ]
-    }
-  ],
-  "existing_module_assignments": [
-    { "material_filename": "filename.pdf", "module_title": "Existing module this material primarily belongs to" }
-  ]
-}
-
-Rules:
-- Use empty arrays when nothing is needed; set needs_updates accordingly.
-- ${isBook ? 'New modules represent chapters' : 'New modules represent major topics (do NOT use "Week 1", "Week 2", etc. - use the descriptive topic name)'}
-- Each appended topic must be genuinely NEW relative to the module's listed topics — never duplicate them.
-- New modules must have 2-5 topics each.
-- Every new material filename should appear in existing_module_assignments unless it spans several modules.
-- Return ONLY valid JSON. No markdown.`
-
-  const config = getAIConfig()
-  const apiKey = getApiKey()
-  if (!apiKey) throw new Error('AI API key not configured')
-
-  const responseText = await callAIMessages(
-    [{ role: 'user', content: prompt }],
-    { ...config, apiKey },
-    { type: 'json_object' }
-  )
-
-  const parsed = parseAIJson<{
-    needs_updates?: boolean
-    new_modules?: NewModuleInput[]
-    appended_topics?: { module_title: string; topics: { title: string; description?: string }[] }[]
-    existing_module_assignments?: { material_filename: string; module_title: string }[]
-  }>(responseText)
-
-  const newModules = Array.isArray(parsed.new_modules) ? parsed.new_modules : []
-  const appendedTopics = Array.isArray(parsed.appended_topics) ? parsed.appended_topics : []
-
-  // ── Apply inserts atomically. Existing rows are only read, never deleted. ──
-  const applyUpdates = db.transaction(() => {
-    let newModuleCount = 0
-    let newTopicCount = 0
-
-    // Continue the sort_order / chapter sequences after the current tail.
-    const tail = db.prepare(
-      `SELECT COALESCE(MAX(sort_order), -1) AS sort_next,
-              COALESCE(MAX(chapter_number), 0) AS chapter_next
-       FROM syllabus_modules WHERE subject_id = ?`
-    ).get(subjectId) as { sort_next: number; chapter_next: number }
-
-    for (let i = 0; i < newModules.length; i++) {
-      const mod = newModules[i]
-      if (!mod?.title) continue
-      const modResult = db.prepare(`
-        INSERT INTO syllabus_modules
-          (subject_id, title, description, week_number, status, hours_estimated, sort_order,
-           chapter_number, chapter_title, page_start, page_end, prerequisites)
-        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        subjectId, mod.title, mod.description || null,
-        null,
-        mod.hours_estimated || 1, tail.sort_next + i + 1,
-        mod.chapter_number ?? (isBook ? tail.chapter_next + i + 1 : null),
-        isBook ? mod.title : null,
-        mod.page_start ?? null, mod.page_end ?? null,
-        mod.prerequisites ?? null
-      )
-      newModuleCount++
-
-      const moduleId = modResult.lastInsertRowid as number
-      const topics = Array.isArray(mod.topics) ? mod.topics : []
-      for (let j = 0; j < topics.length; j++) {
-        db.prepare(
-          'INSERT INTO module_topics (module_id, title, description, sort_order) VALUES (?, ?, ?, ?)'
-        ).run(moduleId, topics[j].title, topics[j].description || null, j)
-        newTopicCount++
-      }
-    }
-
-    // Append topics to EXISTING modules — insert-only, after their current max.
-    for (const group of appendedTopics) {
-      if (!group?.module_title || !Array.isArray(group.topics) || group.topics.length === 0) continue
-      const targetModule = db.prepare(
-        'SELECT id FROM syllabus_modules WHERE subject_id = ? AND title = ?'
-      ).get(subjectId, group.module_title) as { id: number } | undefined
-      if (!targetModule) continue
-
-      const topicTail = db.prepare(
-        'SELECT COALESCE(MAX(sort_order), -1) AS next FROM module_topics WHERE module_id = ?'
-      ).get(targetModule.id) as { next: number }
-
-      group.topics.forEach((topic, j) => {
-        db.prepare(
-          'INSERT INTO module_topics (module_id, title, description, sort_order) VALUES (?, ?, ?, ?)'
-        ).run(targetModule.id, topic.title, topic.description || null, topicTail.next + 1 + j)
-        newTopicCount++
-      })
-    }
-
-    // Assign materials to modules where the AI suggested a fit.
-    for (const assignment of parsed.existing_module_assignments || []) {
-      const material = materials.find(m => m.filename === assignment.material_filename)
-      if (!material || !assignment.module_title) continue
-      const targetModule = db.prepare(
-        'SELECT id FROM syllabus_modules WHERE subject_id = ? AND title = ?'
-      ).get(subjectId, assignment.module_title) as { id: number } | undefined
-      if (targetModule) {
-        db.prepare('UPDATE materials SET module_id = ? WHERE id = ?').run(targetModule.id, material.id)
-      }
-    }
-
-    // Everything selected has now been folded in — don't process it again.
-    db.prepare(
-      `UPDATE materials SET syllabus_processed = 1 WHERE subject_id = ?
-       AND id IN (${materials.map(() => '?').join(',')})`
-    ).run(subjectId, ...materials.map(m => m.id))
-    db.prepare('UPDATE subjects SET syllabus_generated = 1 WHERE id = ?').run(subjectId)
-
-    return { newModuleCount, newTopicCount }
-  })
-
-  const { newModuleCount, newTopicCount } = applyUpdates()
-
-  return {
-    modules: listModulesWithCounts(subjectId),
-    new_module_count: newModuleCount,
-    new_topic_count: newTopicCount,
-    processed_material_count: materials.length,
-    needs_updates: newModuleCount > 0 || newTopicCount > 0
-  }
+  return reconcileSyllabusFromAI(subjectId, materialIds)
 }

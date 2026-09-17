@@ -1,4 +1,5 @@
 import { TranscriptionService } from '../../electron/ipc/transcriptionService'
+import { LocalWhisperService } from '../../electron/ipc/localWhisperService'
 
 describe('TranscriptionService', () => {
   const mockAudioPath = '/mock/path/to/lecture.webm'
@@ -146,6 +147,51 @@ describe('TranscriptionService', () => {
     const result = await TranscriptionService.transcribe(mockAudioPath)
     expect(result.text).toContain('Hello from Gemini')
     expect(callCount).toBe(2)
+  })
+
+  test('testConnection returns error when no local model downloaded', async () => {
+    jest.spyOn(LocalWhisperService, 'listModels').mockReturnValue([
+      { id: 'whisper-tiny-en', name: 'Whisper Tiny', description: '', filename: 'tiny.bin', downloadUrl: '', sizeBytes: 100, sizeDisplay: '100MB', status: 'not_downloaded' }
+    ])
+
+    const res = await TranscriptionService.testConnection({ provider: 'local' })
+    expect(res.success).toBe(false)
+    expect(res.message).toContain('No local Whisper model downloaded yet')
+  })
+
+  test('testConnection returns error when model ready but whisper-cli is missing', async () => {
+    jest.spyOn(LocalWhisperService, 'listModels').mockReturnValue([
+      { id: 'whisper-tiny-en', name: 'Whisper Tiny', description: '', filename: 'tiny.bin', downloadUrl: '', sizeBytes: 100, sizeDisplay: '100MB', status: 'ready', localPath: '/path/to/tiny.bin' }
+    ])
+    jest.spyOn(LocalWhisperService, 'findWhisperBinary').mockReturnValue(null)
+
+    const res = await TranscriptionService.testConnection({ provider: 'local' })
+    expect(res.success).toBe(false)
+    expect(res.message).toContain('whisper-cli was not found')
+  })
+
+  test('testConnection returns error when model and whisper-cli ready but ffmpeg missing', async () => {
+    jest.spyOn(LocalWhisperService, 'listModels').mockReturnValue([
+      { id: 'whisper-tiny-en', name: 'Whisper Tiny', description: '', filename: 'tiny.bin', downloadUrl: '', sizeBytes: 100, sizeDisplay: '100MB', status: 'ready', localPath: '/path/to/tiny.bin' }
+    ])
+    jest.spyOn(LocalWhisperService, 'findWhisperBinary').mockReturnValue('/usr/local/bin/whisper-cli')
+    jest.spyOn(LocalWhisperService, 'findFfmpegBinary').mockReturnValue(null)
+
+    const res = await TranscriptionService.testConnection({ provider: 'local' })
+    expect(res.success).toBe(false)
+    expect(res.message).toContain('ffmpeg was not found')
+  })
+
+  test('testConnection returns success when model, whisper-cli, and ffmpeg are ready', async () => {
+    jest.spyOn(LocalWhisperService, 'listModels').mockReturnValue([
+      { id: 'whisper-tiny-en', name: 'Whisper Tiny', description: '', filename: 'tiny.bin', downloadUrl: '', sizeBytes: 100, sizeDisplay: '100MB', status: 'ready', localPath: '/path/to/tiny.bin' }
+    ])
+    jest.spyOn(LocalWhisperService, 'findWhisperBinary').mockReturnValue('/opt/homebrew/bin/whisper-cli')
+    jest.spyOn(LocalWhisperService, 'findFfmpegBinary').mockReturnValue('/opt/homebrew/bin/ffmpeg')
+
+    const res = await TranscriptionService.testConnection({ provider: 'local' })
+    expect(res.success).toBe(true)
+    expect(res.message).toContain('Local engine ready (Whisper Tiny, binary: whisper-cli, ffmpeg detected)')
   })
 })
 

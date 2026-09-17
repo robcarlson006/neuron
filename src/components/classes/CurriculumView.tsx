@@ -6,6 +6,7 @@ interface CurriculumViewProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
   subjectName?: string
   onStartTutor: (moduleId: number, selectedTopics?: string[]) => void
+  onStartSpacedReview?: (moduleId?: number, selectedTopics?: string[]) => void
   onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
   onToggleTopic: (topicId: number, studied: boolean) => void
   loadingCards?: Record<number, boolean>
@@ -15,6 +16,7 @@ export default function CurriculumView({
   modules,
   subjectName,
   onStartTutor,
+  onStartSpacedReview,
   onGenerateCards,
   onToggleTopic,
   loadingCards
@@ -199,22 +201,64 @@ export default function CurriculumView({
                               }`}>
                                 {topic.title}
                               </span>
+                              {Boolean(topic.is_gap) && !topicCompleted && (
+                                <span
+                                  title="Newly added learning gap from recent materials"
+                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 flex-shrink-0"
+                                >
+                                  ✨ New
+                                </span>
+                              )}
+                              {Boolean(topic.has_new_material) && (
+                                <span
+                                  title="New materials have added new concepts to this topic"
+                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 flex-shrink-0"
+                                >
+                                  ⚠️ New Content
+                                </span>
+                              )}
                             </label>
 
-                            {/* Completed indicator badge with toggle option */}
+                            {/* Completed indicator & Retention badge with toggle option */}
                             <div className="flex items-center gap-2 flex-shrink-0">
                               {topicCompleted ? (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onToggleTopic(topic.id, false)
-                                  }}
-                                  title="Completed. Click to mark as uncompleted."
-                                  className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100/90 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700/60 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-emerald-200 dark:hover:bg-emerald-800/60 transition-colors"
-                                >
-                                  <span>✓</span> Completed
-                                </button>
+                                <div className="flex items-center gap-1.5">
+                                  {/* Retention Status Indicator */}
+                                  {topic.retention_status === 'overdue' ? (
+                                    <span
+                                      title={`Retention decayed to ${Math.round((topic.retrievability ?? 0.5) * 100)}% (${topic.days_overdue ?? 1}d overdue). Memory requires review!`}
+                                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 flex items-center gap-1 animate-pulse"
+                                    >
+                                      <span>⚠️</span> {Math.round((topic.retrievability ?? 0.5) * 100)}% Due
+                                    </span>
+                                  ) : topic.retention_status === 'fading' ? (
+                                    <span
+                                      title={`Retention at ${Math.round((topic.retrievability ?? 0.75) * 100)}%. Memory fading - review soon.`}
+                                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1"
+                                    >
+                                      <span>⏳</span> {Math.round((topic.retrievability ?? 0.75) * 100)}% Fading
+                                    </span>
+                                  ) : topic.retrievability !== undefined ? (
+                                    <span
+                                      title={`Retention high at ${Math.round(topic.retrievability * 100)}%. Next review due ${topic.next_review_due || 'later'}.`}
+                                      className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-100/70 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                                    >
+                                      {Math.round(topic.retrievability * 100)}%
+                                    </span>
+                                  ) : null}
+
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      onToggleTopic(topic.id, false)
+                                    }}
+                                    title="Completed. Click to mark as uncompleted."
+                                    className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100/90 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700/60 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-emerald-200 dark:hover:bg-emerald-800/60 transition-colors"
+                                  >
+                                    <span>✓</span> Completed
+                                  </button>
+                                </div>
                               ) : (
                                 <button
                                   type="button"
@@ -251,6 +295,23 @@ export default function CurriculumView({
                   >
                     🎓 {selectedCount > 0 ? `Start Tutor (${selectedCount} topic${selectedCount > 1 ? 's' : ''})` : 'Start Tutor'}
                   </button>
+
+                  {/* Spaced Review Button if module has due or fading topics */}
+                  {modTopics.some(t => t.retention_status === 'overdue' || t.retention_status === 'fading') && onStartSpacedReview && (
+                    <button
+                      onClick={() => {
+                        const dueTitles = modTopics
+                          .filter(t => t.retention_status === 'overdue' || t.retention_status === 'fading')
+                          .map(t => t.title)
+                        onStartSpacedReview(mod.id, dueTitles)
+                      }}
+                      title="Launch a focused spaced repetition drill on decaying topics in this module"
+                      className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                    >
+                      <span>⚡</span> Spaced Review
+                    </button>
+                  )}
+
                   <button
                     onClick={() => setModalModule(mod)}
                     disabled={loadingCards?.[mod.id]}

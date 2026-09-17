@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import LatexText from './LatexText'
 import { evaluateSemantically } from '../lib/semanticEvaluator'
+import { Sigma } from './icons'
+import MathKeyboard from './practice/MathKeyboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -129,8 +131,34 @@ export default function LearnModeSession({
   const [writtenAnswered, setWrittenAnswered] = useState(false)
   const [writtenResult, setWrittenResult] = useState<'correct' | 'incorrect' | null>(null)
   const [writtenFeedback, setWrittenFeedback] = useState<string>('')
+  const [showMathKeyboard, setShowMathKeyboard] = useState(false)
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleInsertSnippet = (snippet: string) => {
+    if (!inputRef.current) {
+      setWrittenInput((prev) => {
+        const updated = prev + snippet
+        writtenInputRef.current = updated
+        return updated
+      })
+      return
+    }
+
+    const textarea = inputRef.current
+    const start = textarea.selectionStart || 0
+    const end = textarea.selectionEnd || 0
+    const text = textarea.value
+    const updated = text.substring(0, start) + snippet + text.substring(end)
+    setWrittenInput(updated)
+    writtenInputRef.current = updated
+
+    setTimeout(() => {
+      textarea.focus()
+      const nextPos = start + snippet.length
+      textarea.setSelectionRange(nextPos, nextPos)
+    }, 0)
+  }
 
   // ─── Refs for keyboard handlers (avoid stale closures) ────────────────────
 
@@ -513,7 +541,35 @@ export default function LearnModeSession({
       {/* ── Written Phase ─────────────────────────────────────────────── */}
       {currentItem.phase === 2 && (
         <>
-          <div className="mb-4">
+          <div className="mb-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                Written Response
+              </span>
+              {!writtenAnswered && (
+                <button
+                  type="button"
+                  onClick={() => setShowMathKeyboard((prev) => !prev)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                    showMathKeyboard
+                      ? "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-700 shadow-2xs"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-slate-900 dark:hover:text-slate-200"
+                  }`}
+                  title="Toggle Math Keyboard / LaTeX Palette"
+                >
+                  <Sigma size={13} className="text-violet-600 dark:text-violet-400" />
+                  <span>{showMathKeyboard ? "Hide Math Palette" : "Math Palette"}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Math Keyboard Palette */}
+            {showMathKeyboard && !writtenAnswered && (
+              <div className="animate-in fade-in slide-in-from-top-2 duration-150">
+                <MathKeyboard onInsert={handleInsertSnippet} />
+              </div>
+            )}
+
             <textarea
               ref={inputRef}
               value={writtenInput}
@@ -528,10 +584,22 @@ export default function LearnModeSession({
                   if (!writtenAnswered) handleWrittenSubmit()
                 }
               }}
-              placeholder="Type your answer…"
+              placeholder="Type your answer (use text or LaTeX math)…"
               rows={3}
-              className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-50 placeholder-slate-400 dark:placeholder-slate-500 text-sm resize-none focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 transition-colors disabled:opacity-60"
+              className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-50 placeholder-slate-400 dark:placeholder-slate-500 text-sm font-mono resize-none focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 transition-colors disabled:opacity-60"
             />
+
+            {/* Live LaTeX Preview if user used math symbols */}
+            {(writtenInput.includes("$") || writtenInput.includes("\\") || writtenInput.includes("^") || writtenInput.includes("_")) && (
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-left">
+                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block mb-1">
+                  Live Math Preview:
+                </span>
+                <div className="text-sm text-slate-800 dark:text-slate-200">
+                  <LatexText>{writtenInput}</LatexText>
+                </div>
+              </div>
+            )}
 
             {!writtenAnswered && (
               <div className="flex justify-between items-center mt-2">

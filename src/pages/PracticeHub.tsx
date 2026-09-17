@@ -16,6 +16,7 @@ import {
 import LatexText from "../components/LatexText"
 import PracticeUploadModal from "../components/practice/PracticeUploadModal"
 import PracticeSessionLauncher from "../components/practice/PracticeSessionLauncher"
+import AutoGeneratePracticeModal from "../components/practice/AutoGeneratePracticeModal"
 import type { Subject, SyllabusModule, ModuleTopic, PracticeProblem, User } from "../types"
 
 interface PracticeHubProps {
@@ -44,6 +45,8 @@ export default function PracticeHub({
   const [expandedModules, setExpandedModules] = useState<Record<number, boolean>>({})
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false)
   const [showLauncherModal, setShowLauncherModal] = useState<boolean>(false)
+  const [showAutoGenModal, setShowAutoGenModal] = useState<boolean>(false)
+  const [autoGenTarget, setAutoGenTarget] = useState<{ moduleId?: number; topicId?: number } | null>(null)
   const [previewProblem, setPreviewProblem] = useState<PracticeProblem | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
 
@@ -175,6 +178,16 @@ export default function PracticeHub({
               <span>Start Drill</span>
             </button>
             <button
+              onClick={() => {
+                setAutoGenTarget(null)
+                setShowAutoGenModal(true)
+              }}
+              className="p-2 rounded-xl bg-violet-800/80 hover:bg-violet-800 text-white transition-colors"
+              title="Auto-Generate Practice Problems"
+            >
+              <Sparkles size={14} />
+            </button>
+            <button
               onClick={() => setShowUploadModal(true)}
               className="p-2 rounded-xl bg-violet-800/80 hover:bg-violet-800 text-white transition-colors"
               title="Upload Problem Set"
@@ -227,10 +240,21 @@ export default function PracticeHub({
                       <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{m.title}</span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 font-mono text-slate-600 dark:text-slate-400">
                         {modProblems.length}
                       </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setAutoGenTarget({ moduleId: m.id })
+                          setShowAutoGenModal(true)
+                        }}
+                        title="Auto-generate practice for this module"
+                        className="p-1 rounded-md text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/50"
+                      >
+                        <Sparkles size={11} />
+                      </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -261,8 +285,19 @@ export default function PracticeHub({
                             }`}
                           >
                             <span className="truncate pr-2">{t.title}</span>
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="flex items-center gap-1 shrink-0">
                               <span className="text-[10px] font-mono opacity-60">({topProblems.length})</span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setAutoGenTarget({ moduleId: m.id, topicId: t.id })
+                                  setShowAutoGenModal(true)
+                                }}
+                                title="Auto-generate practice for this topic"
+                                className="p-1 rounded text-violet-600 hover:bg-violet-100 dark:hover:bg-violet-900/60"
+                              >
+                                <Sparkles size={10} />
+                              </button>
                               {topProblems.length > 0 && (
                                 <button
                                   onClick={(e) => {
@@ -302,13 +337,27 @@ export default function PracticeHub({
               />
             </div>
 
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs shadow-xs transition-colors shrink-0"
-            >
-              <Plus size={14} />
-              <span>Drop Problem Set</span>
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  setAutoGenTarget(selectedTopicFilter ? { topicId: selectedTopicFilter } : null)
+                  setShowAutoGenModal(true)
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-50 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/60 font-bold text-xs shadow-xs transition-colors"
+                title="Generate practice problems with AI"
+              >
+                <Sparkles size={13} className="text-violet-600 dark:text-violet-400" />
+                <span>Generate with AI</span>
+              </button>
+
+              <button
+                onClick={() => setShowUploadModal(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs shadow-xs transition-colors"
+              >
+                <Plus size={14} />
+                <span>Drop Problem Set</span>
+              </button>
+            </div>
           </div>
 
           {/* Problems List */}
@@ -319,21 +368,33 @@ export default function PracticeHub({
           ) : filteredProblems.length === 0 ? (
             <div className="p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
               <div className="w-12 h-12 rounded-2xl bg-violet-100 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center mx-auto">
-                <Upload size={20} />
+                <Sparkles size={20} />
               </div>
               <div>
                 <h4 className="font-bold text-sm text-slate-900 dark:text-slate-100">No practice problems found</h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-                  Drop in lecture problem sets, past exams, or paste homework exercises to generate an interactive practice lab!
+                  Autonomously generate tailored problems from your curriculum, or drop in lecture problem sets and homework exercises!
                 </p>
               </div>
-              <button
-                onClick={() => setShowUploadModal(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700"
-              >
-                <Upload size={13} />
-                <span>Upload Problem Set</span>
-              </button>
+              <div className="flex items-center justify-center gap-2.5 pt-1">
+                <button
+                  onClick={() => {
+                    setAutoGenTarget(selectedTopicFilter ? { topicId: selectedTopicFilter } : null)
+                    setShowAutoGenModal(true)
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700 shadow-xs"
+                >
+                  <Sparkles size={13} />
+                  <span>Generate with AI</span>
+                </button>
+                <button
+                  onClick={() => setShowUploadModal(true)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700"
+                >
+                  <Upload size={13} />
+                  <span>Upload Problem Set</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
@@ -456,6 +517,29 @@ export default function PracticeHub({
           problems={problems}
           onClose={() => setShowLauncherModal(false)}
           onStartSession={onStartSession}
+          onOpenAutoGen={(modId, topId) => {
+            setShowLauncherModal(false)
+            setAutoGenTarget({ moduleId: modId, topicId: topId })
+            setShowAutoGenModal(true)
+          }}
+        />
+      )}
+
+      {showAutoGenModal && (
+        <AutoGeneratePracticeModal
+          subjectId={subject.id}
+          userId={user?.id || 1}
+          modules={modules}
+          initialModuleId={autoGenTarget?.moduleId}
+          initialTopicId={autoGenTarget?.topicId || selectedTopicFilter}
+          onClose={() => {
+            setShowAutoGenModal(false)
+            setAutoGenTarget(null)
+          }}
+          onSuccess={(newProbs) => {
+            setProblems((prev) => [...newProbs, ...prev])
+            loadData()
+          }}
         />
       )}
     </div>

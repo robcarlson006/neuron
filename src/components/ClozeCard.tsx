@@ -145,7 +145,7 @@ export default function ClozeCard({
                         }
                       }}
                     >
-                      {isRevealed ? <LatexText>{seg.answer}</LatexText> : ' [...] '}
+                      {isRevealed ? <LatexText>{String(seg.answer || '')}</LatexText> : ' [...] '}
                     </span>
                   )
                 }

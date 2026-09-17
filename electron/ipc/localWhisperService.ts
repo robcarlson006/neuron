@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, createWriteStream, statSync, unlinkSync, readdir
 import { join } from 'path'
 import https from 'https'
 import http from 'http'
-import { spawn, exec, execSync } from 'child_process'
+import { spawn, execSync, execFile } from 'child_process'
 import type { BrowserWindow } from 'electron'
 
 export interface WhisperModelInfo {
@@ -385,8 +385,8 @@ class LocalWhisperServiceManager {
     }
 
     return new Promise((resolve, reject) => {
-      const cmd = `"${ffmpeg}" -y -i "${inputPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${outputPath}"`
-      exec(cmd, (err, _stdout, stderr) => {
+      const args = ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', outputPath]
+      execFile(ffmpeg, args, (err, _stdout, stderr) => {
         if (err) {
           reject(new Error(`Audio conversion failed: ${stderr || err.message}`))
         } else {
@@ -432,15 +432,18 @@ class LocalWhisperServiceManager {
 
     // 3. Prepare temporary 16kHz WAV file
     const tempDir = this.getModelsDir()
-    const tempWav = join(tempDir, `temp_transcribe_${Date.now()}.wav`)
-    const tempJsonFile = `${tempWav}.json`
+    const baseName = `temp_transcribe_${Date.now()}`
+    const tempWav = join(tempDir, `${baseName}.wav`)
+    const outputPrefix = join(tempDir, baseName)
+    const jsonCandidate1 = `${outputPrefix}.json`
+    const jsonCandidate2 = `${tempWav}.json`
 
     try {
       await this.convertTo16kWav(audioPath, tempWav)
 
       // 4. Run whisper-cli
       await new Promise<void>((resolve, reject) => {
-        const args = ['-m', modelPath!, '-f', tempWav, '-oj']
+        const args = ['-m', modelPath!, '-f', tempWav, '-of', outputPrefix, '-oj']
         const proc = spawn(whisperBin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
         let stderr = ''
 
@@ -462,22 +465,46 @@ class LocalWhisperServiceManager {
       })
 
       // 5. Parse JSON output
-      if (!existsSync(tempJsonFile)) {
+      let resolvedJsonFile = ''
+      if (existsSync(jsonCandidate1)) {
+        resolvedJsonFile = jsonCandidate1
+      } else if (existsSync(jsonCandidate2)) {
+        resolvedJsonFile = jsonCandidate2
+      } else {
         throw new Error('Local Whisper did not produce a transcript output file.')
       }
 
-      const rawJsonStr = readFileSync(tempJsonFile, 'utf-8')
+      const rawJsonStr = readFileSync(resolvedJsonFile, 'utf-8')
       const parsed = JSON.parse(rawJsonStr)
 
       const segments: LocalWhisperTranscriptionSegment[] = []
       let fullText = ''
 
-      const rawTrans = parsed.transcription || []
+      const rawTrans = parsed.transcription || parsed.segments || []
       for (const item of rawTrans) {
         const text = (item.text || '').trim()
         if (!text) continue
-        const fromSec = (item.timestamps?.from ? this.parseWhisperTimestamp(item.timestamps.from) : 0)
-        const toSec = (item.timestamps?.to ? this.parseWhisperTimestamp(item.timestamps.to) : fromSec + 5)
+
+        let fromSec = 0
+        let toSec = 0
+        if (item.timestamps?.from) {
+          fromSec = this.parseWhisperTimestamp(item.timestamps.from)
+        } else if (typeof item.offsets?.from === 'number') {
+          fromSec = item.offsets.from / 1000
+        } else if (typeof item.start === 'number') {
+          fromSec = item.start
+        }
+
+        if (item.timestamps?.to) {
+          toSec = this.parseWhisperTimestamp(item.timestamps.to)
+        } else if (typeof item.offsets?.to === 'number') {
+          toSec = item.offsets.to / 1000
+        } else if (typeof item.end === 'number') {
+          toSec = item.end
+        } else {
+          toSec = fromSec + 5
+        }
+
         segments.push({
           start: fromSec,
           end: toSec,
@@ -506,7 +533,8 @@ class LocalWhisperServiceManager {
     } finally {
       // Cleanup temporary files
       try { if (existsSync(tempWav)) unlinkSync(tempWav) } catch {}
-      try { if (existsSync(tempJsonFile)) unlinkSync(tempJsonFile) } catch {}
+      try { if (existsSync(jsonCandidate1)) unlinkSync(jsonCandidate1) } catch {}
+      try { if (existsSync(jsonCandidate2)) unlinkSync(jsonCandidate2) } catch {}
     }
   }
 

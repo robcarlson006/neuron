@@ -17,6 +17,12 @@ import {
   recordConceptSuccess,
   recordEpisodicMemory
 } from '../../src/lib/memory/ckrfMemoryService'
+import {
+  updateTopicSrsState,
+  getTopicsRetention,
+  getSubjectRetentionSummary,
+  getTopDueMaintenanceTopics
+} from '../../src/lib/memory/topicSrsEngine'
 import type {
   TutorSession,
   TutorStreamParams,
@@ -770,6 +776,28 @@ Return STRICT JSON ONLY, no extra text, in this format:
           INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
           VALUES (?, ?, ?)
         `).run(modTopic.id, session.user_id, now)
+
+        // Topic-SRS: Determine FSRS rating from dialogue evaluation
+        // 1 = Again (struggled), 2 = Hard (mixed), 3 = Good (solid coverage/strength), 4 = Easy (pure strength)
+        const isStruggle = evaluation.struggles.some(s => s.toLowerCase().includes(top.toLowerCase()) || top.toLowerCase().includes(s.toLowerCase()))
+        const isStrength = evaluation.strengths.some(s => s.toLowerCase().includes(top.toLowerCase()) || top.toLowerCase().includes(s.toLowerCase()))
+
+        let srsRating: 1 | 2 | 3 | 4 = 3
+        if (isStruggle && !isStrength) {
+          srsRating = 1
+        } else if (isStruggle && isStrength) {
+          srsRating = 2
+        } else if (isStrength && !isStruggle) {
+          srsRating = 4
+        } else {
+          srsRating = 3
+        }
+
+        try {
+          updateTopicSrsState(database, session.user_id, session.subject_id, modTopic.id, srsRating, now)
+        } catch (srsErr) {
+          console.warn('Failed to update topic SRS state:', srsErr)
+        }
       }
     } catch { /* ignore */ }
   }
@@ -904,15 +932,17 @@ export function registerTutorHandlers(): void {
   // TUTOR SESSION CRUD
   // ═══════════════════════════════════════════════════════════════════════════
 
-  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; never_studied: number | boolean }) => {
+  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; never_studied: number | boolean; title?: string }) => {
     const now = new Date().toISOString()
+    const nowMs = Date.now()
     // Use null for subject when 0 (general chat) — FK allows null
     const actualSubjectId = subjectId > 0 ? subjectId : null
     const actualUserId = userId > 0 ? userId : null
     const neverStudiedVal = config?.never_studied ? 1 : 0
+    const initialTitle = config?.title || null
     const result = db.prepare(`
-      INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase, module_id, started_at, duration_minutes, depth_level, never_studied)
-      VALUES (?, ?, ?, 'structured_qa', ?, ?, ?, ?, ?)
+      INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase, module_id, started_at, duration_minutes, depth_level, never_studied, title, last_message_at, is_pinned)
+      VALUES (?, ?, ?, 'structured_qa', ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(
       actualSubjectId,
       actualUserId,
@@ -921,7 +951,9 @@ export function registerTutorHandlers(): void {
       now,
       config?.duration_minutes ?? null,
       config?.depth_level ?? 3,
-      neverStudiedVal
+      neverStudiedVal,
+      initialTitle,
+      nowMs
     )
     return db.prepare('SELECT * FROM tutor_sessions WHERE id = ?').get(result.lastInsertRowid)
   })
@@ -945,10 +977,49 @@ export function registerTutorHandlers(): void {
     return { session, messages }
   })
 
-  ipcMain.handle('tutor:listSessions', (_event, subjectId: number, limit: number = 20) => {
-    return db.prepare(`
-      SELECT * FROM tutor_sessions WHERE subject_id = ? ORDER BY started_at DESC LIMIT ?
-    `).all(subjectId, limit)
+  ipcMain.handle('tutor:listSessions', (_event, subjectId?: number | null, limit: number = 50) => {
+    if (subjectId !== undefined && subjectId !== null && subjectId > 0) {
+      return db.prepare(`
+        SELECT ts.*, s.name as subject_name,
+          (SELECT content FROM messages WHERE conversation_id = ts.id AND role != 'system' ORDER BY created_at DESC LIMIT 1) as last_message_preview,
+          (SELECT COUNT(*) FROM messages WHERE conversation_id = ts.id AND role != 'system') as message_count
+        FROM tutor_sessions ts
+        LEFT JOIN subjects s ON s.id = ts.subject_id
+        WHERE ts.subject_id = ?
+        ORDER BY ts.is_pinned DESC, COALESCE(ts.last_message_at, strftime('%s', ts.started_at) * 1000) DESC, ts.id DESC
+        LIMIT ?
+      `).all(subjectId, limit)
+    } else if (subjectId === 0) {
+      return db.prepare(`
+        SELECT ts.*, 'General Tutor' as subject_name,
+          (SELECT content FROM messages WHERE conversation_id = ts.id AND role != 'system' ORDER BY created_at DESC LIMIT 1) as last_message_preview,
+          (SELECT COUNT(*) FROM messages WHERE conversation_id = ts.id AND role != 'system') as message_count
+        FROM tutor_sessions ts
+        WHERE ts.subject_id IS NULL OR ts.subject_id = 0
+        ORDER BY ts.is_pinned DESC, COALESCE(ts.last_message_at, strftime('%s', ts.started_at) * 1000) DESC, ts.id DESC
+        LIMIT ?
+      `).all(limit)
+    } else {
+      return db.prepare(`
+        SELECT ts.*, COALESCE(s.name, 'General Tutor') as subject_name,
+          (SELECT content FROM messages WHERE conversation_id = ts.id AND role != 'system' ORDER BY created_at DESC LIMIT 1) as last_message_preview,
+          (SELECT COUNT(*) FROM messages WHERE conversation_id = ts.id AND role != 'system') as message_count
+        FROM tutor_sessions ts
+        LEFT JOIN subjects s ON s.id = ts.subject_id
+        ORDER BY ts.is_pinned DESC, COALESCE(ts.last_message_at, strftime('%s', ts.started_at) * 1000) DESC, ts.id DESC
+        LIMIT ?
+      `).all(limit)
+    }
+  })
+
+  ipcMain.handle('tutor:updateSessionTitle', (_event, sessionId: number, title: string) => {
+    db.prepare('UPDATE tutor_sessions SET title = ? WHERE id = ?').run(title.trim(), sessionId)
+    return { success: true }
+  })
+
+  ipcMain.handle('tutor:toggleSessionPin', (_event, sessionId: number, isPinned: boolean) => {
+    db.prepare('UPDATE tutor_sessions SET is_pinned = ? WHERE id = ?').run(isPinned ? 1 : 0, sessionId)
+    return { success: true }
   })
 
   ipcMain.handle('tutor:updateSessionPhase', (_event, sessionId: number, phase: string) => {
@@ -1028,6 +1099,7 @@ export function registerTutorHandlers(): void {
   }) => {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
+    const nowMs = Date.now()
 
     // Ensure a conversations record exists so the FK on messages is satisfied
     ensureConversationRecord(params.session_id)
@@ -1037,8 +1109,33 @@ export function registerTutorHandlers(): void {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(id, params.session_id, params.role, params.content, params.content_type || 'text', now)
 
-    // Update session timestamp
-    db.prepare('UPDATE tutor_sessions SET ended_at = ? WHERE id = ?').run(now, params.session_id)
+    // Update session timestamps
+    db.prepare('UPDATE tutor_sessions SET ended_at = ?, last_message_at = ? WHERE id = ?').run(now, nowMs, params.session_id)
+
+    // Auto-generate title if session does not have one yet
+    try {
+      const session = db.prepare('SELECT title, session_type FROM tutor_sessions WHERE id = ?').get(params.session_id) as { title?: string; session_type: string } | undefined
+      if (session && (!session.title || session.title.trim() === '')) {
+        let generatedTitle = ''
+        if (params.role === 'user') {
+          const text = params.content.trim()
+          if (text.startsWith('Greet me and') || text.includes('Mode: SPACED RETENTION') || text.includes('Mode: FILL IN GAPS')) {
+            const topicMatch = text.match(/Topic:\s*([^\n\r]+)/i) || text.match(/dive into ([^.]+)\./i) || text.match(/reinforcing ([^.]+)\./i) || text.match(/focus on ([^.]+)\./i)
+            if (topicMatch && topicMatch[1]) {
+              generatedTitle = topicMatch[1].trim()
+            }
+          } else {
+            const firstLine = text.split('\n')[0].trim().replace(/^["'#*`]+/, '')
+            generatedTitle = firstLine.length > 45 ? firstLine.slice(0, 42) + '...' : firstLine
+          }
+        }
+        if (generatedTitle) {
+          db.prepare('UPDATE tutor_sessions SET title = ? WHERE id = ?').run(generatedTitle, params.session_id)
+        }
+      }
+    } catch (e) {
+      console.warn('Auto-titling session failed:', e)
+    }
 
     return {
       id,
@@ -1363,8 +1460,49 @@ STRICT DESIGN RULES (CRITICAL):
       }
     }
 
+    // ── Topic-SRS Spaced Maintenance / Interleaved Warmup Context ──
+    let srsWarmupBlock = ''
+    try {
+      const resolvedUserId = userId || 1
+      const summary = getSubjectRetentionSummary(db, resolvedUserId, params.subjectId)
+      if (params.isSpacedReview) {
+        // Dedicated Spaced Maintenance Session
+        const targetTopicsList = params.spacedReviewTopics && params.spacedReviewTopics.length > 0
+          ? params.spacedReviewTopics
+          : summary.dueTopics.map(t => `${t.topicTitle} (Retention: ${Math.round(t.retrievability * 100)}%, Overdue: ${t.daysOverdue}d)`)
+        
+        srsWarmupBlock = [
+          '',
+          `DEDICATED SPACED REPETITION MAINTENANCE PROTOCOL (ACTIVE):`,
+          `This session is a targeted SPICED RETENTION DRILL to combat memory decay.`,
+          `Target due/fading topics requiring maintenance:`,
+          ...targetTopicsList.map(t => `- ${t}`),
+          `DIRECTIVES:`,
+          `1. Focus strictly on rapid active recall, diagnostic hinge questions, and application scenarios for these decaying topics.`,
+          `2. Do not spend time re-reading full textbook introductions; test the student's retrieval immediately.`,
+          `3. If the student answers correctly with confidence, celebrate the retention and advance to the next due topic.`,
+          `4. If the student exhibits retrieval lapse, provide a faded hint and test with a parallel problem to reset retention stability.`,
+          ''
+        ].join('\n')
+      } else if (summary.dueTopics.length > 0) {
+        // Interleaved Warmup inside a regular session
+        const topDue = summary.dueTopics.slice(0, 2)
+        srsWarmupBlock = [
+          '',
+          `COGNITIVE SPACED REPETITION WARMUP DIRECTIVE (INTERLEAVED RETRIEVAL):`,
+          `Memory tracking shows the student is due for maintenance review on prerequisite topics:`,
+          ...topDue.map(t => `- ${t.topicTitle} (Current Retention: ${Math.round(t.retrievability * 100)}%, Last studied: ${t.lastStudiedAt.split('T')[0]})`),
+          `INTERLEAVING INSTRUCTION:`,
+          `Before diving into new topics or during natural transition pauses, weave in ONE quick retrieval question testing one of these decaying concepts. This strengthens memory traces through spaced retrieval practice.`,
+          ''
+        ].join('\n')
+      }
+    } catch (srsErr) {
+      console.warn('Failed to build SRS warmup block:', srsErr)
+    }
+
     // Append all context blocks to syllabusContext
-    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + materialContextBlock
+    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + srsWarmupBlock + '\n' + materialContextBlock
 
     // Save session config to database if provided
     if (params.durationMinutes !== undefined || params.depthLevel !== undefined || params.neverStudied !== undefined) {
@@ -1804,7 +1942,25 @@ Rules:
         remainingMinutes -= cardMinutes
       }
 
-      // 2. Struggling topics / Tutor drill second
+      // 2. Overdue Topic-SRS Maintenance Drill (Curriculum Spaced Repetition)
+      const dueMaintenanceTopics = getTopDueMaintenanceTopics(db, userId, 3)
+      if (dueMaintenanceTopics.length > 0 && remainingMinutes >= 15) {
+        const topDue = dueMaintenanceTopics[0]
+        const drillMinutes = Math.min(remainingMinutes, 20)
+        const subjName = subjects.find(s => s.id === topDue.subjectId)?.name || 'Curriculum'
+        items.push({
+          subject_id: topDue.subjectId,
+          action_type: 'tutor_drill',
+          suggested_action: `Spaced Retention Drill: ${topDue.topicTitle} (${subjName})`,
+          learning_objective: `Combat forgetting: retention has decayed to ${Math.round(topDue.retrievability * 100)}% (due for review)`,
+          target_topic: topDue.topicTitle,
+          estimated_minutes: drillMinutes,
+          priority: items.length + 1
+        })
+        remainingMinutes -= drillMinutes
+      }
+
+      // 3. Struggling topics / Tutor drill second
       const subjectsWithStruggles = subjectsData.filter(s => s.strugglingTopics.length > 0)
       if (subjectsWithStruggles.length > 0 && remainingMinutes >= 15) {
         const topSubject = subjectsWithStruggles[0]
@@ -2039,25 +2195,47 @@ Rules:
   })
 
   ipcMain.handle('syllabus:listTopics', (_event, moduleId: number, userId?: number) => {
+    let actualUserId = userId
+    if (!actualUserId) {
+      const u = db.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined
+      actualUserId = u?.id || 1
+    }
+
+    const modRow = db.prepare('SELECT subject_id FROM syllabus_modules WHERE id = ?').get(moduleId) as { subject_id: number } | undefined
+    const subjectId = modRow?.subject_id || 0
+
+    // Retrieve SRS retention metrics map for this module
+    const srsMap = subjectId ? getTopicsRetention(db, actualUserId, subjectId, moduleId) : new Map()
+
     const rows = db.prepare(`
       SELECT mt.*,
         CASE WHEN EXISTS (
           SELECT 1 FROM module_topic_study_log sl
-          WHERE sl.topic_id = mt.id AND (? IS NULL OR sl.user_id = ?)
+          WHERE sl.topic_id = mt.id AND sl.user_id = ?
         ) THEN 1 ELSE 0 END as completed,
         CASE WHEN EXISTS (
           SELECT 1 FROM module_topic_study_log sl
-          WHERE sl.topic_id = mt.id AND (? IS NULL OR sl.user_id = ?)
+          WHERE sl.topic_id = mt.id AND sl.user_id = ?
         ) THEN 1 ELSE 0 END as studied
       FROM module_topics mt
       WHERE mt.module_id = ?
-    `).all(userId ?? null, userId ?? null, userId ?? null, userId ?? null, moduleId) as (Omit<ModuleTopic, 'completed' | 'studied'> & { completed: number; studied: number })[]
+    `).all(actualUserId, actualUserId, moduleId) as (Omit<ModuleTopic, 'completed' | 'studied'> & { completed: number; studied: number })[]
 
-    return rows.map(r => ({
-      ...r,
-      completed: Boolean(r.completed),
-      studied: Boolean(r.studied)
-    }))
+    return rows.map(r => {
+      const srs = srsMap.get(r.id)
+      return {
+        ...r,
+        completed: Boolean(r.completed),
+        studied: Boolean(r.studied),
+        has_new_material: Boolean((r as any).has_new_material),
+        is_gap: Boolean((r as any).is_gap),
+        retrievability: srs ? srs.retrievability : undefined,
+        retention_status: srs ? srs.retentionStatus : undefined,
+        next_review_due: srs ? srs.nextReviewDue : undefined,
+        stability: srs ? srs.stability : undefined,
+        days_overdue: srs ? srs.daysOverdue : undefined
+      }
+    })
   })
 
   ipcMain.handle('syllabus:toggleTopicCompleted', (_event, topicId: number, completed: boolean, userId?: number) => {
@@ -2070,15 +2248,33 @@ Rules:
       actualUserId = u?.id || 1
     }
 
+    const modRow = db.prepare('SELECT subject_id FROM syllabus_modules WHERE id = ?').get(topic.module_id) as { subject_id: number } | undefined
+    const subjectId = modRow?.subject_id || 0
+
     if (completed) {
       const now = new Date().toISOString()
       db.prepare(`
         INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
         VALUES (?, ?, ?)
       `).run(topicId, actualUserId, now)
+      db.prepare(`
+        UPDATE module_topics SET has_new_material = 0, is_gap = 0 WHERE id = ?
+      `).run(topicId)
+
+      // Initialize or update SRS memory state with default rating 3 (Good)
+      try {
+        if (subjectId) {
+          updateTopicSrsState(db, actualUserId, subjectId, topicId, 3, now)
+        }
+      } catch (srsErr) {
+        console.warn('Failed to update topic SRS state on toggle:', srsErr)
+      }
     } else {
       db.prepare(`
         DELETE FROM module_topic_study_log WHERE topic_id = ? AND user_id = ?
+      `).run(topicId, actualUserId)
+      db.prepare(`
+        DELETE FROM topic_spaced_memory WHERE topic_id = ? AND user_id = ?
       `).run(topicId, actualUserId)
     }
 
@@ -2253,5 +2449,36 @@ Rules:
       { content_text: string; filename: string } | undefined
     if (!row) throw new Error('File not found')
     return { content_text: row.content_text || '', filename: row.filename }
+  })
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TOPIC SPACED REPETITION (TOPIC-SRS)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  ipcMain.handle('tutor:getSubjectRetentionSummary', (_event, userId: number, subjectId: number) => {
+    try {
+      return getSubjectRetentionSummary(db, userId, subjectId)
+    } catch (err) {
+      console.error('Failed to get subject retention summary:', err)
+      return {
+        subjectId,
+        totalTopics: 0,
+        completedTopics: 0,
+        averageRetention: 1.0,
+        freshCount: 0,
+        fadingCount: 0,
+        overdueCount: 0,
+        dueTopics: []
+      }
+    }
+  })
+
+  ipcMain.handle('tutor:getTopDueMaintenanceTopics', (_event, userId: number, limit?: number) => {
+    try {
+      return getTopDueMaintenanceTopics(db, userId, limit ?? 8)
+    } catch (err) {
+      console.error('Failed to get top due maintenance topics:', err)
+      return []
+    }
   })
 }

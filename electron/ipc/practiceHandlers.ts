@@ -5,7 +5,8 @@ import { getAIConfig, getApiKey } from "./aiConfigStore"
 import {
   buildExtractPracticeProblemsPrompt,
   buildGenerateVariantPrompt,
-  buildEvaluatePracticeAttemptPrompt
+  buildEvaluatePracticeAttemptPrompt,
+  buildAutonomousPracticeProblemPrompt
 } from "../../src/lib/practicePrompts"
 import { parseDocumentTopology } from "../../src/lib/coverage/documentTopologyParser"
 import { classifyMaterialDomain } from "../../src/lib/classification/domainClassifier"
@@ -13,7 +14,8 @@ import { cleanMarkdownFences } from "../../src/lib/jsonRepair"
 import {
   recordTopicAssessment,
   recordMisconception,
-  recordConceptSuccess
+  recordConceptSuccess,
+  buildCKRFMemoryBlock
 } from "../../src/lib/memory/ckrfMemoryService"
 import type {
   PracticeProblem,
@@ -21,7 +23,9 @@ import type {
   PracticeProblemAttempt,
   PracticeSessionConfig,
   PracticeEvaluationResult,
-  ExtractedPracticeProblem
+  ExtractedPracticeProblem,
+  AutonomousPracticeGenOptions,
+  AutonomousPracticeGenResult
 } from "../../src/types"
 
 let db: Database.Database
@@ -385,7 +389,201 @@ export function registerPracticeHandlers(): void {
     }
   )
 
-  // ── 8. Create Practice Session ───────────────────────────────────────────
+  // ── 8. Autonomous Practice Problem Generation ─────────────────────────────
+  ipcMain.handle(
+    "practice:autonomousGenerate",
+    async (_event, options: AutonomousPracticeGenOptions): Promise<AutonomousPracticeGenResult> => {
+      try {
+        const {
+          subjectId,
+          userId,
+          moduleId,
+          topicId,
+          materialId,
+          count = 4,
+          autoCount = false,
+          difficultyFocus = 'adaptive'
+        } = options
+
+        const config = getAIConfig()
+        const apiKey = getApiKey()
+        if (!apiKey) {
+          throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+        }
+
+        // 1. Get Subject info
+        const subject = db.prepare("SELECT name FROM subjects WHERE id = ?").get(subjectId) as
+          | { name: string }
+          | undefined
+        if (!subject) throw new Error("Subject not found.")
+
+        // 2. Get Module and Topic info if provided
+        let moduleTitle: string | undefined
+        if (moduleId) {
+          const mod = db.prepare("SELECT title FROM syllabus_modules WHERE id = ?").get(moduleId) as
+            | { title: string }
+            | undefined
+          moduleTitle = mod?.title
+        }
+
+        let topicTitle: string | undefined
+        if (topicId) {
+          const top = db.prepare("SELECT title FROM module_topics WHERE id = ?").get(topicId) as
+            | { title: string }
+            | undefined
+          topicTitle = top?.title
+        }
+
+        // 3. Gather relevant source materials (Curator Layer)
+        let materialsText = ""
+        let sampledFilename: string | undefined
+
+        if (materialId) {
+          const mat = db.prepare("SELECT filename, content_text FROM materials WHERE id = ?").get(materialId) as
+            | { filename: string; content_text: string }
+            | undefined
+          if (mat?.content_text) {
+            materialsText = mat.content_text.slice(0, 12000)
+            sampledFilename = mat.filename
+          }
+        } else if (moduleId) {
+          // Check materials associated with module
+          const mats = db.prepare(
+            "SELECT filename, content_text FROM materials WHERE subject_id = ? AND module_id = ? ORDER BY id DESC LIMIT 3"
+          ).all(subjectId, moduleId) as { filename: string; content_text: string }[]
+
+          if (mats.length > 0) {
+            materialsText = mats.map(m => m.content_text).filter(Boolean).join("\n\n---\n\n").slice(0, 12000)
+            sampledFilename = mats[0].filename
+          }
+        }
+
+        // If still empty, grab any recent materials for this subject
+        if (!materialsText) {
+          const mats = db.prepare(
+            "SELECT filename, content_text FROM materials WHERE subject_id = ? ORDER BY uploaded_at DESC LIMIT 3"
+          ).all(subjectId) as { filename: string; content_text: string }[]
+
+          if (mats.length > 0) {
+            materialsText = mats.map(m => m.content_text).filter(Boolean).join("\n\n---\n\n").slice(0, 12000)
+            sampledFilename = mats[0].filename
+          }
+        }
+
+        // 4. Gather 1-3 Exemplar Practice Problems (Blueprint Synthesizer Layer)
+        let exemplarProblems: PracticeProblem[] = []
+        if (topicId) {
+          exemplarProblems = db.prepare(
+            "SELECT * FROM practice_problems WHERE subject_id = ? AND topic_id = ? ORDER BY is_ai_generated ASC, id DESC LIMIT 3"
+          ).all(subjectId, topicId) as PracticeProblem[]
+        }
+        if (exemplarProblems.length === 0 && moduleId) {
+          exemplarProblems = db.prepare(
+            "SELECT * FROM practice_problems WHERE subject_id = ? AND module_id = ? ORDER BY is_ai_generated ASC, id DESC LIMIT 3"
+          ).all(subjectId, moduleId) as PracticeProblem[]
+        }
+        if (exemplarProblems.length === 0) {
+          exemplarProblems = db.prepare(
+            "SELECT * FROM practice_problems WHERE subject_id = ? ORDER BY is_ai_generated ASC, id DESC LIMIT 3"
+          ).all(subjectId) as PracticeProblem[]
+        }
+
+        // 5. Gather CKRF Diagnostic Memory (Constraint & Misconception Targeting)
+        const ckrfContext = buildCKRFMemoryBlock(db, userId, subjectId, topicTitle || moduleTitle)
+
+        // 6. Epistemic Archetype Domain Classification
+        const domainResult = classifyMaterialDomain(materialsText || topicTitle || subject.name, subject.name, sampledFilename)
+
+        // 7. Build Autonomous Prompt
+        const prompt = buildAutonomousPracticeProblemPrompt({
+          subjectName: subject.name,
+          moduleTitle,
+          topicTitle,
+          materialsText,
+          exemplarProblems,
+          ckrfContext,
+          count,
+          autoCount,
+          difficultyFocus,
+          domainResult
+        })
+
+        // 8. Execute LLM Call
+        const responseText = await callAIMessages(
+          [{ role: "user", content: prompt }],
+          { ...config, apiKey },
+          { type: "json_object" }
+        )
+
+        // 9. Parse and validate JSON
+        const cleanedJson = cleanMarkdownFences(responseText)
+        let parsed: { rationale?: string; problems?: ExtractedPracticeProblem[] } = {}
+        try {
+          parsed = JSON.parse(cleanedJson)
+        } catch {
+          const match = cleanedJson.match(/\{.*"problems"\s*:\s*\[([\s\S]*?)\]\s*\}/)
+          if (match) {
+            parsed = JSON.parse(match[0])
+          } else {
+            throw new Error("Failed to parse generated practice problems JSON.")
+          }
+        }
+
+        if (!parsed.problems || !Array.isArray(parsed.problems) || parsed.problems.length === 0) {
+          throw new Error("No practice problems were generated by the model.")
+        }
+
+        // 10. Persist to database
+        const insertStmt = db.prepare(`
+          INSERT INTO practice_problems (
+            subject_id, module_id, topic_id, material_id,
+            title, problem_text, solution_steps, final_answer,
+            difficulty, principles_json, is_ai_generated, parent_problem_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        `)
+
+        const created: PracticeProblem[] = []
+        const parentExemplarId = exemplarProblems.length > 0 ? exemplarProblems[0].id : null
+
+        for (const p of parsed.problems) {
+          if (!p || !p.problem_text) continue
+
+          const res = insertStmt.run(
+            subjectId,
+            moduleId || null,
+            topicId || null,
+            materialId || null,
+            p.title || `${topicTitle || moduleTitle || subject.name} Practice`,
+            p.problem_text,
+            p.solution_steps || null,
+            p.final_answer || null,
+            p.difficulty || 3,
+            JSON.stringify(p.principles || []),
+            parentExemplarId
+          )
+
+          const row = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
+          if (row) created.push(row)
+        }
+
+        return {
+          success: true,
+          count: created.length,
+          problems: created,
+          rationale: parsed.rationale
+        }
+      } catch (err) {
+        console.error("practice:autonomousGenerate error:", err)
+        return {
+          success: false,
+          count: 0,
+          error: String(err)
+        }
+      }
+    }
+  )
+
+  // ── 9. Create Practice Session ───────────────────────────────────────────
   ipcMain.handle("practice:createSession", (_event, config: PracticeSessionConfig) => {
     try {
       // 1. Find candidate problems

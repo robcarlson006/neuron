@@ -329,6 +329,20 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     }
   }
 
+  function handleStartSpacedReview(moduleId?: number, selectedTopics?: string[]): void {
+    if (subject) {
+      const config: import('../types').TutorSessionConfig = {
+        duration_minutes: 15,
+        depth_level: 3,
+        never_studied: false,
+        module_id: moduleId,
+        is_spaced_review: true,
+        spaced_review_topics: selectedTopics
+      }
+      navigate(`/tutor/${subjectId}?config=${encodeURIComponent(JSON.stringify(config))}`)
+    }
+  }
+
   async function handleGenerateCards(moduleId: number, options?: import('../types').ModuleCardGenOptions): Promise<void> {
     setLoadingCards(prev => ({ ...prev, [moduleId]: true }))
     try {
@@ -415,35 +429,51 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     }
   }
 
-  /** One-click incremental curriculum update from unprocessed materials.
-   * Never touches existing modules or topics — only adds. */
+  /** One-click incremental curriculum reconciliation from materials.
+   * Restructures curriculum logically while preserving all completed topic progress. */
   async function handleUpdateCurriculum(): Promise<void> {
     setUpdatingSyllabus(true)
     try {
       const result = await window.electronAPI.syllabusUpdateFromMaterials(subjectId)
-      if (result.new_module_count > 0 || result.new_topic_count > 0) {
-        addToast({
-          type: 'success',
-          title: 'Curriculum Updated',
-          message:
-            `${result.new_module_count} new module${result.new_module_count !== 1 ? 's' : ''}` +
-            ` and ${result.new_topic_count} new topic${result.new_topic_count !== 1 ? 's' : ''} added.` +
-            (result.new_module_count === 0 && result.new_topic_count === 0
-              ? ' Your existing modules were extended with the new material.' : '')
-        })
-      } else {
-        addToast({
-          type: 'success',
-          title: 'Curriculum Updated',
-          message: 'Your existing modules already cover the new material.'
-        })
-      }
+      const preserved = result.preserved_completed_count ?? 0
+      const gaps = result.gap_topic_count ?? result.new_topic_count
+      const updated = result.updated_topic_count ?? 0
+
+      let details = ''
+      if (preserved > 0) details += `${preserved} completed topic${preserved !== 1 ? 's' : ''} preserved. `
+      if (gaps > 0) details += `${gaps} new learning gap${gaps !== 1 ? 's' : ''} added. `
+      if (updated > 0) details += `${updated} topic${updated !== 1 ? 's' : ''} updated with new content. `
+
+      addToast({
+        type: 'success',
+        title: 'Curriculum Reconciled',
+        message: details || 'Your syllabus has been updated to reflect all materials.'
+      })
       setPendingUpdateMaterial(null)
       loadAllData()
     } catch (err: any) {
       addToast({ type: 'error', title: 'Update Failed', message: err.message || 'Could not update the curriculum.' })
     } finally {
       setUpdatingSyllabus(false)
+    }
+  }
+
+  /** Explicit full syllabus reconciliation. Progress on completed topics is preserved by the backend. */
+  async function handleRegenerateSyllabus(): Promise<void> {
+    const ok = confirm(
+      'Reconcile and restructure the syllabus from ALL materials?\n\n' +
+      'This organizes your curriculum into the most logical pedagogical sequence. ' +
+      'All topic completions and study history will be preserved, and any newly identified topics will be highlighted.\n\nContinue?'
+    )
+    if (!ok) return
+    try {
+      const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
+      if (result?.length) {
+        addToast({ type: 'success', title: 'Syllabus Reconciled', message: `${result.length} modules organized. Your progress was preserved.` })
+        loadAllData()
+      }
+    } catch {
+      addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
     }
   }
 
@@ -505,26 +535,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     }
   }
 
-  /** Explicit full rebuild — destructive, so it requires confirmation. Progress
-   * on modules whose titles match after regeneration is preserved by the backend. */
-  async function handleRegenerateSyllabus(): Promise<void> {
-    const ok = confirm(
-      'Regenerate the entire syllabus from ALL materials?\n\n' +
-      'This rebuilds every module from scratch. Existing completion progress on ' +
-      'modules with matching titles will be preserved, but topics may be reordered ' +
-      'or renamed by the AI.\n\nContinue?'
-    )
-    if (!ok) return
-    try {
-      const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
-      if (result?.length) {
-        addToast({ type: 'success', title: 'Syllabus Regenerated', message: `${result.length} modules generated.` })
-        loadAllData()
-      }
-    } catch {
-      addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
-    }
-  }
+
 
   async function handleDeleteMaterial(materialId: number, filename: string): Promise<void> {
     if (!confirm(`Delete "${filename}"? This cannot be undone.`)) return
@@ -1047,6 +1058,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               modules={modules}
               subjectName={subject?.name}
               onStartTutor={handleStartTutor}
+              onStartSpacedReview={handleStartSpacedReview}
               onGenerateCards={handleGenerateCards}
               onToggleTopic={handleToggleTopic}
               loadingCards={loadingCards}
@@ -2014,7 +2026,7 @@ function SubjectDetailStudyMenu({ subjectId, disabled, folderId }: { subjectId: 
 
   const options = folderId != null
     ? [
-        { label: 'Flashcards', desc: 'Flip through cards in this folder — no schedule impact', route: `/study/${subjectId}?folderId=${folderId}`, dot: 'bg-violet-500' },
+        { label: 'Flashcards', desc: 'Study cards in this folder with progress tracking', route: `/study/${subjectId}?folderId=${folderId}`, dot: 'bg-violet-500' },
         { label: 'Multiple Choice', desc: 'Practice with answer options — no schedule impact', route: `/study/${subjectId}?mode=mc${folderSuffix}`, dot: 'bg-blue-500' },
         { label: 'Learn Mode', desc: 'Multiple-choice then written answers — no schedule impact', route: `/study/${subjectId}?mode=learn${folderSuffix}`, dot: 'bg-emerald-500' },
       ]

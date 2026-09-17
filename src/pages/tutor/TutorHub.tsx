@@ -28,6 +28,7 @@ export default function TutorHub(): React.JSX.Element {
   const [dismissContextBanner, setDismissContextBanner] = useState<boolean>(false)
   const [showPostLectureModal, setShowPostLectureModal] = useState<boolean>(false)
   const [subjectMaterials, setSubjectMaterials] = useState<{ id: number; filename: string }[]>([])
+  const [dueMaintenanceTopics, setDueMaintenanceTopics] = useState<import('../../lib/memory/topicSrsEngine').TopicRetentionMetrics[]>([])
 
   const activeSubjects = subjects.filter(s => s.status !== 'archived')
 
@@ -79,6 +80,16 @@ export default function TutorHub(): React.JSX.Element {
         }
       }
       setSubjectModules(modMap)
+
+      // Load top due Topic-SRS maintenance topics
+      if (window.electronAPI.tutorGetTopDueMaintenanceTopics) {
+        try {
+          const dueTopics = await window.electronAPI.tutorGetTopDueMaintenanceTopics(user.id, 6)
+          setDueMaintenanceTopics(dueTopics || [])
+        } catch (srsErr) {
+          console.warn('Failed to load due maintenance topics in tutor hub:', srsErr)
+        }
+      }
 
       setState('loaded')
     } catch (err) {
@@ -616,6 +627,90 @@ export default function TutorHub(): React.JSX.Element {
           </div>
         )}
       </div>
+
+      {/* Curriculum Spaced Maintenance Due (Topic-SRS) */}
+      {dueMaintenanceTopics.length > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <span className="text-base">⏳</span>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
+                Curriculum Retention Maintenance Due
+              </h2>
+              <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                {dueMaintenanceTopics.length} topic{dueMaintenanceTopics.length > 1 ? 's' : ''} fading
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {dueMaintenanceTopics.map(t => {
+              const subj = subjects.find(s => s.id === t.subjectId)
+              const pct = Math.round(t.retrievability * 100)
+              const isCrit = t.retentionStatus === 'overdue'
+
+              return (
+                <div
+                  key={`${t.subjectId}-${t.topicId}`}
+                  className={`p-3.5 rounded-xl border transition-all ${
+                    isCrit
+                      ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/60'
+                      : 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60'
+                  } flex flex-col justify-between`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 truncate">
+                        {subj?.name || 'Class'}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                          isCrit
+                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/60 dark:text-rose-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
+                        }`}
+                      >
+                        {pct}% Retention
+                      </span>
+                    </div>
+                    <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100 line-clamp-2">
+                      {t.topicTitle}
+                    </h3>
+                    {t.moduleTitle && (
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">
+                        {t.moduleTitle}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                    <span className="text-[10px] text-slate-400">
+                      {t.daysOverdue > 0 ? `${t.daysOverdue}d overdue` : `Review due`}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const config: import('../../types').TutorSessionConfig = {
+                          duration_minutes: 15,
+                          depth_level: 3,
+                          never_studied: false,
+                          module_id: t.moduleId,
+                          target_topic: t.topicTitle,
+                          is_spaced_review: true,
+                          spaced_review_topics: [t.topicTitle]
+                        }
+                        navigate(`/tutor/${t.subjectId}?config=${encodeURIComponent(JSON.stringify(config))}`)
+                      }}
+                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-medium transition-colors flex items-center gap-1 shadow-2xs"
+                    >
+                      <span>⚡</span> Drill Now
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Classes Grid */}
       <div>

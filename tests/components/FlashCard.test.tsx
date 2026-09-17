@@ -168,4 +168,30 @@ describe('FlashCard Component', () => {
     fireEvent.keyDown(window, { key: ' ' })
     expect(mockOnResult).toHaveBeenCalledWith(5)
   })
+
+  it('toggles the Math Palette and inserts math snippets into answer', () => {
+    render(<FlashCard card={mockCard} onResult={mockOnResult} />)
+    
+    // Math palette is initially hidden
+    expect(screen.queryByText('Common')).not.toBeInTheDocument()
+    
+    // Click Math Palette toggle button
+    const mathBtn = screen.getByTitle(/Toggle Math Keyboard/i)
+    fireEvent.click(mathBtn)
+    
+    // Math palette categories and buttons should be visible
+    expect(screen.getByText('Common')).toBeInTheDocument()
+    expect(screen.getByText('Greek')).toBeInTheDocument()
+    expect(screen.getByText('Calculus & Econ')).toBeInTheDocument()
+
+    // Click fraction button x/y (\frac{a}{b})
+    const fractionBtn = screen.getByText('x/y')
+    fireEvent.click(fractionBtn)
+
+    const textarea = screen.getByPlaceholderText(/write your answer here/i) as HTMLTextAreaElement
+    expect(textarea.value).toContain('\\frac{a}{b}')
+    
+    // Live preview should appear
+    expect(screen.getByText(/Live Math Preview:/i)).toBeInTheDocument()
+  })
 })

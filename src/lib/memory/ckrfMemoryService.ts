@@ -10,7 +10,6 @@ import {
   updateRating,
   getCompetencyBand,
   getConfidenceInterval,
-  difficultyToItemRating,
   type StudentRatingProfile,
   type AssessmentOutcome,
   type CompetencyBand
@@ -330,7 +329,7 @@ export function buildCKRFMemoryBlock(
   db: DatabaseLike | undefined,
   userId: number | undefined,
   subjectId: number | undefined,
-  targetTopic?: string
+  _targetTopic?: string
 ): string {
   if (!db || !userId || !subjectId) return ''
 

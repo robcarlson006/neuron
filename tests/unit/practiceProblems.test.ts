@@ -1,7 +1,8 @@
 import {
   buildExtractPracticeProblemsPrompt,
   buildGenerateVariantPrompt,
-  buildEvaluatePracticeAttemptPrompt
+  buildEvaluatePracticeAttemptPrompt,
+  buildAutonomousPracticeProblemPrompt
 } from "../../src/lib/practicePrompts"
 import { DB_SCHEMA, MIGRATIONS_SQL, deleteSubjectCascade } from "../../src/lib/db"
 import type { PracticeProblem } from "../../src/types"
@@ -68,6 +69,50 @@ describe("Practice Problems Prompts", () => {
     expect(evalPrompt).toContain("execution_slip")
     expect(evalPrompt).toContain("conceptual_misconception")
     expect(evalPrompt).toContain("pedagogical_remedy")
+  })
+
+  it("builds an autonomous practice generation prompt with AI Decides autoCount", () => {
+    const prompt = buildAutonomousPracticeProblemPrompt({
+      subjectName: "Microeconomics",
+      moduleTitle: "Consumer Theory",
+      topicTitle: "Utility Maximization",
+      materialsText: "Lecture 4 Notes: Budget constraints, indifference curves, Cobb-Douglas optimization...",
+      exemplarProblems: [sampleProblem],
+      ckrfContext: "ACTIVE MISCONCEPTIONS:\n- Confuses Marginal Utility with Total Utility\n- Fails to invert fraction when calculating MRS",
+      autoCount: true,
+      difficultyFocus: "remediate_struggles"
+    })
+
+    expect(prompt).toContain("Microeconomics")
+    expect(prompt).toContain("Consumer Theory")
+    expect(prompt).toContain("Utility Maximization")
+    expect(prompt).toContain("AI DECIDES")
+    expect(prompt).toContain("CURRICULUM SOURCE MATERIALS")
+    expect(prompt).toContain("Lecture 4 Notes")
+    expect(prompt).toContain("EXEMPLAR PRACTICE PROBLEMS")
+    expect(prompt).toContain("Consumer Equilibrium with Cobb-Douglas Utility")
+    expect(prompt).toContain("STUDENT'S ACTIVE LEARNING PROFILE")
+    expect(prompt).toContain("Confuses Marginal Utility with Total Utility")
+    expect(prompt).toContain("TARGETED REMEDIATION DIRECTIVE")
+    expect(prompt).toContain("CONSTRAINT-BASED PARAMETER CLAMPING")
+    expect(prompt).toContain("BACKWARD VERIFICATION PASS")
+  })
+
+  it("builds an autonomous practice prompt with fixed count and no prior exemplars", () => {
+    const prompt = buildAutonomousPracticeProblemPrompt({
+      subjectName: "Organic Chemistry",
+      moduleTitle: "Electrophilic Addition",
+      topicTitle: "Markovnikov's Rule",
+      count: 5,
+      autoCount: false,
+      difficultyFocus: "challenge"
+    })
+
+    expect(prompt).toContain("Organic Chemistry")
+    expect(prompt).toContain("Markovnikov's Rule")
+    expect(prompt).toContain("Generate exactly 5 practice problems")
+    expect(prompt).toContain("CHALLENGE")
+    expect(prompt).toContain("BACKWARD VERIFICATION PASS")
   })
 })
 

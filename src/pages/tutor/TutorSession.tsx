@@ -1,25 +1,26 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
-import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 import ChatMessage from '../../components/tutor/ChatMessage'
 import ChatInput from '../../components/tutor/ChatInput'
 import TutorCardReviewModal from '../../components/tutor/TutorCardReviewModal'
+import TutorChatSidebar from './TutorChatSidebar'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
 type PageState = 'loading' | 'streaming' | 'awaiting_input' | 'phase_transition' | 'session_complete' | 'error'
 
 export default function TutorSession(): React.JSX.Element {
-  const { classId } = useParams<{ classId: string }>()
+  const { classId, sessionId: routeSessionId } = useParams<{ classId: string; sessionId?: string }>()
   const subjectId = Number(classId)
   const navigate = useNavigate()
-  const { user, subjects, addToast, focusBlock, nextFocusBlockStep, endFocusBlock } = useAppStore()
+  const { user, subjects, addToast, focusBlock, endFocusBlock } = useAppStore()
   const subject = subjects.find(s => s.id === subjectId)
 
   // ── State ──
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => localStorage.getItem('neuron_tutor_sidebar') !== 'false')
   const [pageState, setPageState] = useState<PageState>('loading')
-  const [sessionId, setSessionId] = useState<number | null>(null)
+  const [sessionId, setSessionId] = useState<number | null>(routeSessionId ? Number(routeSessionId) : null)
   const [sessionPhase, setSessionPhase] = useState<SessionPhase>('structured_qa')
   const [messages, setMessages] = useState<Message[]>([])
   const [streamingContent, setStreamingContent] = useState('')
@@ -29,6 +30,7 @@ export default function TutorSession(): React.JSX.Element {
   const [endingSession, setEndingSession] = useState(false)
   const [showCardReview, setShowCardReview] = useState(false)
   const [sessionEnded, setSessionEnded] = useState(false)
+  const [viewTranscript, setViewTranscript] = useState(false)
   const [sessionEvaluation, setSessionEvaluation] = useState<TutorSessionEvaluation | null>(null)
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [focusKey, setFocusKey] = useState(0)
@@ -97,19 +99,37 @@ export default function TutorSession(): React.JSX.Element {
     return () => window.removeEventListener('focus-block:prompt-end-session', onFocusBlockEndRequested)
   }, [])
 
+  // ── Keyboard shortcut to toggle sidebar (Cmd+H / Ctrl+H) ──
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent): void {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'h') {
+        e.preventDefault()
+        setIsSidebarOpen(prev => {
+          const next = !prev
+          localStorage.setItem('neuron_tutor_sidebar', String(next))
+          return next
+        })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   // ── Load / init session ──
   useEffect(() => {
     if (user && subjectId) {
       initSession()
     }
-  }, [user, subjectId])
+  }, [user, subjectId, routeSessionId])
 
   async function initSession(): Promise<void> {
     if (!user) return
     setPageState('loading')
     setError(null)
+    setSessionEnded(false)
+    setSessionEvaluation(null)
 
-    // Decode session config from URL params
+    const isExplicitNew = searchParams.get('new') === 'true'
     const configParam = searchParams.get('config')
     let config: TutorSessionConfig
     if (configParam) {
@@ -126,11 +146,6 @@ export default function TutorSession(): React.JSX.Element {
     try {
       // Load syllabus modules
       const mods = await window.electronAPI.syllabusListModules(subjectId) as SyllabusModule[]
-      const targetMod = config.module_id ? mods.find(m => m.id === config.module_id) : null
-      const inProgressMod = targetMod || (!config.material_name && !config.target_topic && !config.is_fill_gaps
-        ? (mods.find(m => m.status === 'in_progress') || mods.find(m => m.status === 'pending') || null)
-        : null)
-      if (inProgressMod) setCurrentModule(inProgressMod)
 
       // Load mastery data
       try {
@@ -138,6 +153,89 @@ export default function TutorSession(): React.JSX.Element {
         setMasteredTopics(mastery.filter(m => m.mastery_prob >= 0.8).map(m => m.concept))
         setWeakTopics(mastery.filter(m => m.mastery_prob < 0.45).map(m => m.concept))
       } catch { /* ignore */ }
+
+      // ── CASE 1: Resume specific session from URL route ──
+      if (routeSessionId && !isExplicitNew) {
+        const targetId = Number(routeSessionId)
+        const sessionData = await window.electronAPI.tutorGetSession(targetId)
+        if (sessionData && sessionData.session) {
+          const s = sessionData.session
+          setSessionId(s.id)
+          sessionIdRef.current = s.id
+          setSessionPhase(s.phase as SessionPhase)
+          sessionPhaseRef.current = s.phase as SessionPhase
+
+          if (s.module_id) {
+            const targetMod = mods.find(m => m.id === s.module_id)
+            if (targetMod) setCurrentModule(targetMod)
+          }
+
+          // Hydrate messages, filtering out the hidden system prompt
+          const hydrated = (sessionData.messages || [])
+            .filter(m => !(m.role === 'user' && m.content.startsWith('Greet me and')))
+            .map(m => ({
+              id: String(m.id),
+              conversation_id: m.conversation_id,
+              role: m.role as 'user' | 'assistant' | 'system',
+              content: m.content,
+              content_type: m.content_type || 'text',
+              created_at: m.created_at
+            }))
+          setMessages(hydrated)
+
+          // Restore timer state
+          const startedAt = new Date(s.started_at).getTime()
+          const now = Date.now()
+          const durationMins = s.duration_minutes ?? null
+          const elapsedSecs = Math.max(0, Math.round((now - startedAt) / 1000))
+          const totalSecs = durationMins ? durationMins * 60 : 0
+          const remainingSecs = durationMins ? Math.max(0, totalSecs - elapsedSecs) : 0
+
+          setRuntime({
+            config: {
+              duration_minutes: durationMins,
+              depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5) ?? 3),
+              never_studied: Boolean(s.never_studied)
+            },
+            started_at: startedAt,
+            time_elapsed_seconds: elapsedSecs,
+            time_remaining_seconds: remainingSecs,
+            is_time_up: durationMins !== null && remainingSecs <= 0,
+            topics_covered: [],
+            questions_asked: [],
+            topics_mastered: [],
+            weak_topics: []
+          })
+
+          if (s.phase === 'complete') {
+            setSessionEnded(true)
+            setViewTranscript(true)
+            try {
+              const evalData = await window.electronAPI.tutorGetSessionEvaluation(s.id)
+              if (evalData) setSessionEvaluation(evalData)
+            } catch { /* ignore */ }
+          }
+
+          setPageState('awaiting_input')
+          return
+        }
+      }
+
+      // ── CASE 2: No specific session requested — check if there is an existing session to resume ──
+      if (!isExplicitNew && !configParam) {
+        const existingList = await window.electronAPI.tutorListSessions(subjectId, 1)
+        if (existingList && existingList.length > 0) {
+          navigate(`/tutor/${subjectId}/session/${existingList[0].id}`, { replace: true })
+          return
+        }
+      }
+
+      // ── CASE 3: Start a brand new session ──
+      const targetMod = config.module_id ? mods.find(m => m.id === config.module_id) : null
+      const inProgressMod = targetMod || (!config.material_name && !config.target_topic && !config.is_fill_gaps
+        ? (mods.find(m => m.status === 'in_progress') || mods.find(m => m.status === 'pending') || null)
+        : null)
+      if (inProgressMod) setCurrentModule(inProgressMod)
 
       // Initialize timer state
       const now = Date.now()
@@ -162,10 +260,14 @@ export default function TutorSession(): React.JSX.Element {
           never_studied: config.never_studied ? 1 : 0
         } : undefined
       ) as { id: number; phase: string }
+
       setSessionId(session.id)
       sessionIdRef.current = session.id
       setSessionPhase(session.phase as SessionPhase)
       sessionPhaseRef.current = session.phase as SessionPhase
+
+      // Replace URL so user can return/refresh to this exact session
+      navigate(`/tutor/${subjectId}/session/${session.id}`, { replace: true })
 
       // Mark current module as in_progress if it was pending
       if (inProgressMod && inProgressMod.status === 'pending') {
@@ -180,7 +282,16 @@ export default function TutorSession(): React.JSX.Element {
       const topic = config.target_topic || (config.material_name ? `${config.material_name} (Material)` : (inProgressMod?.title || subject?.name || 'this subject'))
 
       let initialMsg = ''
-      if (config.is_fill_gaps) {
+      if (config.is_spaced_review) {
+        const reviewTopics = config.spaced_review_topics?.length ? config.spaced_review_topics.join(', ') : 'decaying curriculum concepts'
+        initialMsg = `Greet me and launch immediately into a rapid active recall question in this exact format:
+"Welcome! Today is a targeted Spaced Retention Drill for ${subject?.name || 'this subject'}. We're reinforcing ${reviewTopics} to lock them into long-term memory. [Sharp recall question testing the first concept]?"
+
+Mode: SPACED RETENTION MAINTENANCE (Target: ${reviewTopics})
+Subject: ${subject?.name || 'this subject'}
+Difficulty: ${difficultyLabel}
+${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : '15 min maintenance sprint'}`
+      } else if (config.is_fill_gaps) {
         const gapSummary = config.gap_topics?.length ? config.gap_topics.join(', ') : 'identified gap concepts'
         initialMsg = `Greet me and ask your first question in this exact format:
 "Welcome! Today we're filling in knowledge gaps in ${subject?.name || 'this subject'}. We'll focus on ${gapSummary}. [Specific question addressing the first gap topic]?"
@@ -299,6 +410,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         targetTopics: sessionConfig?.target_topics || runtime.config.target_topics,
         isFillGaps: sessionConfig?.is_fill_gaps || runtime.config.is_fill_gaps,
         gapTopics: sessionConfig?.gap_topics || runtime.config.gap_topics,
+        isSpacedReview: sessionConfig?.is_spaced_review || runtime.config.is_spaced_review,
+        spacedReviewTopics: sessionConfig?.spaced_review_topics || runtime.config.spaced_review_topics,
         timeElapsedSeconds: runtime.time_elapsed_seconds,
         timeRemainingSeconds: runtime.time_remaining_seconds,
         pacingStatus: calcPacingStatus(runtime),
@@ -790,111 +903,122 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   }
 
   // ── Session Complete ──
-  if (sessionEnded && !showCardReview) {
+  if (sessionEnded && !showCardReview && !viewTranscript) {
     return (
-      <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 p-6 overflow-y-auto">
-        <div className="flex items-center justify-center min-h-[80vh]">
-          <div className="text-center max-w-lg w-full px-6 py-8 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl space-y-5">
-            <div className="text-5xl mb-2">🎯</div>
-            <div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-50 mb-1">Session Complete!</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Neuron recorded your learning progress for future gap analysis and adaptive tutoring.
-              </p>
-            </div>
-
-            {/* Evaluation Insights Card */}
-            {sessionEvaluation && (sessionEvaluation.strengths?.length > 0 || sessionEvaluation.struggles?.length > 0) && (
-              <div className="text-left p-4 rounded-xl bg-slate-50 dark:bg-slate-700/40 border border-slate-200 dark:border-slate-600 space-y-3">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
-                  <span>🧠</span> Learning Memory Snapshot
-                </div>
-
-                {sessionEvaluation.strengths && sessionEvaluation.strengths.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block mb-1">
-                      🌟 What you understood well
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {sessionEvaluation.strengths.map((str, i) => (
-                        <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-100/80 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/60 font-medium">
-                          ✓ {str}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {sessionEvaluation.struggles && sessionEvaluation.struggles.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block mb-1">
-                      💡 Areas saved for future gap review
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {sessionEvaluation.struggles.map((stg, i) => (
-                        <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60 font-medium">
-                          • {stg}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {sessionEvaluation.summary && (
-                  <p className="text-xs text-slate-600 dark:text-slate-300 italic pt-1 border-t border-slate-200 dark:border-slate-600">
-                    "{sessionEvaluation.summary}"
-                  </p>
-                )}
+      <div className="flex h-full w-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
+        {!focusBlock?.isRunning && (
+          <TutorChatSidebar
+            subjectId={subjectId}
+            currentSessionId={sessionId}
+            isOpen={isSidebarOpen}
+            onToggleOpen={() => {
+              setIsSidebarOpen(prev => {
+                const next = !prev
+                localStorage.setItem('neuron_tutor_sidebar', String(next))
+                return next
+              })
+            }}
+            onSelectSession={(selId) => {
+              navigate(`/tutor/${subjectId}/session/${selId}`)
+            }}
+            onNewSession={() => {
+              navigate(`/tutor/${subjectId}?new=true`)
+            }}
+          />
+        )}
+        <div className="flex flex-col flex-1 min-w-0 h-full p-6 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-[80vh]">
+            <div className="text-center max-w-lg w-full px-6 py-8 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl space-y-5">
+              <div className="text-5xl mb-2">🎯</div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-50 mb-1">Session Complete!</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Neuron recorded your learning progress for future gap analysis and adaptive tutoring.
+                </p>
               </div>
-            )}
 
-            <div className="flex gap-3 justify-center pt-2 flex-wrap">
-              {focusBlock?.isRunning && focusBlock.activeIndex < focusBlock.items.length - 1 ? (
+              {/* Evaluation Insights Card */}
+              {sessionEvaluation && (sessionEvaluation.strengths?.length > 0 || sessionEvaluation.struggles?.length > 0) && (
+                <div className="text-left p-4 rounded-xl bg-slate-50 dark:bg-slate-700/40 border border-slate-200 dark:border-slate-600 space-y-3">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+                    <span>🧠</span> Learning Memory Snapshot
+                  </div>
+
+                  {sessionEvaluation.strengths && sessionEvaluation.strengths.length > 0 && (
+                    <div>
+                      <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block mb-1">
+                        🌟 What you understood well
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {sessionEvaluation.strengths.map((str, i) => (
+                          <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-100/80 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/60 font-medium">
+                            ✓ {str}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {sessionEvaluation.struggles && sessionEvaluation.struggles.length > 0 && (
+                    <div>
+                      <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block mb-1">
+                        💡 Areas saved for future gap review
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {sessionEvaluation.struggles.map((stg, i) => (
+                          <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60 font-medium">
+                            • {stg}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {sessionEvaluation.summary && (
+                    <p className="text-xs text-slate-600 dark:text-slate-300 italic pt-1 border-t border-slate-200 dark:border-slate-600">
+                      "{sessionEvaluation.summary}"
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-3 justify-center pt-2 flex-wrap">
+                <button
+                  onClick={() => setViewTranscript(true)}
+                  className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md flex items-center gap-1.5"
+                >
+                  <span>💬 View Transcript</span>
+                </button>
                 <button
                   onClick={async () => {
-                    const nextIdx = focusBlock.activeIndex + 1
-                    const nextItem = focusBlock.items[nextIdx]
-                    nextFocusBlockStep()
-                    if (nextItem) {
-                      await navigateToFocusBlockItem(nextItem, navigate, user?.id)
+                    if (sessionId) {
+                      await window.electronAPI.tutorUpdateSessionPhase(sessionId, 'socratic')
+                      setSessionPhase('socratic')
+                      sessionPhaseRef.current = 'socratic'
+                      setSessionEnded(false)
+                      setViewTranscript(true)
+                      setPageState('awaiting_input')
                     }
                   }}
-                  className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md flex items-center gap-1.5"
+                  className="px-5 py-2.5 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs font-bold transition-colors"
                 >
-                  <span>Next Focus Step ({focusBlock.items[focusBlock.activeIndex + 1]?.estimated_minutes}m)</span>
-                  <span>→</span>
+                  <span>⚡ Continue Discussion</span>
                 </button>
-              ) : focusBlock?.isRunning ? (
+                <button onClick={() => setShowCardReview(true)} className="px-5 py-2.5 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 rounded-xl text-xs font-bold transition-colors">
+                  🃏 Generate Flashcards
+                </button>
                 <button
                   onClick={() => {
-                    endFocusBlock(true)
+                    if (focusBlock?.isRunning) {
+                      endFocusBlock(true)
+                    }
                     navigate('/tutor')
                   }}
-                  className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md flex items-center gap-1.5"
+                  className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors"
                 >
-                  <span>Finish Focus Block</span>
-                  <span>✓</span>
+                  Tutor Hub
                 </button>
-              ) : null}
-              <button
-                onClick={() => {
-                  if (focusBlock?.isRunning) {
-                    endFocusBlock(true)
-                  }
-                  navigate('/tutor')
-                }}
-                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors"
-              >
-                Back to Tutor Hub
-              </button>
-              <button onClick={() => setShowCardReview(true)} className="px-5 py-2.5 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 rounded-xl text-xs font-bold transition-colors">
-                🃏 Generate Flashcards
-              </button>
-              {!focusBlock?.isRunning && (
-                <button onClick={() => navigate(`/subject/${subjectId}`)} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md">
-                  View Class
-                </button>
-              )}
+              </div>
             </div>
           </div>
         </div>
@@ -914,23 +1038,71 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   const currentPhaseIdx = phaseOrder.indexOf(sessionPhase)
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
-      {/* Top bar - hidden when in Focus Block */}
+    <div className="flex h-full w-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
+      {/* Collapsible Chat History Sidebar */}
       {!focusBlock?.isRunning && (
-        <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/tutor')}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M11 4l-5 5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-            <div>
-              <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                {subject?.name || 'Tutor Session'}
-              </h1>
+        <TutorChatSidebar
+          subjectId={subjectId}
+          currentSessionId={sessionId}
+          isOpen={isSidebarOpen}
+          onToggleOpen={() => {
+            setIsSidebarOpen(prev => {
+              const next = !prev
+              localStorage.setItem('neuron_tutor_sidebar', String(next))
+              return next
+            })
+          }}
+          onSelectSession={(selId) => {
+            navigate(`/tutor/${subjectId}/session/${selId}`)
+          }}
+          onNewSession={() => {
+            navigate(`/tutor/${subjectId}?new=true`)
+          }}
+        />
+      )}
+
+      {/* Main Content Area */}
+      <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
+        {/* Top bar - hidden when in Focus Block */}
+        {!focusBlock?.isRunning && (
+          <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={() => navigate('/tutor')}
+                title="Back to Tutor Hub"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <path d="M11 4l-5 5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsSidebarOpen(prev => {
+                    const next = !prev
+                    localStorage.setItem('neuron_tutor_sidebar', String(next))
+                    return next
+                  })
+                }}
+                title={isSidebarOpen ? "Collapse history (⌘H)" : "Open history (⌘H)"}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  isSidebarOpen
+                    ? 'text-violet-600 bg-violet-50 dark:bg-violet-950/50 dark:text-violet-300'
+                    : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="18" height="18" x="3" y="3" rx="2"/>
+                  <path d="M9 3v18"/>
+                  <path d="m14 9 3 3-3 3"/>
+                </svg>
+              </button>
+
+              <div>
+                <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                  {subject?.name || 'Tutor Session'}
+                </h1>
               <p className="text-xs text-slate-400 dark:text-slate-500">
                 {sessionPhase === 'complete' ? 'Session ended' : phaseLabels[sessionPhase]}
                 {sessionConfig?.material_name ? ` · 📄 ${sessionConfig.material_name}` : (currentModule && ` · ${currentModule.title}`)}
@@ -1000,14 +1172,48 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             </div>
           )}
 
-          {messages.map((msg) => (
-            <ChatMessage
-              key={msg.id}
-              role={msg.role}
-              content={msg.content}
-              created_at={msg.created_at}
-            />
-          ))}
+          {/* Completed banner */}
+          {sessionEnded && (
+            <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-3 flex items-center justify-between text-xs mb-2">
+              <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-200 font-medium">
+                <span className="text-emerald-600 dark:text-emerald-400">✓</span>
+                <span>This session was completed. You can review the transcript or continue exploring.</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setViewTranscript(false)}
+                  className="px-2.5 py-1 bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 rounded-lg text-emerald-700 dark:text-emerald-300 font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors text-[11px]"
+                >
+                  View Summary
+                </button>
+                <button
+                  onClick={async () => {
+                    if (sessionId) {
+                      await window.electronAPI.tutorUpdateSessionPhase(sessionId, 'socratic')
+                      setSessionPhase('socratic')
+                      sessionPhaseRef.current = 'socratic'
+                      setSessionEnded(false)
+                      setPageState('awaiting_input')
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold transition-colors shadow-sm text-[11px]"
+                >
+                  Continue Discussion →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {messages
+            .filter(msg => !(msg.role === 'user' && msg.content.startsWith('Greet me and')))
+            .map((msg) => (
+              <ChatMessage
+                key={msg.id}
+                role={msg.role}
+                content={msg.content}
+                created_at={msg.created_at}
+              />
+            ))}
 
           {/* Streaming message */}
           {(sending || streamingContent) && (
@@ -1115,6 +1321,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           />
         </div>
       )}
+      </div>
 
       {/* End Session Modal */}
       {showEndModal && (

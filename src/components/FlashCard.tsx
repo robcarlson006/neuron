@@ -3,6 +3,8 @@ import type { Card } from '../types'
 import LatexText from './LatexText'
 import AutoGradeFeedback from './AutoGradeFeedback'
 import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEvaluator'
+import { Sigma } from './icons'
+import MathKeyboard from './practice/MathKeyboard'
 
 interface FlashCardProps {
   card: Card
@@ -26,7 +28,28 @@ export default function FlashCard({
   const [flipped, setFlipped] = useState(false)
   const [autoGradeResult, setAutoGradeResult] = useState<AutoGradeResult | null>(null)
   const [grading, setGrading] = useState(false)
+  const [showMathKeyboard, setShowMathKeyboard] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleInsertSnippet = (snippet: string) => {
+    if (!textareaRef.current) {
+      setAnswer((prev) => prev + snippet)
+      return
+    }
+
+    const textarea = textareaRef.current
+    const start = textarea.selectionStart || 0
+    const end = textarea.selectionEnd || 0
+    const text = textarea.value
+    const updated = text.substring(0, start) + snippet + text.substring(end)
+    setAnswer(updated)
+
+    setTimeout(() => {
+      textarea.focus()
+      const nextPos = start + snippet.length
+      textarea.setSelectionRange(nextPos, nextPos)
+    }, 0)
+  }
 
   // Reset when card changes
   useEffect(() => {
@@ -173,18 +196,57 @@ export default function FlashCard({
 
       {/* Optional written answer — shown before reveal */}
       {phase === 'front' && (
-        <div className="w-full">
+        <div className="w-full space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
+              Your Answer (optional)
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowMathKeyboard((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                showMathKeyboard
+                  ? "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-700 shadow-2xs"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-slate-900 dark:hover:text-slate-200"
+              }`}
+              title="Toggle Math Keyboard / LaTeX Palette"
+            >
+              <Sigma size={13} className="text-violet-600 dark:text-violet-400" />
+              <span>{showMathKeyboard ? "Hide Math Palette" : "Math Palette"}</span>
+            </button>
+          </div>
+
+          {/* Math Keyboard Palette */}
+          {showMathKeyboard && (
+            <div className="animate-in fade-in slide-in-from-top-2 duration-150">
+              <MathKeyboard onInsert={handleInsertSnippet} />
+            </div>
+          )}
+
           <div className="relative">
             <textarea
               ref={textareaRef}
               autoFocus
-              className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-colors text-sm resize-none"
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-colors text-sm font-mono resize-none"
               rows={2}
-              placeholder="Optional: write your answer here before revealing... (or just think it / say it aloud)"
+              placeholder="Optional: write your answer here before revealing... (use text or LaTeX math)"
               value={answer}
               onChange={e => setAnswer(e.target.value)}
             />
           </div>
+
+          {/* Live LaTeX Preview if user used math symbols */}
+          {(answer.includes("$") || answer.includes("\\") || answer.includes("^") || answer.includes("_")) && (
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-left">
+              <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block mb-1">
+                Live Math Preview:
+              </span>
+              <div className="text-sm text-slate-800 dark:text-slate-200">
+                <LatexText>{answer}</LatexText>
+              </div>
+            </div>
+          )}
+
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-1.5 text-center">
             <kbd>Enter</kbd> to reveal · <kbd>Shift</kbd>+<kbd>Enter</kbd> for new line
           </p>

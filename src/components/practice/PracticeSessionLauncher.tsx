@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { X, Play, BookOpen, Layers, CheckSquare } from "../icons"
+import { X, Play, BookOpen, Layers, CheckSquare, Sparkles } from "../icons"
 import type { SyllabusModule, ModuleTopic, PracticeProblem } from "../../types"
 
 interface PracticeSessionLauncherProps {
@@ -9,6 +9,7 @@ interface PracticeSessionLauncherProps {
   problems: PracticeProblem[]
   onClose: () => void
   onStartSession: (moduleId?: number, topicId?: number, count?: number) => void
+  onOpenAutoGen?: (moduleId?: number, topicId?: number) => void
 }
 
 const COUNT_OPTIONS = [
@@ -24,7 +25,8 @@ export default function PracticeSessionLauncher({
   modules,
   problems,
   onClose,
-  onStartSession
+  onStartSession,
+  onOpenAutoGen
 }: PracticeSessionLauncherProps): React.JSX.Element {
   const [selectedModuleId, setSelectedModuleId] = useState<number | undefined>()
   const [selectedTopicId, setSelectedTopicId] = useState<number | undefined>()
@@ -146,8 +148,28 @@ export default function PracticeSessionLauncher({
 
           {/* Problem availability note */}
           <div className="flex items-center justify-between p-3 rounded-xl bg-slate-100 dark:bg-slate-800/50 text-xs">
-            <span className="text-slate-600 dark:text-slate-400">Available matching problems:</span>
-            <span className="font-bold text-slate-900 dark:text-slate-100 font-mono">{matchingProblems.length}</span>
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-600 dark:text-slate-400">Available matching problems:</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 font-mono">{matchingProblems.length}</span>
+              </div>
+              {matchingProblems.length === 0 && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  No problems found for this topic yet. Generate some with AI!
+                </p>
+              )}
+            </div>
+
+            {onOpenAutoGen && (
+              <button
+                type="button"
+                onClick={() => onOpenAutoGen(selectedModuleId, selectedTopicId)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 hover:bg-violet-200 dark:hover:bg-violet-900/80 font-semibold text-xs transition-colors shrink-0"
+              >
+                <Sparkles size={12} />
+                <span>Generate with AI</span>
+              </button>
+            )}
           </div>
         </div>
 

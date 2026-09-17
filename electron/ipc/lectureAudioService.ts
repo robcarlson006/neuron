@@ -75,6 +75,9 @@ class LectureAudioServiceManager {
     // Create empty file & stream
     fs.writeFileSync(filePath, Buffer.alloc(0))
     const writeStream = fs.createWriteStream(filePath, { flags: 'a' })
+    writeStream.on('error', (err) => {
+      console.error(`Audio writeStream error for session ${sessionId}:`, err)
+    })
 
     const lecture = createLecture(this.db, {
       subject_id: subjectId,

@@ -131,9 +131,6 @@ export default function ClassCreationWizard({
     return className.trim().length > 0
   }
 
-  function canProceedFromMaterials(): boolean {
-    return true
-  }
 
   // ── Create ──
 

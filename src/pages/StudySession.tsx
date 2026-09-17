@@ -10,6 +10,8 @@ import type { Card, CardSchedule, SessionSummary } from '../types'
 import ClozeCard from '../components/ClozeCard'
 import UndoToast from '../components/UndoToast'
 import { useSwipe } from '../hooks/useSwipe'
+import CalculatorWidget from '../components/calculator/CalculatorWidget'
+import { Calculator } from '../components/icons'
 
 interface StudyCard extends Card {
   interval: number
@@ -21,6 +23,22 @@ interface StudyCard extends Card {
 
 type EmptyReason = 'no-cards' | 'new-cards' | 'all-caught-up'
 
+interface SavedStudySessionProgress {
+  v: 1
+  subjectId?: string
+  folderId?: string
+  isMCMode: boolean
+  isFolderMode: boolean
+  cards: StudyCard[]
+  allCards: StudyCard[]
+  currentIdx: number
+  phase: 'studying' | 'skipped'
+  skippedCards: StudyCard[]
+  summary: SessionSummary
+  sessionId: number | null
+  savedAt: number
+}
+
 export default function StudySession(): React.JSX.Element {
   const { subjectId } = useParams<{ subjectId?: string }>()
   const [searchParams] = useSearchParams()
@@ -29,9 +47,10 @@ export default function StudySession(): React.JSX.Element {
   const typeFilter = searchParams.get('type') as 'flashcard' | 'active_recall' | null
   const folderIdParam = searchParams.get('folderId')
   const isFolderMode = folderIdParam != null
-  const { user } = useAppStore()
+  const { user, calculatorSkin } = useAppStore()
   const navigate = useNavigate()
 
+  const [showCalculator, setShowCalculator] = useState<boolean>(false)
   const [cards, setCards] = useState<StudyCard[]>([])
   const [allCards, setAllCards] = useState<StudyCard[]>([]) // full pool for MC distractors
   const [skippedCards, setSkippedCards] = useState<StudyCard[]>([])
@@ -56,7 +75,17 @@ export default function StudySession(): React.JSX.Element {
   const [lastReviewParams, setLastReviewParams] = useState<{ cardId: number; cardIndex: number } | null>(null)
   const cardContainerRef = useRef<HTMLDivElement>(null)
 
+  const [sessionId, setSessionId] = useState<number | null>(null)
+  const sessionIdRef = useRef<number | null>(null)
+  sessionIdRef.current = sessionId
+
+  const summaryRef = useRef(summary)
+  summaryRef.current = summary
+
+  const [isResumed, setIsResumed] = useState(false)
+
   const learnStorageKey = `${user?.id ?? 0}-${subjectId ?? 'all'}`
+  const sessionProgressKey = `study-session-progress-${user?.id ?? 0}-${subjectId ?? 'all'}-${folderIdParam ?? 'all'}-${isMCMode ? 'mc' : 'study'}`
 
   const handleLearnRestart = useCallback(() => {
     localStorage.removeItem(`learn-progress-${learnStorageKey}`)
@@ -76,23 +105,145 @@ export default function StudySession(): React.JSX.Element {
     return () => window.removeEventListener('mousedown', close)
   }, [learnMenuOpen])
 
+  // Ensure DB study session is finalized on window unload or unmount if reviews took place
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (sessionIdRef.current && summaryRef.current.cardsReviewed.length > 0) {
+        window.electronAPI.endStudySession(
+          sessionIdRef.current,
+          summaryRef.current.cardsReviewed.length,
+          summaryRef.current.correct
+        ).catch(() => {})
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      if (sessionIdRef.current && summaryRef.current.cardsReviewed.length > 0) {
+        window.electronAPI.endStudySession(
+          sessionIdRef.current,
+          summaryRef.current.cardsReviewed.length,
+          summaryRef.current.correct
+        ).catch(() => {})
+      }
+    }
+  }, [])
+
+  const persistCurrentProgress = useCallback((
+    overrideCards?: StudyCard[],
+    overrideIdx?: number,
+    overrideSummary?: SessionSummary,
+    overridePhase?: 'studying' | 'skipped' | 'done',
+    overrideSkipped?: StudyCard[]
+  ) => {
+    if (isLearnMode) return
+    const curList = overrideCards ?? cards
+    const curIdx = overrideIdx ?? currentIdx
+    const curSummary = overrideSummary ?? summary
+    const curPhase = overridePhase ?? phase
+    const curSkipped = overrideSkipped ?? skippedCards
+
+    if (curPhase === 'done') {
+      try {
+        localStorage.removeItem(sessionProgressKey)
+      } catch {}
+      return
+    }
+
+    if (curSummary.cardsReviewed.length === 0 && curIdx === 0 && curSkipped.length === 0) {
+      return
+    }
+
+    try {
+      const payload: SavedStudySessionProgress = {
+        v: 1,
+        subjectId,
+        folderId: folderIdParam ?? undefined,
+        isMCMode,
+        isFolderMode,
+        cards: curList,
+        allCards,
+        currentIdx: curIdx,
+        phase: curPhase,
+        skippedCards: curSkipped,
+        summary: curSummary,
+        sessionId: sessionIdRef.current,
+        savedAt: Date.now()
+      }
+      localStorage.setItem(sessionProgressKey, JSON.stringify(payload))
+    } catch (err) {
+      console.error('Failed to save study progress:', err)
+    }
+  }, [cards, allCards, currentIdx, summary, phase, skippedCards, isLearnMode, sessionProgressKey, subjectId, folderIdParam, isMCMode, isFolderMode])
+
+  const ensureDbSession = async (subjectIdNum?: number): Promise<number | null> => {
+    if (sessionIdRef.current) return sessionIdRef.current
+    if (!user) return null
+    try {
+      const s = await window.electronAPI.startStudySession(user.id, subjectIdNum)
+      if (s?.id) {
+        setSessionId(s.id)
+        sessionIdRef.current = s.id
+        return s.id
+      }
+    } catch (err) {
+      console.error('Failed to start study session in DB:', err)
+    }
+    return null
+  }
+
   useEffect(() => {
     if (user) loadCards()
   }, [user, subjectId, isMCMode, isLearnMode, typeFilter, folderIdParam])
 
-  async function loadCards(studyAll = false): Promise<void> {
+  async function loadCards(studyAll = false, forceRestart = false): Promise<void> {
     if (!user) return
     setLoading(true)
     setSkippedCards([])
+
+    if (forceRestart) {
+      try {
+        localStorage.removeItem(sessionProgressKey)
+      } catch {}
+      setIsResumed(false)
+    } else if (!isLearnMode) {
+      // Try restoring saved session progress
+      try {
+        const raw = localStorage.getItem(sessionProgressKey)
+        if (raw) {
+          const saved: SavedStudySessionProgress = JSON.parse(raw)
+          const isFresh = Date.now() - saved.savedAt < 24 * 60 * 60 * 1000
+          if (saved.v === 1 && isFresh && saved.cards?.length > 0 && saved.summary?.cardsReviewed?.length > 0) {
+            setCards(saved.cards)
+            setAllCards(saved.allCards ?? saved.cards)
+            setCurrentIdx(saved.currentIdx)
+            setPhase(saved.phase)
+            setSkippedCards(saved.skippedCards ?? [])
+            setSummary(saved.summary)
+            if (saved.sessionId) {
+              setSessionId(saved.sessionId)
+              sessionIdRef.current = saved.sessionId
+            }
+            setIsResumed(true)
+            setLoading(false)
+            return
+          }
+        }
+      } catch (e) {
+        console.error('Error loading saved study progress:', e)
+      }
+    }
+
     try {
       const subjectIdNum = subjectId ? Number(subjectId) : undefined
+      setIsResumed(false)
 
       if (isMCMode || isLearnMode) {
         // MC and Learn modes always use all cards as the pool
-        const allCards = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum) as StudyCard[]
+        const allCardsPool = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum) as StudyCard[]
         const filtered = isFolderMode
-          ? allCards.filter(c => c.folder_id === Number(folderIdParam))
-          : allCards
+          ? allCardsPool.filter(c => c.folder_id === Number(folderIdParam))
+          : allCardsPool
         if (filtered.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
@@ -100,6 +251,7 @@ export default function StudySession(): React.JSX.Element {
           const shuffled = [...filtered].sort(() => Math.random() - 0.5)
           setCards(shuffled)
           setAllCards(filtered)
+          await ensureDbSession(subjectIdNum)
         }
         setSummary({ total: filtered.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
         setSkippedCards([])
@@ -108,7 +260,7 @@ export default function StudySession(): React.JSX.Element {
         return
       }
 
-      // Folder flashcard mode — show all cards in folder, no SM-2 writes
+      // Folder flashcard mode — show all cards in folder, reviews are persisted to schedule & log
       if (isFolderMode) {
         const fid = Number(folderIdParam)
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
@@ -118,6 +270,7 @@ export default function StudySession(): React.JSX.Element {
           setCards([])
         } else {
           setCards(folderCards)
+          await ensureDbSession(subjectIdNum)
         }
         setSummary({ total: folderCards.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
         setSkippedCards([])
@@ -130,6 +283,9 @@ export default function StudySession(): React.JSX.Element {
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
         const filtered = typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[]
         setCards(filtered)
+        if (filtered.length > 0) {
+          await ensureDbSession(subjectIdNum)
+        }
         setSummary({ total: filtered.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
         setSkippedCards([])
         setCurrentIdx(0)
@@ -157,6 +313,7 @@ export default function StudySession(): React.JSX.Element {
         setCards([])
       } else {
         setCards(filteredDue)
+        await ensureDbSession(subjectIdNum)
       }
 
       setSummary({ total: due.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
@@ -181,7 +338,7 @@ export default function StudySession(): React.JSX.Element {
     onSwipeRight: () => processReview(4),
   }, currentCard !== null)
 
-  // SM2 review — only used in normal mode
+  // SM2 review — used for flashcards, active recall, and cloze in both standard & folder modes
   async function processReview(quality: number): Promise<void> {
     if (!currentCard || !user) return
 
@@ -212,33 +369,41 @@ export default function StudySession(): React.JSX.Element {
       last_reviewed_at: currentCard.last_reviewed_at
     }
 
-    // Skip SM-2 DB write when studying a specific folder
-    if (!isFolderMode) {
-      await window.electronAPI.processReview({
-        cardId: currentCard.id,
-        userId: user.id,
-        quality,
-        wasCorrect: quality >= 3,
-        responseTimeMs,
-        currentSchedule: schedule
-      })
-    }
+    // Always persist review to DB (card_schedule, review_log, concept_mastery)
+    await window.electronAPI.processReview({
+      cardId: currentCard.id,
+      userId: user.id,
+      quality,
+      wasCorrect: quality >= 3,
+      responseTimeMs,
+      currentSchedule: schedule
+    })
 
-    setSummary(prev => ({
-      ...prev,
-      correct: quality >= 3 ? prev.correct + 1 : prev.correct,
-      incorrect: quality < 3 ? prev.incorrect + 1 : prev.incorrect,
-      cardsReviewed: [...prev.cardsReviewed, {
+    const newSummary: SessionSummary = {
+      ...summary,
+      correct: quality >= 3 ? summary.correct + 1 : summary.correct,
+      incorrect: quality < 3 ? summary.incorrect + 1 : summary.incorrect,
+      cardsReviewed: [...summary.cardsReviewed, {
         cardId: currentCard.id,
         quality,
         wasCorrect: quality >= 3
       }]
-    }))
+    }
+    setSummary(newSummary)
+
+    // Update study_sessions in DB
+    if (sessionIdRef.current) {
+      window.electronAPI.endStudySession(
+        sessionIdRef.current,
+        newSummary.cardsReviewed.length,
+        newSummary.correct
+      ).catch(() => {})
+    }
 
     setLastReviewParams({ cardId: currentCard.id, cardIndex: currentIdx })
     setUndoVisible(true)
 
-    advance()
+    advance(newSummary)
   }
 
   // MC review — logs to mc_review_log, never touches SM2
@@ -251,40 +416,65 @@ export default function StudySession(): React.JSX.Element {
       wasCorrect
     })
 
-    setSummary(prev => ({
-      ...prev,
-      correct: wasCorrect ? prev.correct + 1 : prev.correct,
-      incorrect: !wasCorrect ? prev.incorrect + 1 : prev.incorrect,
-      cardsReviewed: [...prev.cardsReviewed, {
+    const newSummary: SessionSummary = {
+      ...summary,
+      correct: wasCorrect ? summary.correct + 1 : summary.correct,
+      incorrect: !wasCorrect ? summary.incorrect + 1 : summary.incorrect,
+      cardsReviewed: [...summary.cardsReviewed, {
         cardId: currentCard.id,
         quality: wasCorrect ? 5 : 1,
         wasCorrect
       }]
-    }))
+    }
+    setSummary(newSummary)
 
-    advance()
+    if (sessionIdRef.current) {
+      window.electronAPI.endStudySession(
+        sessionIdRef.current,
+        newSummary.cardsReviewed.length,
+        newSummary.correct
+      ).catch(() => {})
+    }
+
+    advance(newSummary)
   }
 
   function handleSkip(): void {
     if (!currentCard) return
-    setSummary(prev => ({ ...prev, skipped: prev.skipped + 1 }))
-    setSkippedCards(prev => [...prev, currentCard])
-    advance()
+    const newSummary = { ...summary, skipped: summary.skipped + 1 }
+    setSummary(newSummary)
+    const newSkipped = [...skippedCards, currentCard]
+    setSkippedCards(newSkipped)
+    advance(newSummary, newSkipped)
   }
 
-  function advance(): void {
+  function advance(updatedSummary?: SessionSummary, updatedSkipped?: StudyCard[]): void {
     const nextIdx = currentIdx + 1
-    const list = phase === 'studying' ? cards : skippedCards
+    const activeSkipped = updatedSkipped ?? skippedCards
+    const list = phase === 'studying' ? cards : activeSkipped
+    const curSummary = updatedSummary ?? summary
 
     if (nextIdx >= list.length) {
-      if (phase === 'studying' && skippedCards.length > 0) {
+      if (phase === 'studying' && activeSkipped.length > 0) {
         setPhase('skipped')
         setCurrentIdx(0)
+        persistCurrentProgress(undefined, 0, curSummary, 'skipped', activeSkipped)
       } else {
         setPhase('done')
+        if (sessionIdRef.current) {
+          window.electronAPI.endStudySession(
+            sessionIdRef.current,
+            curSummary.cardsReviewed.length,
+            curSummary.correct
+          ).catch(() => {})
+        }
+        try {
+          localStorage.removeItem(sessionProgressKey)
+        } catch {}
       }
     } else {
       setCurrentIdx(nextIdx)
+      persistCurrentProgress(undefined, nextIdx, curSummary, phase, activeSkipped)
     }
   }
 
@@ -497,6 +687,9 @@ export default function StudySession(): React.JSX.Element {
     // ── Standard / MC completion screen ───────────────────────────────────────
     const reviewed = summary.correct + summary.incorrect
     const accuracy = reviewed > 0 ? Math.round((summary.correct / reviewed) * 100) : 0
+    const list = cards
+    const remainingCount = Math.max(0, list.length - currentIdx)
+    const isEarlyExit = remainingCount > 0 && (summary.total === 0 || (summary.correct + summary.incorrect + summary.skipped < summary.total))
 
     return (
       <div className="min-h-screen flex items-center justify-center p-8 bg-slate-50 dark:bg-slate-950">
@@ -505,12 +698,23 @@ export default function StudySession(): React.JSX.Element {
             <div className="text-5xl mb-4">
               {accuracy >= 80 ? '🏆' : accuracy >= 60 ? '👍' : '💪'}
             </div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold rounded-full mb-3 border border-emerald-200 dark:border-emerald-800">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 3L4.5 8.5L2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              {isEarlyExit ? 'Progress Saved' : 'All Cards Saved'}
+            </div>
             <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50 mb-1">
-              {isMCMode ? 'Practice Complete!' : 'Session Complete!'}
+              {isEarlyExit
+                ? 'Session Paused & Saved!'
+                : isMCMode
+                ? 'Practice Complete!'
+                : 'Session Complete!'}
             </h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">
               You answered {reviewed} question{reviewed !== 1 ? 's' : ''}
               {summary.skipped > 0 ? ` and skipped ${summary.skipped}` : ''}
+              {isEarlyExit && remainingCount > 0 ? ` · ${remainingCount} left in this session` : ''}
             </p>
           </div>
 
@@ -555,19 +759,60 @@ export default function StudySession(): React.JSX.Element {
             )}
           </div>
 
-          <div className="flex gap-3">
-            <button onClick={() => navigate('/')} className="btn-secondary flex-1">
-              Dashboard
-            </button>
-            {subjectId && (
-              <button onClick={() => navigate(`/subject/${subjectId}`)} className="btn-primary flex-1">
-                View Subject
+          <div className="flex flex-col gap-3">
+            {isEarlyExit && (
+              <button
+                onClick={() => setPhase(skippedCards.length > 0 && currentCards === skippedCards ? 'skipped' : 'studying')}
+                className="w-full bg-violet-600 hover:bg-violet-700 text-white py-2.5 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+              >
+                <span>Resume Session</span>
+                <span className="text-xs opacity-75">({remainingCount} remaining)</span>
               </button>
             )}
+            <div className="flex gap-3">
+              <button onClick={() => navigate('/')} className="btn-secondary flex-1">
+                Dashboard
+              </button>
+              {subjectId && (
+                <button onClick={() => navigate(`/subject/${subjectId}`)} className={`${!isEarlyExit ? 'btn-primary' : 'btn-secondary'} flex-1`}>
+                  View Subject
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
     )
+  }
+
+  const handleExitSession = async () => {
+    // If no cards were reviewed, exit directly
+    if (summary.cardsReviewed.length === 0) {
+      try {
+        localStorage.removeItem(sessionProgressKey)
+      } catch {}
+      navigate(subjectId ? `/subject/${subjectId}` : '/')
+      return
+    }
+
+    // Save session in DB
+    if (sessionIdRef.current) {
+      try {
+        await window.electronAPI.endStudySession(
+          sessionIdRef.current,
+          summary.cardsReviewed.length,
+          summary.correct
+        )
+      } catch (err) {
+        console.error('Failed to end study session:', err)
+      }
+    }
+
+    // Persist current progress so user can resume anytime
+    persistCurrentProgress()
+
+    // Show completion screen with "Session Saved!"
+    setPhase('done')
   }
 
   const totalReviewed = summary.correct + summary.incorrect + summary.skipped
@@ -586,7 +831,7 @@ export default function StudySession(): React.JSX.Element {
 
         <div className="flex items-center justify-between px-8 py-4">
           <button
-            onClick={() => navigate(subjectId ? `/subject/${subjectId}` : '/')}
+            onClick={handleExitSession}
             className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -597,6 +842,34 @@ export default function StudySession(): React.JSX.Element {
 
           <div className="flex items-center gap-3 text-sm">
             <PomodoroWidget />
+            <button
+              type="button"
+              onClick={() => setShowCalculator((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                showCalculator
+                  ? "bg-amber-500 text-slate-950 border-amber-600 shadow-xs"
+                  : "bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+              }`}
+              title={showCalculator ? "Hide Scientific Calculator" : "Open Scientific Calculator"}
+            >
+              <Calculator size={13} />
+              <span>Calculator</span>
+            </button>
+            {isResumed && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-50 dark:bg-violet-900/30 rounded-full border border-violet-200 dark:border-violet-800">
+                <span className="text-violet-600 dark:text-violet-400 font-medium text-xs">
+                  Resumed
+                </span>
+                <span className="text-slate-300 dark:text-slate-600">·</span>
+                <button
+                  onClick={() => loadCards(false, true)}
+                  title="Start session from beginning"
+                  className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+                >
+                  Restart
+                </button>
+              </div>
+            )}
             {isMCMode && (
               <span className="text-blue-600 dark:text-blue-400 font-medium text-xs px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 rounded-full border border-blue-200 dark:border-blue-800">
                 Multiple Choice
@@ -663,58 +936,71 @@ export default function StudySession(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Card area */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        {isLearnMode ? (
-          <LearnModeSession
-            key={learnKey}
-            cards={cards}
-            allCards={allCards}
-            storageKey={learnStorageKey}
-            onComplete={(cleared, total) => {
-              setLearnSummary({ cleared, total })
-              setPhase('done')
-            }}
-          />
-        ) : isMCMode ? (
-          <MultipleChoiceCard
-            card={currentCard}
-            allCards={allCards}
-            onResult={handleMCResult}
-            onSkip={phase === 'studying' ? handleSkip : undefined}
-            cardNumber={currentIdx + 1}
-            totalCards={currentCards.length}
-          />
-        ) : (
-          <div ref={cardContainerRef} className="w-full max-w-2xl">
-            {currentCard.type === 'cloze' ? (
-              <ClozeCard
-                key={currentCard.id}
-                card={currentCard}
-                onResult={(quality) => processReview(quality)}
-                onSkip={phase === 'studying' ? handleSkip : undefined}
-                cardNumber={currentIdx + 1}
-                totalCards={currentCards.length}
-              />
-            ) : currentCard.type === 'active_recall' ? (
-              <ActiveRecallCard
-                key={currentCard.id}
-                card={currentCard}
-                onResult={processReview}
-                onSkip={phase === 'studying' ? handleSkip : undefined}
-                cardNumber={currentIdx + 1}
-                totalCards={currentCards.length}
-              />
-            ) : (
-              <FlashCard
-                key={currentCard.id}
-                card={currentCard}
-                onResult={processReview}
-                onSkip={phase === 'studying' ? handleSkip : undefined}
-                cardNumber={currentIdx + 1}
-                totalCards={currentCards.length}
-              />
-            )}
+      {/* Card area with optional Calculator side panel */}
+      <div className="flex-1 flex flex-col lg:flex-row items-center lg:items-start justify-center p-6 lg:p-8 gap-6 max-w-7xl mx-auto w-full">
+        <div className="flex-1 flex items-center justify-center w-full max-w-2xl">
+          {isLearnMode ? (
+            <LearnModeSession
+              key={learnKey}
+              cards={cards}
+              allCards={allCards}
+              storageKey={learnStorageKey}
+              onComplete={(cleared, total) => {
+                setLearnSummary({ cleared, total })
+                setPhase('done')
+              }}
+            />
+          ) : isMCMode ? (
+            <MultipleChoiceCard
+              card={currentCard}
+              allCards={allCards}
+              onResult={handleMCResult}
+              onSkip={phase === 'studying' ? handleSkip : undefined}
+              cardNumber={currentIdx + 1}
+              totalCards={currentCards.length}
+            />
+          ) : (
+            <div ref={cardContainerRef} className="w-full max-w-2xl">
+              {currentCard.type === 'cloze' ? (
+                <ClozeCard
+                  key={currentCard.id}
+                  card={currentCard}
+                  onResult={(quality) => processReview(quality)}
+                  onSkip={phase === 'studying' ? handleSkip : undefined}
+                  cardNumber={currentIdx + 1}
+                  totalCards={currentCards.length}
+                />
+              ) : currentCard.type === 'active_recall' ? (
+                <ActiveRecallCard
+                  key={currentCard.id}
+                  card={currentCard}
+                  onResult={processReview}
+                  onSkip={phase === 'studying' ? handleSkip : undefined}
+                  cardNumber={currentIdx + 1}
+                  totalCards={currentCards.length}
+                />
+              ) : (
+                <FlashCard
+                  key={currentCard.id}
+                  card={currentCard}
+                  onResult={processReview}
+                  onSkip={phase === 'studying' ? handleSkip : undefined}
+                  cardNumber={currentIdx + 1}
+                  totalCards={currentCards.length}
+                />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Floating / Side Calculator Panel */}
+        {showCalculator && (
+          <div className="w-full lg:w-80 shrink-0 animate-in slide-in-from-right-4 duration-200 sticky top-6 z-20">
+            <CalculatorWidget
+              skin={calculatorSkin}
+              onClose={() => setShowCalculator(false)}
+              isFloating={false}
+            />
           </div>
         )}
       </div>

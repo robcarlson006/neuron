@@ -138,7 +138,15 @@ class LectureNotesServiceManager {
 
       // Step 4: Synthesize structured Markdown notes
       const prompt = buildLectureNotesPrompt(rawTranscript, subjectName, lecture.title)
-      let markdown = await this.callAIForMarkdown(prompt)
+      let markdown: string
+      try {
+        markdown = await this.callAIForMarkdown(prompt)
+      } catch (aiErr: any) {
+        const msg = aiErr?.message || 'Failed to generate study notes'
+        throw new Error(
+          `Audio transcription succeeded, but AI note generation failed: ${msg}. If using a local model, make sure your local runner (e.g. Ollama) is running.`
+        )
+      }
 
       // Strip outer markdown code block if LLM added them
       if (markdown.startsWith('```markdown')) {

@@ -350,7 +350,7 @@ export default function LectureSettingsSection(): React.JSX.Element {
                 </button>
               </div>
               <p className="text-[11px] text-slate-400 leading-tight">
-                Gemini 3.6 Flash audio processing. Free in Google AI Studio.
+                Gemini 2.0 Flash audio processing. Free in Google AI Studio.
               </p>
               <input
                 type="password"
@@ -401,7 +401,7 @@ export default function LectureSettingsSection(): React.JSX.Element {
 
       {/* 4. Local On-Device Whisper (One-Click Download) */}
       <div className="pt-4 border-t border-slate-100 dark:border-slate-700 space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
@@ -412,7 +412,53 @@ export default function LectureSettingsSection(): React.JSX.Element {
               </span>
             </div>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-              Run Whisper speech-to-text directly on your computer. No internet connection or API keys needed.
+              Run Whisper speech-to-text directly on your computer. No internet connection, server daemon, or API keys needed.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleTestProvider('local', '')}
+              disabled={testStatus.local?.testing}
+              className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+            >
+              {testStatus.local?.testing ? 'Testing...' : 'Test Local Engine'}
+            </button>
+            {testStatus.local && (
+              <span
+                className={`text-[11px] font-medium ${
+                  testStatus.local.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
+                }`}
+              >
+                {testStatus.local.success ? '✓ Ready' : '✗ Not Ready'}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {testStatus.local?.message && (
+          <p
+            className={`text-xs p-2.5 rounded-lg border ${
+              testStatus.local.success
+                ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                : 'bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800'
+            }`}
+          >
+            {testStatus.local.message}
+          </p>
+        )}
+
+        {/* Informative distinction between Local Whisper & Local AI LLM */}
+        <div className="p-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-600 dark:text-slate-300 space-y-1">
+          <p className="font-semibold text-slate-700 dark:text-slate-200">
+            💡 How Local Models Work in Neuron
+          </p>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed space-y-0.5">
+            <p>
+              • <strong>Transcription (Whisper)</strong>: Runs automatically on-demand once a model is downloaded below. It does <em>not</em> run as a background service and does not need to be turned on.
+            </p>
+            <p>
+              • <strong>Note Generation & Chat (LLM)</strong>: If your AI Provider in Settings is configured to use a local runner (e.g. Ollama), that server <em>does</em> need to be running in Terminal (<code className="text-violet-600 dark:text-violet-400 font-mono">ollama serve</code>) so that structured notes can be synthesized after recording.
             </p>
           </div>
         </div>

@@ -1,16 +1,20 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
 import ChatMessage from '../../components/tutor/ChatMessage'
 import ChatInput from '../../components/tutor/ChatInput'
 import ChatWelcome from '../../components/tutor/ChatWelcome'
 import SaveCardsModal from '../../components/tutor/SaveCardsModal'
+import TutorChatSidebar from './TutorChatSidebar'
 import type { Message, LibraryFile } from '../../types'
 
 export default function GeneralChat(): React.JSX.Element {
   const { user, subjects, addToast } = useAppStore()
   const navigate = useNavigate()
+  const { sessionId: routeSessionId } = useParams<{ sessionId?: string }>()
+  const [searchParams] = useSearchParams()
 
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => localStorage.getItem('neuron_tutor_sidebar') !== 'false')
   const [sending, setSending] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [streamingContent, setStreamingContent] = useState('')
@@ -20,7 +24,7 @@ export default function GeneralChat(): React.JSX.Element {
   const [libraryFiles, setLibraryFiles] = useState<LibraryFile[]>([])
   const [saveCardsContent, setSaveCardsContent] = useState<string | null>(null)
   const [showSaveCards, setShowSaveCards] = useState(false)
-  const [sessionId, setSessionId] = useState<number | null>(null)
+  const [sessionId, setSessionId] = useState<number | null>(routeSessionId ? Number(routeSessionId) : null)
 
   const streamingRef = useRef('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -29,6 +33,22 @@ export default function GeneralChat(): React.JSX.Element {
   const [focusKey, setFocusKey] = useState(0)
 
   const activeSubjects = subjects.filter(s => s.status !== 'archived')
+
+  // ── Keyboard shortcut to toggle sidebar (Cmd+H / Ctrl+H) ──
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent): void {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'h') {
+        e.preventDefault()
+        setIsSidebarOpen(prev => {
+          const next = !prev
+          localStorage.setItem('neuron_tutor_sidebar', String(next))
+          return next
+        })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // Smart scroll
   useEffect(() => {
@@ -46,18 +66,42 @@ export default function GeneralChat(): React.JSX.Element {
     if (isNearBottom.current) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
 
-  // Init session on mount
+  // Init session on mount or routeSessionId change
   useEffect(() => {
     if (user) initSession()
-  }, [user])
+  }, [user, routeSessionId])
 
   async function initSession(): Promise<void> {
     if (!user) return
+    const isExplicitNew = searchParams.get('new') === 'true'
+
     try {
+      if (routeSessionId && !isExplicitNew) {
+        const data = await window.electronAPI.tutorGetSession(Number(routeSessionId))
+        if (data && data.session) {
+          setSessionId(data.session.id)
+          setMessages(data.messages || [])
+          if (data.session.subject_id) {
+            setSelectedSubjectId(data.session.subject_id)
+          }
+          return
+        }
+      }
+
+      if (!isExplicitNew) {
+        const list = await window.electronAPI.tutorListSessions(0, 1)
+        if (list && list.length > 0) {
+          navigate(`/tutor/general/session/${list[0].id}`, { replace: true })
+          return
+        }
+      }
+
       const session = await window.electronAPI.tutorCreateSession(0, user.id, 'general') as { id: number }
       setSessionId(session.id)
+      setMessages([])
+      navigate(`/tutor/general/session/${session.id}`, { replace: true })
     } catch (err) {
-      console.error('Failed to create general chat session:', err)
+      console.error('Failed to init general chat session:', err)
     }
   }
 
@@ -258,38 +302,84 @@ export default function GeneralChat(): React.JSX.Element {
   const isNewConversation = messages.length === 0
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
-      {/* Top bar */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/tutor')}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M11 4l-5 5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          <div>
-            <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50">General Chat</h1>
-            <p className="text-xs text-slate-400 dark:text-slate-500">Ask anything about your studies</p>
-          </div>
-        </div>
+    <div className="flex h-full w-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
+      {/* Collapsible Chat History Sidebar */}
+      <TutorChatSidebar
+        subjectId={0}
+        currentSessionId={sessionId}
+        isOpen={isSidebarOpen}
+        onToggleOpen={() => {
+          setIsSidebarOpen(prev => {
+            const next = !prev
+            localStorage.setItem('neuron_tutor_sidebar', String(next))
+            return next
+          })
+        }}
+        onSelectSession={(selId) => {
+          navigate(`/tutor/general/session/${selId}`)
+        }}
+        onNewSession={() => {
+          navigate('/tutor/general?new=true')
+        }}
+      />
 
-        {/* Class context selector */}
-        {activeSubjects.length > 0 && (
-          <select
-            value={selectedSubjectId ?? ''}
-            onChange={e => setSelectedSubjectId(e.target.value ? Number(e.target.value) : null)}
-            className="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-slate-600 dark:text-slate-300 focus:outline-none focus:border-violet-400"
-          >
-            <option value="">No class context</option>
-            {activeSubjects.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        )}
-      </div>
+      {/* Main Content Area */}
+      <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
+        {/* Top bar */}
+        <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => navigate('/tutor')}
+              title="Back to Tutor Hub"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M11 4l-5 5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+
+            <button
+              onClick={() => {
+                setIsSidebarOpen(prev => {
+                  const next = !prev
+                  localStorage.setItem('neuron_tutor_sidebar', String(next))
+                  return next
+                })
+              }}
+              title={isSidebarOpen ? "Collapse history (⌘H)" : "Open history (⌘H)"}
+              className={`p-1.5 rounded-lg transition-colors ${
+                isSidebarOpen
+                  ? 'text-violet-600 bg-violet-50 dark:bg-violet-950/50 dark:text-violet-300'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="18" height="18" x="3" y="3" rx="2"/>
+                <path d="M9 3v18"/>
+                <path d="m14 9 3 3-3 3"/>
+              </svg>
+            </button>
+
+            <div>
+              <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50">General Chat</h1>
+              <p className="text-xs text-slate-400 dark:text-slate-500">Ask anything about your studies</p>
+            </div>
+          </div>
+
+          {/* Class context selector */}
+          {activeSubjects.length > 0 && (
+            <select
+              value={selectedSubjectId ?? ''}
+              onChange={e => setSelectedSubjectId(e.target.value ? Number(e.target.value) : null)}
+              className="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-slate-600 dark:text-slate-300 focus:outline-none focus:border-violet-400"
+            >
+              <option value="">No class context</option>
+              {activeSubjects.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
 
       {/* Messages area */}
       <div className="flex-1 min-h-0 overflow-y-auto" ref={chatContainerRef}>
@@ -367,6 +457,7 @@ export default function GeneralChat(): React.JSX.Element {
           refocusKey={focusKey}
           placeholder={selectedSubjectId ? `Ask about ${subjects.find(s => s.id === selectedSubjectId)?.name}...` : 'Ask anything...'}
         />
+      </div>
       </div>
     </div>
   )

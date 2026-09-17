@@ -355,6 +355,8 @@ export const DB_SCHEMA = `
     description TEXT,
     mastery_target REAL DEFAULT 0.8,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    has_new_material INTEGER NOT NULL DEFAULT 0,
+    is_gap INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (module_id) REFERENCES syllabus_modules(id) ON DELETE CASCADE
   );
@@ -373,6 +375,9 @@ export const DB_SCHEMA = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_id INTEGER,
     user_id INTEGER,
+    title TEXT,
+    last_message_at INTEGER,
+    is_pinned INTEGER DEFAULT 0,
     session_type TEXT NOT NULL DEFAULT 'tutor' CHECK(session_type IN ('tutor','general','quiz')),
     phase TEXT NOT NULL DEFAULT 'structured_qa' CHECK(phase IN ('structured_qa','socratic','summary','complete')),
     module_id INTEGER,
@@ -618,6 +623,28 @@ export const DB_SCHEMA = `
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_concept_deps_subject ON concept_dependencies(subject_id);
+
+  -- V5.2: Topic Spaced Repetition (Topic-SRS) Memory
+  CREATE TABLE IF NOT EXISTS topic_spaced_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    stability REAL NOT NULL DEFAULT 2.0,
+    difficulty REAL NOT NULL DEFAULT 5.0,
+    retrievability REAL NOT NULL DEFAULT 1.0,
+    reps INTEGER NOT NULL DEFAULT 1,
+    lapses INTEGER NOT NULL DEFAULT 0,
+    last_studied_at TEXT NOT NULL DEFAULT (datetime('now')),
+    next_review_due TEXT NOT NULL DEFAULT (date('now', '+2 days')),
+    status TEXT NOT NULL DEFAULT 'fresh' CHECK(status IN ('fresh', 'fading', 'overdue')),
+    UNIQUE (topic_id, user_id),
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_topic_srs_user_subject ON topic_spaced_memory(user_id, subject_id);
+  CREATE INDEX IF NOT EXISTS idx_topic_srs_due ON topic_spaced_memory(user_id, next_review_due);
 `
 
 export const MIGRATIONS_SQL = [
@@ -820,6 +847,35 @@ export const MIGRATIONS_SQL = [
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
   )`,
   "CREATE INDEX IF NOT EXISTS idx_concept_deps_subject ON concept_dependencies(subject_id)",
+  // V5.1: Dynamic syllabus reconciliation flags
+  "ALTER TABLE module_topics ADD COLUMN has_new_material INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE module_topics ADD COLUMN is_gap INTEGER NOT NULL DEFAULT 0",
+  // V5.2: Topic Spaced Repetition (Topic-SRS) Memory
+  `CREATE TABLE IF NOT EXISTS topic_spaced_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    stability REAL NOT NULL DEFAULT 2.0,
+    difficulty REAL NOT NULL DEFAULT 5.0,
+    retrievability REAL NOT NULL DEFAULT 1.0,
+    reps INTEGER NOT NULL DEFAULT 1,
+    lapses INTEGER NOT NULL DEFAULT 0,
+    last_studied_at TEXT NOT NULL DEFAULT (datetime('now')),
+    next_review_due TEXT NOT NULL DEFAULT (date('now', '+2 days')),
+    status TEXT NOT NULL DEFAULT 'fresh' CHECK(status IN ('fresh', 'fading', 'overdue')),
+    UNIQUE (topic_id, user_id),
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_topic_srs_user_subject ON topic_spaced_memory(user_id, subject_id)",
+  "CREATE INDEX IF NOT EXISTS idx_topic_srs_due ON topic_spaced_memory(user_id, next_review_due)",
+  // V5.3: Tutor session persistence & chat history
+  "ALTER TABLE tutor_sessions ADD COLUMN title TEXT",
+  "ALTER TABLE tutor_sessions ADD COLUMN last_message_at INTEGER",
+  "ALTER TABLE tutor_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0",
+  "CREATE INDEX IF NOT EXISTS idx_tutor_sessions_subject ON tutor_sessions(subject_id, last_message_at DESC)"
 ]
 
 export const MASTERED_INTERVAL = 21

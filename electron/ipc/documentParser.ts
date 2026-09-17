@@ -3,7 +3,7 @@ import * as path from 'path'
 import JSZip from 'jszip'
 import mammoth from 'mammoth'
 import pdfParse from 'pdf-parse'
-import { cleanExtractedText, truncateText, getFileType, SupportedFileType } from '../../src/lib/fileParser'
+import { cleanExtractedText, getFileType, SupportedFileType } from '../../src/lib/fileParser'
 
 /**
  * Decodes XML / HTML character entities into readable Unicode characters.

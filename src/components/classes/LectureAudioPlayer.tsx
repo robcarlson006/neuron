@@ -48,7 +48,7 @@ export default function LectureAudioPlayer({
     if (isPlaying) {
       audioRef.current.pause()
     } else {
-      audioRef.current.play()
+      audioRef.current.play().catch((err) => console.warn('Audio playback error:', err))
     }
   }
 

@@ -68,7 +68,8 @@ async function gracefulStopRecorder(): Promise<void> {
     })
   }
   activeMediaRecorder = null
-  // Wait for all in-flight chunk sends to finish
+  // Short yield to ensure any ondataavailable microtask registers its chunk promise
+  await new Promise((r) => setTimeout(r, 100))
   if (pendingChunkPromises.size > 0) {
     await Promise.all(Array.from(pendingChunkPromises))
   }

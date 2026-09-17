@@ -240,7 +240,10 @@ app.whenReady().then(async () => {
   protocol.handle('neuron-audio', (request) => {
     try {
       const rawPath = request.url.replace(/^neuron-audio:\/\//, '')
-      const filePath = decodeURIComponent(rawPath)
+      let filePath = decodeURIComponent(rawPath)
+      if (process.platform === 'win32') {
+        filePath = filePath.replace(/^\/([A-Za-z]:)/, '$1')
+      }
       return net.fetch(pathToFileURL(filePath).toString())
     } catch (err) {
       console.error('Failed to handle neuron-audio protocol request:', err)
