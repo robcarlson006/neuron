@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog, BrowserWindow, app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as zlib from 'zlib'
@@ -114,9 +114,16 @@ export function registerFileHandlers(): void {
       properties: ['openFile'],
       filters: [
         {
-          name: 'All Study Materials',
+          name: 'All Study Materials & Images',
           extensions: [
             'pdf',
+            'png',
+            'jpg',
+            'jpeg',
+            'webp',
+            'heic',
+            'bmp',
+            'tiff',
             'docx',
             'doc',
             'docm',
@@ -138,8 +145,12 @@ export function registerFileHandlers(): void {
             'apkg'
           ]
         },
-        { name: 'PowerPoint Presentations', extensions: ['pptx', 'ppt', 'pptm', 'potx', 'ppsx'] },
+        {
+          name: 'Images & Screenshots',
+          extensions: ['png', 'jpg', 'jpeg', 'webp', 'heic', 'bmp', 'tiff']
+        },
         { name: 'PDF Documents', extensions: ['pdf'] },
+        { name: 'PowerPoint Presentations', extensions: ['pptx', 'ppt', 'pptm', 'potx', 'ppsx'] },
         { name: 'Word Documents', extensions: ['docx', 'doc', 'docm', 'dotx'] },
         { name: 'Notes & Text Files', extensions: ['txt', 'md', 'markdown', 'csv', 'tsv', 'rtf', 'html', 'htm'] },
         { name: 'Anki Decks', extensions: ['apkg'] }
@@ -151,6 +162,25 @@ export function registerFileHandlers(): void {
     }
 
     return result.filePaths[0]
+  })
+
+  ipcMain.handle('file:saveTempImage', async (_event, dataUrl: string) => {
+    const matches = dataUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/)
+    let ext = 'png'
+    let base64Data = dataUrl
+
+    if (matches) {
+      ext = matches[1].toLowerCase().replace('jpeg', 'jpg').replace('x-png', 'png')
+      base64Data = matches[2]
+    } else if (dataUrl.includes(';base64,')) {
+      base64Data = dataUrl.split(';base64,')[1]
+    }
+
+    const buffer = Buffer.from(base64Data, 'base64')
+    const tempDir = app.getPath('temp')
+    const tempPath = path.join(tempDir, `neuron_pasted_screenshot_${Date.now()}.${ext}`)
+    fs.writeFileSync(tempPath, buffer)
+    return tempPath
   })
 
   ipcMain.handle('file:parseFile', async (_event, filePath: string) => {

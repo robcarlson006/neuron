@@ -16,6 +16,12 @@ export type SupportedFileType =
   | 'rtf'
   | 'html'
   | 'json'
+  | 'image'
+  | 'png'
+  | 'jpg'
+  | 'jpeg'
+  | 'webp'
+  | 'heic'
 
 export function getFileType(filename: string): SupportedFileType | null {
   const ext = filename.toLowerCase().split('.').pop()
@@ -33,6 +39,7 @@ export function getFileType(filename: string): SupportedFileType | null {
   if (ext === 'rtf') return 'rtf'
   if (['html', 'htm'].includes(ext)) return 'html'
   if (ext === 'json') return 'json'
+  if (['png', 'jpg', 'jpeg', 'webp', 'heic', 'bmp', 'tiff'].includes(ext)) return 'image'
 
   return null
 }

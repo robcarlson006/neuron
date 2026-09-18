@@ -129,6 +129,7 @@ export default function TutorSession(): React.JSX.Element {
       document.addEventListener('mousedown', handleClickOutside)
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
+    return undefined
   }, [showTimerMenu])
 
   // ── Load / init session ──
@@ -191,7 +192,7 @@ export default function TutorSession(): React.JSX.Element {
             duration_minutes: s.duration_minutes ?? null,
             depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5) ?? 3),
             never_studied: Boolean(s.never_studied),
-            module_id: s.module_id ?? null
+            module_id: s.module_id || undefined
           }
           setSessionConfig(restoredConfig)
 

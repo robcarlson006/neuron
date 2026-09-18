@@ -190,14 +190,6 @@ export default function CardImportModal({
       .filter((m): m is Material => !!m)
   }, [selectedMaterialIds, subjectMaterials])
 
-  const selectedMaterialId = selectedMaterialIds.length > 0 ? selectedMaterialIds[0] : null
-  const selectedMaterialName =
-    selectedMaterials.length === 1
-      ? selectedMaterials[0].filename
-      : selectedMaterials.length > 1
-        ? `${selectedMaterials.length} materials selected`
-        : null
-
   function getCombinedMaterialText(materials: Material[]): string {
     if (materials.length === 0) return ''
     if (materials.length === 1) return materials[0].content_text || ''
@@ -256,10 +248,6 @@ export default function CardImportModal({
         .filter((m): m is Material => !!m)
       setSourceText(getCombinedMaterialText(selected))
     }
-  }
-
-  function handleSelectMaterial(mat: Material): void {
-    handleToggleMaterial(mat)
   }
 
   function handleClearMaterial(): void {

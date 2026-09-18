@@ -17,3 +17,5 @@ seed/**/*.d.ts
 !src/types/electron.d.ts
 !src/vite-env.d.ts
 mempalace/
+*.traineddata
+*.traineddata.gz

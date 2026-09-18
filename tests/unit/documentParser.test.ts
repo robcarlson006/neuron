@@ -51,6 +51,13 @@ describe('documentParser', () => {
       expect(getFileType('page.html')).toBe('html')
       expect(getFileType('page.htm')).toBe('html')
       expect(getFileType('data.json')).toBe('json')
+      expect(getFileType('screenshot.png')).toBe('image')
+      expect(getFileType('diagram.jpg')).toBe('image')
+      expect(getFileType('scan.jpeg')).toBe('image')
+      expect(getFileType('photo.webp')).toBe('image')
+      expect(getFileType('iphone_photo.heic')).toBe('image')
+      expect(getFileType('graph.bmp')).toBe('image')
+      expect(getFileType('document.tiff')).toBe('image')
       expect(getFileType('unknown.xyz')).toBeNull()
     })
   })
@@ -184,6 +191,16 @@ describe('documentParser', () => {
       const result = await parseFileToText(txtPath)
       expect(result.fileType).toBe('txt')
       expect(result.contentText).toContain('Cardiovascular System:\nThe heart has four chambers.')
+    })
+
+    it('recognizes image files and delegates to OCR', async () => {
+      const imgPath = path.join(tempDir, 'test_problem.png')
+      fs.writeFileSync(imgPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+
+      const result = await parseFileToText(imgPath)
+      expect(result.filename).toBe('test_problem.png')
+      expect(result.fileType).toBe('image')
+      expect(typeof result.contentText).toBe('string')
     })
 
     it('throws when file does not exist', async () => {

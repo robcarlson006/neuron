@@ -20,7 +20,9 @@ export default function PracticeUploadModal({
   const [selectedTopicId, setSelectedTopicId] = useState<number | undefined>()
   const [pastedText, setPastedText] = useState<string>("")
   const [selectedFile, setSelectedFile] = useState<{ path: string; name: string } | null>(null)
+  const [isDragging, setIsDragging] = useState<boolean>(false)
   const [loading, setLoading] = useState<boolean>(false)
+  const [loadingMessage, setLoadingMessage] = useState<string>("Extracting with AI…")
   const [error, setError] = useState<string | null>(null)
 
   const currentModule = modules.find((m) => m.id === selectedModuleId)
@@ -39,24 +41,97 @@ export default function PracticeUploadModal({
     }
   }
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0]
+      const filePath = (file as any).path || file.name
+      setSelectedFile({ path: filePath, name: file.name })
+      setError(null)
+    }
+  }
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    if (tab === "paste") return // Allow standard text paste in textarea
+
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile()
+        if (file) {
+          e.preventDefault()
+          try {
+            const reader = new FileReader()
+            reader.onload = async () => {
+              try {
+                const dataUrl = reader.result as string
+                if (window.electronAPI?.saveTempImage) {
+                  const tempPath = await window.electronAPI.saveTempImage(dataUrl)
+                  setSelectedFile({
+                    path: tempPath,
+                    name: `Screenshot_${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.png`
+                  })
+                  setError(null)
+                }
+              } catch (saveErr) {
+                setError("Failed to save clipboard screenshot: " + String(saveErr))
+              }
+            }
+            reader.readAsDataURL(file)
+          } catch (err) {
+            setError("Could not read clipboard image: " + String(err))
+          }
+          return
+        }
+      }
+    }
+  }
+
   const handleExtract = async () => {
     setLoading(true)
     setError(null)
     try {
       if (tab === "file") {
         if (!selectedFile) {
-          setError("Please select a file first.")
+          setError("Please select or drop a file first.")
           setLoading(false)
           return
         }
 
-        // Parse file
+        const isVisual = /\.(png|jpe?g|webp|heic|bmp|tiff|pdf)$/i.test(selectedFile.name)
+        setLoadingMessage(
+          isVisual
+            ? "Transcribing problem set & formulas (OCR / AI)…"
+            : "Reading document content…"
+        )
+
+        // Parse file (includes OCR and Vision AI fallback for images & scanned PDFs)
         const parsed = await window.electronAPI.parseFile(selectedFile.path)
-        if (!parsed.contentText || parsed.contentText.trim().length < 20) {
-          setError("Could not extract sufficient text from the file.")
+        if (!parsed.contentText || parsed.contentText.trim().length < 15) {
+          setError("Could not extract sufficient text from this file. Ensure the image or PDF is clear and readable.")
           setLoading(false)
           return
         }
+
+        setLoadingMessage("Generating structured practice problems with AI…")
 
         // Save as material first
         const matRes = await window.electronAPI.saveMaterial({
@@ -86,6 +161,8 @@ export default function PracticeUploadModal({
           return
         }
 
+        setLoadingMessage("Extracting practice problems from text…")
+
         const res = await window.electronAPI.practiceExtractFromText(
           subjectId,
           pastedText,
@@ -110,7 +187,10 @@ export default function PracticeUploadModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+    <div
+      onPaste={handlePaste}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+    >
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
@@ -138,7 +218,7 @@ export default function PracticeUploadModal({
                 tab === "file" ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-xs" : "text-slate-500 hover:text-slate-800 dark:text-slate-400"
               }`}
             >
-              <Upload size={14} /> File (PDF, PPTX, DOCX, Image)
+              <Upload size={14} /> File or Screenshot (PDF, Image, DOCX)
             </button>
             <button
               onClick={() => setTab("paste")}
@@ -189,7 +269,15 @@ export default function PracticeUploadModal({
           {tab === "file" ? (
             <div
               onClick={handleSelectFile}
-              className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-violet-500 dark:hover:border-violet-400 rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-slate-50/50 dark:bg-slate-800/30"
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                isDragging
+                  ? "border-violet-500 bg-violet-50 dark:bg-violet-950/40 ring-4 ring-violet-500/20 scale-[1.01]"
+                  : "border-slate-300 dark:border-slate-700 hover:border-violet-500 dark:hover:border-violet-400 bg-slate-50/50 dark:bg-slate-800/30"
+              }`}
             >
               <div className="w-12 h-12 rounded-2xl bg-violet-100 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center mb-3 shadow-inner">
                 <Upload size={22} />
@@ -197,12 +285,19 @@ export default function PracticeUploadModal({
               {selectedFile ? (
                 <div>
                   <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{selectedFile.name}</p>
-                  <p className="text-xs text-violet-600 dark:text-violet-400 mt-1">Click to choose a different file</p>
+                  <p className="text-xs text-violet-600 dark:text-violet-400 mt-1">Click, drop, or paste (⌘V) a different file</p>
                 </div>
               ) : (
                 <div>
-                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">Click to choose problem set file</p>
-                  <p className="text-xs text-slate-400 mt-1">Supports PDF, DOCX, PPTX, Images & Screenshots</p>
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                    {isDragging ? "Drop screenshot or problem set here" : "Click or drop problem set / screenshot"}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">Supports Screenshots (PNG, JPG), Scanned PDFs, DOCX, PPTX</p>
+                  <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                    <span>💡 Tip: Press</span>
+                    <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-xs font-mono font-bold">⌘V</kbd>
+                    <span>to paste a screenshot directly</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -244,7 +339,7 @@ export default function PracticeUploadModal({
             {loading ? (
               <>
                 <Loader2 size={14} className="animate-spin" />
-                <span>Extracting with AI…</span>
+                <span>{loadingMessage}</span>
               </>
             ) : (
               <>

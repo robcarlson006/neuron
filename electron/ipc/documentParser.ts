@@ -4,6 +4,7 @@ import JSZip from 'jszip'
 import mammoth from 'mammoth'
 import pdfParse from 'pdf-parse'
 import { cleanExtractedText, getFileType, SupportedFileType } from '../../src/lib/fileParser'
+import { extractTextFromImage, ocrScannedPdf } from './ocrHelper'
 
 /**
  * Decodes XML / HTML character entities into readable Unicode characters.
@@ -208,19 +209,45 @@ export async function parseDOCX(input: string | Buffer): Promise<string> {
 }
 
 /**
- * PDF parser using pdf-parse with buffer safety.
+ * PDF parser using pdf-parse with buffer safety and automatic OCR fallback for scanned/screenshot PDFs.
  */
 export async function parsePDF(input: string | Buffer): Promise<string> {
   const buffer = typeof input === 'string' ? fs.readFileSync(input) : input
+  let extracted = ''
+
   try {
     const data = await pdfParse(buffer)
-    return cleanExtractedText(data.text || '')
+    extracted = cleanExtractedText(data.text || '')
   } catch (err) {
-    console.error('PDF parsing error:', err)
-    const fallback = extractBinaryStrings(buffer)
-    if (fallback.length > 50) return cleanExtractedText(fallback)
-    throw new Error(`Failed to parse PDF document: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    console.warn('pdf-parse digital text extraction failed, checking for scanned pages/OCR:', err)
   }
+
+  // If sufficient digital text was extracted (at least 50 chars), return it immediately
+  if (extracted.length >= 50) {
+    return extracted
+  }
+
+  // If digital text is missing or sparse (< 50 chars), this is a scanned PDF
+  // or combined screenshots. Run the OCR / Vision page extraction pipeline.
+  if (typeof input === 'string' && fs.existsSync(input)) {
+    try {
+      console.log(`PDF digital text has only ${extracted.length} chars. Running OCR on scanned/image pages: ${input}`)
+      const ocrResult = await ocrScannedPdf(input)
+      if (ocrResult && ocrResult.length >= 10) {
+        return ocrResult
+      }
+    } catch (ocrErr) {
+      console.warn('OCR on scanned PDF failed:', ocrErr)
+    }
+  }
+
+  if (extracted.length > 0) {
+    return extracted
+  }
+
+  const fallback = extractBinaryStrings(buffer)
+  if (fallback.length > 50) return cleanExtractedText(fallback)
+  throw new Error('Failed to parse PDF document: no readable digital text or images recognized.')
 }
 
 /**
@@ -286,6 +313,15 @@ export async function parseFileToText(filePath: string): Promise<{
   let contentText = ''
 
   switch (detectedType) {
+    case 'image':
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'webp':
+    case 'heic':
+      contentText = await extractTextFromImage(filePath)
+      break
+
     case 'pdf':
       contentText = await parsePDF(filePath)
       break

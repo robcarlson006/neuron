@@ -1,6 +1,6 @@
 {
   "name": "studyhelper",
-  "version": "4.9.2",
+  "version": "4.9.3",
   "description": "Spaced repetition and active recall for smarter studying",
   "main": "out/main/index.js",
   "author": "Neuron",
@@ -79,6 +79,7 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.22.0",
     "recharts": "^2.12.0",
+    "tesseract.js": "^7.0.0",
     "tr46": "^6.0.0",
     "uuid": "^9.0.0",
     "zustand": "^4.5.2"

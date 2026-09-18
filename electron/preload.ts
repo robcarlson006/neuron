@@ -81,6 +81,8 @@ const electronAPI = {
   openFileDialog: (): Promise<string | null> => ipcRenderer.invoke('file:openDialog'),
   parseFile: (filePath: string): Promise<{ filename: string; fileType: string; contentText: string; originalLength: number }> =>
     ipcRenderer.invoke('file:parseFile', filePath),
+  saveTempImage: (dataUrl: string): Promise<string> =>
+    ipcRenderer.invoke('file:saveTempImage', dataUrl),
 
   // AI (provider-agnostic layer)
   generateCards: (text: string, minCards?: number, minQuestions?: number): Promise<GeneratedCards> =>
