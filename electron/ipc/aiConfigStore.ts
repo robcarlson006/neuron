@@ -405,8 +405,9 @@ export async function testAIConnection(config: {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function readMeta(key: string): string | null {
+export function readMeta(key: string): string | null {
   try {
+    if (!db) return null
     const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(key) as
       | { value: string }
       | undefined
@@ -416,10 +417,158 @@ function readMeta(key: string): string | null {
   }
 }
 
-function writeMeta(key: string, value: string): void {
+export function writeMeta(key: string, value: string): void {
   try {
+    if (!db) return
     db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(key, value)
   } catch {
     // silently fail if table doesn't exist
+  }
+}
+
+// ── Multi-Key Vault ────────────────────────────────────────────────────────────
+
+export interface MultiKeyVault {
+  geminiKey?: string
+  openaiKey?: string
+  deepseekKey?: string
+  groqKey?: string
+  visionProvider?: 'gemini' | 'openai' | 'local' | 'auto'
+  visionModel?: string
+  hasGeminiKey?: boolean
+  hasOpenaiKey?: boolean
+  hasDeepseekKey?: boolean
+  hasGroqKey?: boolean
+}
+
+export function maskKey(key?: string | null): string {
+  if (!key) return ''
+  const trimmed = key.trim()
+  if (trimmed.length <= 8) return '••••••••••••'
+  return trimmed.substring(0, 6) + '••••••••' + trimmed.substring(trimmed.length - 4)
+}
+
+export function getStoredKey(providerName: 'gemini' | 'openai' | 'deepseek' | 'groq'): string {
+  if (!db) return ''
+
+  // Provider specific meta key
+  const specificKey = readMeta(`api_key_${providerName}`)
+  if (specificKey && !isMaskedKey(specificKey)) return specificKey
+
+  // Cross-reference transcription keys
+  if (providerName === 'gemini') {
+    const tKey = readMeta('transcription_gemini_key')
+    if (tKey && !isMaskedKey(tKey)) return tKey
+  }
+  if (providerName === 'openai') {
+    const tKey = readMeta('transcription_openai_key')
+    if (tKey && !isMaskedKey(tKey)) return tKey
+  }
+  if (providerName === 'groq') {
+    const tKey = readMeta('transcription_groq_key')
+    if (tKey && !isMaskedKey(tKey)) return tKey
+  }
+
+  // Cross-reference main AI key if it matches format
+  const mainKey = getApiKey()
+  if (mainKey && !isMaskedKey(mainKey)) {
+    if (providerName === 'gemini' && (mainKey.startsWith('AIza') || mainKey.startsWith('AQ.'))) return mainKey
+    if (providerName === 'openai' && mainKey.startsWith('sk-proj-')) return mainKey
+    if (providerName === 'deepseek' && mainKey.startsWith('sk-') && !mainKey.startsWith('sk-proj-')) {
+      const cfg = getAIConfig()
+      if (cfg.baseUrl?.includes('deepseek.com') || cfg.provider === 'openai-compatible') return mainKey
+    }
+    if (providerName === 'groq' && mainKey.startsWith('gsk_')) return mainKey
+  }
+
+  return ''
+}
+
+export function getMultiKeyVault(): MultiKeyVault {
+  const gemini = getStoredKey('gemini')
+  const openai = getStoredKey('openai')
+  const deepseek = getStoredKey('deepseek')
+  const groq = getStoredKey('groq')
+
+  const visionProvider = (readMeta('vision_provider') as 'gemini' | 'openai' | 'local' | 'auto') || 'gemini'
+  const visionModel = readMeta('vision_model') || 'gemini-2.0-flash'
+
+  return {
+    geminiKey: maskKey(gemini),
+    openaiKey: maskKey(openai),
+    deepseekKey: maskKey(deepseek),
+    groqKey: maskKey(groq),
+    hasGeminiKey: Boolean(gemini),
+    hasOpenaiKey: Boolean(openai),
+    hasDeepseekKey: Boolean(deepseek),
+    hasGroqKey: Boolean(groq),
+    visionProvider,
+    visionModel
+  }
+}
+
+export function saveMultiKeyVault(updates: {
+  geminiKey?: string
+  openaiKey?: string
+  deepseekKey?: string
+  groqKey?: string
+  visionProvider?: 'gemini' | 'openai' | 'local' | 'auto'
+  visionModel?: string
+}): void {
+  if (!db) return
+
+  if (updates.geminiKey !== undefined) {
+    const clean = sanitizeApiKey(updates.geminiKey)
+    if (clean && !isMaskedKey(clean)) {
+      writeMeta('api_key_gemini', clean)
+      writeMeta('transcription_gemini_key', clean)
+    } else if (clean === '') {
+      writeMeta('api_key_gemini', '')
+      writeMeta('transcription_gemini_key', '')
+    }
+  }
+
+  if (updates.openaiKey !== undefined) {
+    const clean = sanitizeApiKey(updates.openaiKey)
+    if (clean && !isMaskedKey(clean)) {
+      writeMeta('api_key_openai', clean)
+      writeMeta('transcription_openai_key', clean)
+    } else if (clean === '') {
+      writeMeta('api_key_openai', '')
+      writeMeta('transcription_openai_key', '')
+    }
+  }
+
+  if (updates.deepseekKey !== undefined) {
+    const clean = sanitizeApiKey(updates.deepseekKey)
+    if (clean && !isMaskedKey(clean)) {
+      writeMeta('api_key_deepseek', clean)
+      // If user's main provider is DeepSeek, update main key as well
+      const cfg = getAIConfig()
+      if (cfg.provider === 'openai-compatible' || cfg.baseUrl?.includes('deepseek')) {
+        saveApiKey(clean)
+      }
+    } else if (clean === '') {
+      writeMeta('api_key_deepseek', '')
+    }
+  }
+
+  if (updates.groqKey !== undefined) {
+    const clean = sanitizeApiKey(updates.groqKey)
+    if (clean && !isMaskedKey(clean)) {
+      writeMeta('api_key_groq', clean)
+      writeMeta('transcription_groq_key', clean)
+    } else if (clean === '') {
+      writeMeta('api_key_groq', '')
+      writeMeta('transcription_groq_key', '')
+    }
+  }
+
+  if (updates.visionProvider) {
+    writeMeta('vision_provider', updates.visionProvider)
+  }
+
+  if (updates.visionModel) {
+    writeMeta('vision_model', updates.visionModel.trim())
   }
 }

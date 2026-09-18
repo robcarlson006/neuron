@@ -16,7 +16,10 @@ import {
   isLocalEndpoint,
   isMaskedKey,
   sanitizeApiKey,
-  DEFAULT_MODEL
+  DEFAULT_MODEL,
+  getMultiKeyVault,
+  saveMultiKeyVault,
+  getStoredKey
 } from './aiConfigStore'
 
 /** Default request timeout. Card generation/evaluation can be slow, so be generous. */
@@ -298,6 +301,65 @@ export function registerAIHandlers(): void {
       }
 
       return result
+    }
+  )
+
+  // ── Multi-Key Vault ──────────────────────────────────────────────────────────
+
+  ipcMain.handle('ai:getMultiKeyVault', async () => {
+    return getMultiKeyVault()
+  })
+
+  ipcMain.handle('ai:saveMultiKeyVault', async (_event, updates: Parameters<typeof saveMultiKeyVault>[0]) => {
+    saveMultiKeyVault(updates)
+    return { success: true }
+  })
+
+  ipcMain.handle(
+    'ai:testSingleKey',
+    async (_event, provider: 'gemini' | 'openai' | 'deepseek' | 'groq', keyVal?: string) => {
+      const keyToTest = keyVal && !isMaskedKey(keyVal) ? sanitizeApiKey(keyVal) : getStoredKey(provider)
+      if (!keyToTest) {
+        return { success: false, message: 'No API key provided to test.' }
+      }
+
+      if (provider === 'gemini') {
+        return testAIConnection({
+          provider: 'gemini',
+          baseUrl: 'https://generativelanguage.googleapis.com',
+          model: 'gemini-2.0-flash',
+          apiKey: keyToTest
+        })
+      }
+
+      if (provider === 'openai') {
+        return testAIConnection({
+          provider: 'openai',
+          baseUrl: 'https://api.openai.com',
+          model: 'gpt-4o-mini',
+          apiKey: keyToTest
+        })
+      }
+
+      if (provider === 'deepseek') {
+        return testAIConnection({
+          provider: 'openai-compatible',
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-flash',
+          apiKey: keyToTest
+        })
+      }
+
+      if (provider === 'groq') {
+        return testAIConnection({
+          provider: 'openai-compatible',
+          baseUrl: 'https://api.groq.com/openai',
+          model: 'llama-3.3-70b-versatile',
+          apiKey: keyToTest
+        })
+      }
+
+      return { success: false, message: 'Unknown provider' }
     }
   )
 }

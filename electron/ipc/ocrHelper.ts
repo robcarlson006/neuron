@@ -5,7 +5,7 @@ import { execFileSync } from 'child_process'
 import { app } from 'electron'
 import { createWorker } from 'tesseract.js'
 import { cleanExtractedText } from '../../src/lib/fileParser'
-import { getAIConfig, getApiKey } from './aiConfigStore'
+import { getAIConfig, getApiKey, getStoredKey, readMeta } from './aiConfigStore'
 
 // Helper to get temp dir safely whether in Electron or test environment
 function getTempDirectory(): string {
@@ -19,13 +19,50 @@ function getTempDirectory(): string {
 
 /**
  * Check if the user has a Vision AI key available (Gemini or OpenAI).
+ * Respects the configured vision_provider from the Multi-Key Vault.
  */
 function getVisionConfig(): { provider: 'gemini' | 'openai'; apiKey: string; model: string } | null {
   try {
+    const visionProvider = readMeta('vision_provider') || 'auto'
+    const configuredVisionModel = readMeta('vision_model') || 'gemini-2.0-flash'
+
+    // If user explicitly chose local OCR, disable Cloud Vision
+    if (visionProvider === 'local') {
+      return null
+    }
+
+    // 1. Explicit Gemini selection
+    if (visionProvider === 'gemini') {
+      const geminiKey = getStoredKey('gemini')
+      if (geminiKey) {
+        return { provider: 'gemini', apiKey: geminiKey, model: configuredVisionModel || 'gemini-2.0-flash' }
+      }
+    }
+
+    // 2. Explicit OpenAI selection
+    if (visionProvider === 'openai') {
+      const openaiKey = getStoredKey('openai')
+      if (openaiKey) {
+        return { provider: 'openai', apiKey: openaiKey, model: configuredVisionModel.startsWith('gpt') ? configuredVisionModel : 'gpt-4o-mini' }
+      }
+    }
+
+    // 3. Auto / Fallback: Check Gemini vault key first
+    const vaultGeminiKey = getStoredKey('gemini')
+    if (vaultGeminiKey) {
+      return { provider: 'gemini', apiKey: vaultGeminiKey, model: configuredVisionModel || 'gemini-2.0-flash' }
+    }
+
+    // 4. Auto / Fallback: Check OpenAI vault key
+    const vaultOpenaiKey = getStoredKey('openai')
+    if (vaultOpenaiKey) {
+      return { provider: 'openai', apiKey: vaultOpenaiKey, model: 'gpt-4o-mini' }
+    }
+
+    // 5. Fallback to main AI config key
     const aiConfig = getAIConfig()
     const mainKey = getApiKey()
 
-    // 1. Check Gemini (highest priority for vision: fast, accurate LaTeX math transcription)
     if (aiConfig.provider === 'gemini' && mainKey) {
       return { provider: 'gemini', apiKey: mainKey, model: aiConfig.model || 'gemini-2.0-flash' }
     }
@@ -33,12 +70,10 @@ function getVisionConfig(): { provider: 'gemini' | 'openai'; apiKey: string; mod
       return { provider: 'gemini', apiKey: mainKey, model: 'gemini-2.0-flash' }
     }
 
-    // 2. Check OpenAI
     if (aiConfig.provider === 'openai' && mainKey) {
       return { provider: 'openai', apiKey: mainKey, model: aiConfig.model || 'gpt-4o-mini' }
     }
     if (mainKey && (mainKey.startsWith('sk-proj-') || (mainKey.startsWith('sk-') && !mainKey.startsWith('sk-ant-')))) {
-      // Check if not DeepSeek (DeepSeek keys also start with sk-)
       if (!aiConfig.baseUrl?.includes('deepseek.com')) {
         return { provider: 'openai', apiKey: mainKey, model: 'gpt-4o-mini' }
       }

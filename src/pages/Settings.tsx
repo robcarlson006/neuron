@@ -327,6 +327,24 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [installMethod, setInstallMethod] = useState('')
   const progressListenerSet = useRef(false)
 
+  // Multi-Key Vault state
+  const [vaultGeminiKey, setVaultGeminiKey] = useState('')
+  const [vaultOpenaiKey, setVaultOpenaiKey] = useState('')
+  const [vaultDeepseekKey, setVaultDeepseekKey] = useState('')
+  const [vaultGroqKey, setVaultGroqKey] = useState('')
+  const [hasGeminiKey, setHasGeminiKey] = useState(false)
+  const [hasOpenaiKey, setHasOpenaiKey] = useState(false)
+  const [hasDeepseekKey, setHasDeepseekKey] = useState(false)
+  const [hasGroqKey, setHasGroqKey] = useState(false)
+  const [visionProvider, setVisionProvider] = useState<'gemini' | 'openai' | 'local' | 'auto'>('gemini')
+  const [visionModel, setVisionModel] = useState('gemini-2.0-flash')
+  const [vaultSaved, setVaultSaved] = useState(false)
+  const [showVaultKey, setShowVaultKey] = useState<Record<string, boolean>>({})
+  const [vaultTestStatus, setVaultTestStatus] = useState<
+    Record<string, { status: 'testing' | 'success' | 'error'; message?: string; latencyMs?: number }>
+  >({})
+  const [vaultModified, setVaultModified] = useState<Record<string, boolean>>({})
+
   const loadUserLevel = async () => {
     try {
       const api = (window as any).electronAPI
@@ -368,6 +386,24 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
       setAiConfigLoaded(true)
     }).catch(() => {
       setAiConfigLoaded(true)
+    })
+
+    // Load Multi-Key Vault
+    window.electronAPI.getMultiKeyVault?.().then(vault => {
+      if (vault) {
+        setVaultGeminiKey(vault.geminiKey || '')
+        setVaultOpenaiKey(vault.openaiKey || '')
+        setVaultDeepseekKey(vault.deepseekKey || '')
+        setVaultGroqKey(vault.groqKey || '')
+        setHasGeminiKey(vault.hasGeminiKey)
+        setHasOpenaiKey(vault.hasOpenaiKey)
+        setHasDeepseekKey(vault.hasDeepseekKey)
+        setHasGroqKey(vault.hasGroqKey)
+        if (vault.visionProvider) setVisionProvider(vault.visionProvider)
+        if (vault.visionModel) setVisionModel(vault.visionModel)
+      }
+    }).catch(err => {
+      console.warn('Could not load multi-key vault:', err)
     })
 
     if (!progressListenerSet.current) {
@@ -527,6 +563,80 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     }
     setAiSaved(true)
     setTimeout(() => setAiSaved(false), 2500)
+  }
+
+  function handleOpenExternalLink(url: string, e: React.MouseEvent): void {
+    e.preventDefault()
+    if (window.electronAPI?.openExternal) {
+      window.electronAPI.openExternal(url)
+    } else if (window.electronAPI?.openReleasePage) {
+      window.electronAPI.openReleasePage(url)
+    } else {
+      window.open(url, '_blank')
+    }
+  }
+
+  async function handleTestVaultKey(provider: 'gemini' | 'openai' | 'deepseek' | 'groq'): Promise<void> {
+    setVaultTestStatus(prev => ({ ...prev, [provider]: { status: 'testing' } }))
+    try {
+      let keyOverride: string | undefined
+      if (provider === 'gemini' && vaultModified.gemini && vaultGeminiKey.trim()) keyOverride = vaultGeminiKey.trim()
+      if (provider === 'openai' && vaultModified.openai && vaultOpenaiKey.trim()) keyOverride = vaultOpenaiKey.trim()
+      if (provider === 'deepseek' && vaultModified.deepseek && vaultDeepseekKey.trim()) keyOverride = vaultDeepseekKey.trim()
+      if (provider === 'groq' && vaultModified.groq && vaultGroqKey.trim()) keyOverride = vaultGroqKey.trim()
+
+      const result = await window.electronAPI.testSingleKey(provider, keyOverride)
+      if (result.success) {
+        setVaultTestStatus(prev => ({
+          ...prev,
+          [provider]: { status: 'success', message: result.message, latencyMs: result.latencyMs }
+        }))
+        if (provider === 'gemini') setHasGeminiKey(true)
+        if (provider === 'openai') setHasOpenaiKey(true)
+        if (provider === 'deepseek') setHasDeepseekKey(true)
+        if (provider === 'groq') setHasGroqKey(true)
+      } else {
+        setVaultTestStatus(prev => ({
+          ...prev,
+          [provider]: { status: 'error', message: result.message }
+        }))
+      }
+    } catch (err: any) {
+      setVaultTestStatus(prev => ({
+        ...prev,
+        [provider]: { status: 'error', message: err?.message || 'Connection test failed' }
+      }))
+    }
+  }
+
+  async function handleSaveVault(): Promise<void> {
+    try {
+      await window.electronAPI.saveMultiKeyVault({
+        geminiKey: vaultModified.gemini ? vaultGeminiKey : undefined,
+        openaiKey: vaultModified.openai ? vaultOpenaiKey : undefined,
+        deepseekKey: vaultModified.deepseek ? vaultDeepseekKey : undefined,
+        groqKey: vaultModified.groq ? vaultGroqKey : undefined,
+        visionProvider,
+        visionModel
+      })
+
+      const refreshed = await window.electronAPI.getMultiKeyVault()
+      if (refreshed) {
+        setVaultGeminiKey(refreshed.geminiKey || '')
+        setVaultOpenaiKey(refreshed.openaiKey || '')
+        setVaultDeepseekKey(refreshed.deepseekKey || '')
+        setVaultGroqKey(refreshed.groqKey || '')
+        setHasGeminiKey(refreshed.hasGeminiKey)
+        setHasOpenaiKey(refreshed.hasOpenaiKey)
+        setHasDeepseekKey(refreshed.hasDeepseekKey)
+        setHasGroqKey(refreshed.hasGroqKey)
+        setVaultModified({})
+      }
+      setVaultSaved(true)
+      setTimeout(() => setVaultSaved(false), 2500)
+    } catch (err) {
+      console.error('Failed to save multi-key vault:', err)
+    }
   }
 
   return (
@@ -1130,6 +1240,434 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               </div>
             </div>
           )}
+        </section>
+
+        {/* API Keys Vault & Feature Routing Section */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🔐</span>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
+                  API Keys Vault & Feature Routing
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Save separate API keys for each provider and assign which AI powers Vision OCR, Math transcription, Tutor, and Lectures.
+              </p>
+            </div>
+            {vaultSaved && (
+              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1 rounded-full animate-fade-in flex items-center gap-1 self-start">
+                ✓ Vault Saved
+              </span>
+            )}
+          </div>
+
+          {/* Feature Routing Card */}
+          <div className="mb-6 p-4 rounded-xl bg-violet-50/60 dark:bg-violet-950/30 border border-violet-200/80 dark:border-violet-800/50">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🎯</span>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-violet-900 dark:text-violet-300">
+                  Feature-Specific AI Engines
+                </h3>
+              </div>
+              <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-violet-200/70 text-violet-800 dark:bg-violet-900/60 dark:text-violet-300">
+                Routing
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">
+              Configure which engine handles screenshots, practice problem scans, and LaTeX math extraction:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Vision OCR & Practice Problems Engine
+                </label>
+                <select
+                  value={visionProvider}
+                  onChange={e => setVisionProvider(e.target.value as any)}
+                  className="input w-full text-xs font-medium bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                >
+                  <option value="gemini">Google Gemini (Google AI Studio) — Recommended for LaTeX & Math</option>
+                  <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+                  <option value="auto">Auto-detect (Gemini if key saved, else OpenAI, else Local)</option>
+                  <option value="local">Apple Vision / Local OCR (Offline, no key required)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Vision Model
+                </label>
+                <input
+                  type="text"
+                  disabled={visionProvider === 'local'}
+                  className="input w-full text-xs font-mono bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 disabled:opacity-50"
+                  value={visionModel}
+                  onChange={e => setVisionModel(e.target.value)}
+                  placeholder={visionProvider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.0-flash'}
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 text-[11px] text-violet-800 dark:text-violet-300 flex items-start gap-1.5 bg-violet-100/60 dark:bg-violet-900/30 p-2.5 rounded-lg">
+              <span className="flex-shrink-0 mt-0.5">💡</span>
+              <span>
+                <strong>Google AI Studio (Gemini 2.0 Flash)</strong> delivers lightning-fast transcription of handwritten math, scanned practice problem sets, and textbook diagrams directly into clean LaTeX notation (<code className="px-1 py-0.5 rounded bg-violet-200/60 dark:bg-violet-800/60 font-mono text-[10px]">$...$</code>).
+              </span>
+            </div>
+          </div>
+
+          {/* Provider Keys Vault */}
+          <div className="space-y-4">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              Provider API Keys
+            </label>
+
+            {/* 1. Google Gemini (Google AI Studio) */}
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 hover:border-slate-300 dark:hover:border-slate-600 transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">✨</span>
+                  <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    Google Gemini (Google AI Studio)
+                  </span>
+                  <span className="text-[10px] bg-violet-100 text-violet-700 dark:bg-violet-900/60 dark:text-violet-300 px-1.5 py-0.5 rounded font-medium">
+                    Vision & Math
+                  </span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.5 rounded font-medium">
+                    Free Tier
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-[11px] font-medium flex items-center gap-1 ${
+                    hasGeminiKey ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'
+                  }`}>
+                    {hasGeminiKey ? '✓ Saved' : 'Not configured'}
+                  </span>
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    onClick={e => handleOpenExternalLink('https://aistudio.google.com/app/apikey', e)}
+                    className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline font-medium flex items-center gap-0.5"
+                  >
+                    Get Gemini Key (AI Studio) ↗
+                  </a>
+                </div>
+              </div>
+
+              <div className="flex gap-2 items-center">
+                <div className="relative flex-1">
+                  <input
+                    type={showVaultKey.gemini ? 'text' : 'password'}
+                    className="input w-full font-mono text-xs pr-16 bg-white dark:bg-slate-800"
+                    value={vaultGeminiKey}
+                    onFocus={() => {
+                      if (!vaultModified.gemini && hasGeminiKey && (vaultGeminiKey.includes('•') || vaultGeminiKey.includes('...'))) {
+                        setVaultGeminiKey('')
+                      }
+                    }}
+                    onChange={e => {
+                      setVaultGeminiKey(e.target.value)
+                      setVaultModified(prev => ({ ...prev, gemini: true }))
+                    }}
+                    placeholder={
+                      hasGeminiKey
+                        ? '•••••••••••• (API key configured — enter new key to replace)'
+                        : 'AIzaSy...'
+                    }
+                  />
+                  {vaultGeminiKey && (
+                    <button
+                      type="button"
+                      onClick={() => setShowVaultKey(prev => ({ ...prev, gemini: !prev.gemini }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      {showVaultKey.gemini ? 'Hide' : 'Show'}
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTestVaultKey('gemini')}
+                  disabled={vaultTestStatus.gemini?.status === 'testing'}
+                  className="px-3 py-2 rounded-lg text-xs font-medium bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors flex-shrink-0"
+                >
+                  {vaultTestStatus.gemini?.status === 'testing' ? 'Testing…' : 'Test'}
+                </button>
+              </div>
+
+              {vaultTestStatus.gemini?.status === 'success' && (
+                <p className="mt-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                  ✓ Gemini connected successfully! {vaultTestStatus.gemini.latencyMs != null ? `(${vaultTestStatus.gemini.latencyMs}ms)` : ''}
+                </p>
+              )}
+              {vaultTestStatus.gemini?.status === 'error' && (
+                <p className="mt-1.5 text-[11px] text-red-500 dark:text-red-400 font-medium">
+                  Failed: {vaultTestStatus.gemini.message}
+                </p>
+              )}
+            </div>
+
+            {/* 2. OpenAI */}
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 hover:border-slate-300 dark:hover:border-slate-600 transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🟢</span>
+                  <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    OpenAI
+                  </span>
+                  <span className="text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded font-medium">
+                    GPT-4o / GPT-4o-mini
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-[11px] font-medium flex items-center gap-1 ${
+                    hasOpenaiKey ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'
+                  }`}>
+                    {hasOpenaiKey ? '✓ Saved' : 'Not configured'}
+                  </span>
+                  <a
+                    href="https://platform.openai.com/api-keys"
+                    onClick={e => handleOpenExternalLink('https://platform.openai.com/api-keys', e)}
+                    className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline font-medium flex items-center gap-0.5"
+                  >
+                    Get OpenAI Key ↗
+                  </a>
+                </div>
+              </div>
+
+              <div className="flex gap-2 items-center">
+                <div className="relative flex-1">
+                  <input
+                    type={showVaultKey.openai ? 'text' : 'password'}
+                    className="input w-full font-mono text-xs pr-16 bg-white dark:bg-slate-800"
+                    value={vaultOpenaiKey}
+                    onFocus={() => {
+                      if (!vaultModified.openai && hasOpenaiKey && (vaultOpenaiKey.includes('•') || vaultOpenaiKey.includes('...'))) {
+                        setVaultOpenaiKey('')
+                      }
+                    }}
+                    onChange={e => {
+                      setVaultOpenaiKey(e.target.value)
+                      setVaultModified(prev => ({ ...prev, openai: true }))
+                    }}
+                    placeholder={
+                      hasOpenaiKey
+                        ? '•••••••••••• (API key configured — enter new key to replace)'
+                        : 'sk-proj-...'
+                    }
+                  />
+                  {vaultOpenaiKey && (
+                    <button
+                      type="button"
+                      onClick={() => setShowVaultKey(prev => ({ ...prev, openai: !prev.openai }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      {showVaultKey.openai ? 'Hide' : 'Show'}
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTestVaultKey('openai')}
+                  disabled={vaultTestStatus.openai?.status === 'testing'}
+                  className="px-3 py-2 rounded-lg text-xs font-medium bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors flex-shrink-0"
+                >
+                  {vaultTestStatus.openai?.status === 'testing' ? 'Testing…' : 'Test'}
+                </button>
+              </div>
+
+              {vaultTestStatus.openai?.status === 'success' && (
+                <p className="mt-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                  ✓ OpenAI connected successfully! {vaultTestStatus.openai.latencyMs != null ? `(${vaultTestStatus.openai.latencyMs}ms)` : ''}
+                </p>
+              )}
+              {vaultTestStatus.openai?.status === 'error' && (
+                <p className="mt-1.5 text-[11px] text-red-500 dark:text-red-400 font-medium">
+                  Failed: {vaultTestStatus.openai.message}
+                </p>
+              )}
+            </div>
+
+            {/* 3. DeepSeek */}
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 hover:border-slate-300 dark:hover:border-slate-600 transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🧠</span>
+                  <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    DeepSeek
+                  </span>
+                  <span className="text-[10px] bg-violet-100 text-violet-700 dark:bg-violet-900/60 dark:text-violet-300 px-1.5 py-0.5 rounded font-medium">
+                    Tutor & Cards
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-[11px] font-medium flex items-center gap-1 ${
+                    hasDeepseekKey ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'
+                  }`}>
+                    {hasDeepseekKey ? '✓ Saved' : 'Not configured'}
+                  </span>
+                  <a
+                    href="https://platform.deepseek.com/api_keys"
+                    onClick={e => handleOpenExternalLink('https://platform.deepseek.com/api_keys', e)}
+                    className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline font-medium flex items-center gap-0.5"
+                  >
+                    Get DeepSeek Key ↗
+                  </a>
+                </div>
+              </div>
+
+              <div className="flex gap-2 items-center">
+                <div className="relative flex-1">
+                  <input
+                    type={showVaultKey.deepseek ? 'text' : 'password'}
+                    className="input w-full font-mono text-xs pr-16 bg-white dark:bg-slate-800"
+                    value={vaultDeepseekKey}
+                    onFocus={() => {
+                      if (!vaultModified.deepseek && hasDeepseekKey && (vaultDeepseekKey.includes('•') || vaultDeepseekKey.includes('...'))) {
+                        setVaultDeepseekKey('')
+                      }
+                    }}
+                    onChange={e => {
+                      setVaultDeepseekKey(e.target.value)
+                      setVaultModified(prev => ({ ...prev, deepseek: true }))
+                    }}
+                    placeholder={
+                      hasDeepseekKey
+                        ? '•••••••••••• (API key configured — enter new key to replace)'
+                        : 'sk-...'
+                    }
+                  />
+                  {vaultDeepseekKey && (
+                    <button
+                      type="button"
+                      onClick={() => setShowVaultKey(prev => ({ ...prev, deepseek: !prev.deepseek }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      {showVaultKey.deepseek ? 'Hide' : 'Show'}
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTestVaultKey('deepseek')}
+                  disabled={vaultTestStatus.deepseek?.status === 'testing'}
+                  className="px-3 py-2 rounded-lg text-xs font-medium bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors flex-shrink-0"
+                >
+                  {vaultTestStatus.deepseek?.status === 'testing' ? 'Testing…' : 'Test'}
+                </button>
+              </div>
+
+              {vaultTestStatus.deepseek?.status === 'success' && (
+                <p className="mt-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                  ✓ DeepSeek connected successfully! {vaultTestStatus.deepseek.latencyMs != null ? `(${vaultTestStatus.deepseek.latencyMs}ms)` : ''}
+                </p>
+              )}
+              {vaultTestStatus.deepseek?.status === 'error' && (
+                <p className="mt-1.5 text-[11px] text-red-500 dark:text-red-400 font-medium">
+                  Failed: {vaultTestStatus.deepseek.message}
+                </p>
+              )}
+            </div>
+
+            {/* 4. Groq */}
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 hover:border-slate-300 dark:hover:border-slate-600 transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">⚡</span>
+                  <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    Groq
+                  </span>
+                  <span className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 px-1.5 py-0.5 rounded font-medium">
+                    Fast Audio Whisper
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-[11px] font-medium flex items-center gap-1 ${
+                    hasGroqKey ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'
+                  }`}>
+                    {hasGroqKey ? '✓ Saved' : 'Not configured'}
+                  </span>
+                  <a
+                    href="https://console.groq.com/keys"
+                    onClick={e => handleOpenExternalLink('https://console.groq.com/keys', e)}
+                    className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline font-medium flex items-center gap-0.5"
+                  >
+                    Get Groq Key ↗
+                  </a>
+                </div>
+              </div>
+
+              <div className="flex gap-2 items-center">
+                <div className="relative flex-1">
+                  <input
+                    type={showVaultKey.groq ? 'text' : 'password'}
+                    className="input w-full font-mono text-xs pr-16 bg-white dark:bg-slate-800"
+                    value={vaultGroqKey}
+                    onFocus={() => {
+                      if (!vaultModified.groq && hasGroqKey && (vaultGroqKey.includes('•') || vaultGroqKey.includes('...'))) {
+                        setVaultGroqKey('')
+                      }
+                    }}
+                    onChange={e => {
+                      setVaultGroqKey(e.target.value)
+                      setVaultModified(prev => ({ ...prev, groq: true }))
+                    }}
+                    placeholder={
+                      hasGroqKey
+                        ? '•••••••••••• (API key configured — enter new key to replace)'
+                        : 'gsk_...'
+                    }
+                  />
+                  {vaultGroqKey && (
+                    <button
+                      type="button"
+                      onClick={() => setShowVaultKey(prev => ({ ...prev, groq: !prev.groq }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      {showVaultKey.groq ? 'Hide' : 'Show'}
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTestVaultKey('groq')}
+                  disabled={vaultTestStatus.groq?.status === 'testing'}
+                  className="px-3 py-2 rounded-lg text-xs font-medium bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors flex-shrink-0"
+                >
+                  {vaultTestStatus.groq?.status === 'testing' ? 'Testing…' : 'Test'}
+                </button>
+              </div>
+
+              {vaultTestStatus.groq?.status === 'success' && (
+                <p className="mt-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                  ✓ Groq connected successfully! {vaultTestStatus.groq.latencyMs != null ? `(${vaultTestStatus.groq.latencyMs}ms)` : ''}
+                </p>
+              )}
+              {vaultTestStatus.groq?.status === 'error' && (
+                <p className="mt-1.5 text-[11px] text-red-500 dark:text-red-400 font-medium">
+                  Failed: {vaultTestStatus.groq.message}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Save Vault Button */}
+          <div className="pt-5 mt-5 border-t border-slate-100 dark:border-slate-700 flex justify-end">
+            <button
+              type="button"
+              onClick={handleSaveVault}
+              className={`px-5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all shadow-xs ${
+                vaultSaved
+                  ? 'bg-emerald-600 shadow-emerald-500/20'
+                  : 'bg-violet-600 hover:bg-violet-700 shadow-violet-500/20'
+              }`}
+            >
+              {vaultSaved ? '✓ Saved API Keys & Feature Routing' : 'Save Keys & Feature Routing'}
+            </button>
+          </div>
         </section>
 
         {/* Lecture Recording & Transcription Section */}

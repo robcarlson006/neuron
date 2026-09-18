@@ -1085,6 +1085,15 @@ export interface AutonomousPracticeGenResult {
   rationale?: string
 }
 
-
-
-
+export interface MultiKeyVault {
+  geminiKey: string
+  openaiKey: string
+  deepseekKey: string
+  groqKey: string
+  hasGeminiKey: boolean
+  hasOpenaiKey: boolean
+  hasDeepseekKey: boolean
+  hasGroqKey: boolean
+  visionProvider: 'gemini' | 'openai' | 'local' | 'auto'
+  visionModel: string
+}

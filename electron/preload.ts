@@ -11,7 +11,8 @@ import type {
   HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus,
   FolderSyncResult, FolderSyncEvent, Lecture,
   PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult,
-  AutonomousPracticeGenOptions, AutonomousPracticeGenResult
+  AutonomousPracticeGenOptions, AutonomousPracticeGenResult,
+  MultiKeyVault
 } from '../src/types'
 
 const electronAPI = {
@@ -97,6 +98,22 @@ const electronAPI = {
     ipcRenderer.invoke('ai:saveConfig', config),
   testAIConnection: (config?: { provider?: string; baseUrl?: string; model?: string; apiKey?: string }): Promise<{ success: boolean; message: string; latencyMs?: number }> =>
     ipcRenderer.invoke('ai:testConnection', config),
+  getMultiKeyVault: (): Promise<MultiKeyVault> =>
+    ipcRenderer.invoke('ai:getMultiKeyVault'),
+  saveMultiKeyVault: (updates: {
+    geminiKey?: string
+    openaiKey?: string
+    deepseekKey?: string
+    groqKey?: string
+    visionProvider?: 'gemini' | 'openai' | 'local' | 'auto'
+    visionModel?: string
+  }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('ai:saveMultiKeyVault', updates),
+  testSingleKey: (
+    provider: 'gemini' | 'openai' | 'deepseek' | 'groq',
+    apiKey?: string
+  ): Promise<{ success: boolean; message: string; latencyMs?: number }> =>
+    ipcRenderer.invoke('ai:testSingleKey', provider, apiKey),
 
   // Analytics
   getMasteryStats: (userId: number, subjectId?: number): Promise<{ subject_id: number; interval: number; ease_factor: number }[]> =>
