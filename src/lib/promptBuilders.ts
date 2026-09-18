@@ -31,6 +31,12 @@ Generate the following in valid JSON:
 
 Prioritize depth over quantity — every card must earn its place. Cover all major topics in the material.
 CRITICAL NOTEBOOKLM GROUNDING RULE: All flashcards and active recall questions MUST be extracted strictly and exclusively from the CONTENT provided above. Do NOT use outside knowledge, extrapolate, or invent facts/concepts not explicitly present in the source text. If the content is limited, generate only as many high-quality items as the text directly supports.
+
+## 🚫 STRICT EXCLUSION RULES (DO NOT VIOLATE):
+- Absolutely NEVER generate cards about course logistics, homework deadlines, exam dates, syllabus requirements, textbook chapter schedules, or course mechanics (e.g. "What chapter starts using differentiation?", "When is the test?").
+- Discard all conversational banter, rhetorical introductions, professor jokes, personal anecdotes, and classroom Q&A logistics.
+- ONLY create cards testing durable academic concepts, theoretical models, mathematical definitions, core mechanisms, and analytical distinctions.
+
 Do NOT wrap terms, concepts, questions, or answers in square brackets (e.g. write "Mitochondria" NOT "[Mitochondria]").
 Wrap any mathematical formulas, equations, variables, exponents, or scientific notations in standard LaTeX delimiters ($...$ for inline or $$...$$ for block formulas, e.g. $x^3$, $a^2 + b^2 = c^2$, $\text{H}_2\text{O}$).
 
@@ -242,37 +248,42 @@ Return valid JSON with this exact structure:
    - Each flashcard MUST test EXACTLY ONE atomic fact or relationship.
    - NEVER create compound cards or lists (e.g. "What are the 4 stages of X?"). Split multi-part ideas into separate single-concept cards.
 
-2. **Retrieval Strength & Anti-Pattern Matching**:
+2. **Strict Exclusion of Logistics & Conversational Noise (CRITICAL)**:
+   - Absolutely NEVER generate cards for course mechanics, syllabus details, exam schedules, homework logistics, grading weights, or textbook chapter timelines (e.g. "What chapter introduces differentiation?", "When is the exam?").
+   - Discard all conversational tangents, professor jokes, rhetorical questions, and classroom management banter.
+   - ONLY generate cards testing durable conceptual knowledge, economic principles, mathematical formulas, domain definitions, and analytical mechanisms.
+
+3. **Retrieval Strength & Anti-Pattern Matching**:
    - Prompts must force active semantic retrieval, not superficial keyword recognition or guessing.
    - Make prompts self-contained: NEVER use vague pronouns ("this method", "as discussed above", "the latter").
 
-3. **Cloze Deletions & Targeted Direct Questions for Flashcards**:
+4. **Cloze Deletions & Targeted Direct Questions for Flashcards**:
    - For terminology and definitions, use precise cloze deletion: "Photosynthesis is the biological process by which ___".
    - For functional relationships: "What is the primary physiological role of Mitochondria in cellular respiration?"
 
-4. **Elaborative Interrogation for Active Recall**:
+5. **Elaborative Interrogation for Active Recall**:
    - Every active recall question MUST require causal reasoning, mechanism tracing ("Why does glycolysis lead to pyruvate production?"), or structural explanation ("How does hemoglobin compensate when oxygen levels fall?").
 
-5. **Concept Discrimination & Boundary Testing**:
+6. **Concept Discrimination & Boundary Testing**:
    - For easily confused terms or related concepts, construct explicit discrimination cards: "What is the critical functional difference between Mitosis and Meiosis?"
 
-6. **Dual-Coding & Misconception Inoculation**:
+7. **Dual-Coding & Misconception Inoculation**:
    - Every item MUST include a tangible real-world example in "concrete_example".
    - Include the most frequent student misconception in "common_mistake".
 
-7. **No Unnecessary Brackets**:
+8. **No Unnecessary Brackets**:
    - Do NOT wrap concepts, terms, keywords, or answers in square brackets like [Term] or [Concept]. Write natural, clean text without bracket placeholders.
 
-8. **Mathematical & Scientific Formatting (LaTeX)**:
+9. **Mathematical & Scientific Formatting (LaTeX)**:
    - Wrap all mathematical equations, variables, exponents, formulas, and scientific notation in standard LaTeX math delimiters ($...$ for inline or $$...$$ for block formulas, e.g. $x^3$, $a^2 + b^2 = c^2$, $\text{H}_2\text{O}$). Never leave raw unformatted math expressions like x^3.
 
-9. **Strict Source Grounding (NotebookLM Mode - ZERO HALLUCINATIONS)**:
+10. **Strict Source Grounding (NotebookLM Mode - ZERO HALLUCINATIONS)**:
    - Every single flashcard and active recall question MUST be strictly and exclusively grounded in the SOURCE MATERIAL above.
    - Absolutely NO hallucinations, external facts, or outside curriculum knowledge. If a concept or mechanism is not explicitly explained or defined in the SOURCE MATERIAL, do NOT create a card for it. Never use pre-trained knowledge to fill in gaps.
 
 ## GENERATION TARGETS
 ${autoCount
-  ? `- Automatically evaluate the depth, density, and breadth of the source material to determine the optimal number of flashcards and active recall questions needed for comprehensive conceptual coverage without fluff or redundancy (e.g. 4-8 cards for brief material, 10-25+ cards for dense or multi-topic material).
+  ? `- Automatically evaluate the depth, density, and breadth of the source material to determine the optimal number of flashcards and active recall questions needed for comprehensive conceptual coverage without fluff or redundancy (e.g. 4-8 cards for brief material, 12-18 cards for standard lectures, strictly capped at 20-25 cards max for very dense material).
 - Cover every key definition, mechanism, rule, and distinction without padding or omitting essentials.`
   : `- Generate exactly ${minCards} flashcards and ${minQuestions} active recall questions.
 - Distribute evenly across all major concepts in the source material.`}${dedupSection}
@@ -339,29 +350,34 @@ Return valid JSON with this exact structure:
    - Each card tests EXACTLY ONE relationship, term, or concept.
    - Absolutely NO compound lists or multi-part enumerations on the back.
 
-2. **Cloze Deletion & Targeted Questioning**:
+2. **Strict Exclusion of Logistics & Conversational Noise (CRITICAL)**:
+   - Absolutely NEVER generate cards for course mechanics, syllabus details, exam schedules, homework deadlines, or textbook chapter timelines (e.g. "What chapter introduces differentiation?", "When is homework due?").
+   - Discard all conversational tangents, professor jokes, rhetorical questions, and classroom management banter.
+   - ONLY generate cards testing durable conceptual knowledge, domain principles, mathematical formulas, definitions, and analytical mechanisms.
+
+3. **Cloze Deletion & Targeted Questioning**:
    - Use fill-in-the-blank style for core definitions: "Photosynthesis is the process by which ___".
    - Use direct questions for key properties: "What triggers the activation of Action Potentials in neurons?"
 
-3. **Self-Containment & Unambiguous Retrieval**:
+4. **Self-Containment & Unambiguous Retrieval**:
    - Prompts must stand completely on their own without external context or vague pronouns ("as mentioned above", "this process").
 
-4. **Rich Semantic Hooks**:
+5. **Rich Semantic Hooks**:
    - Provide high-value "concrete_example", "common_mistake", and "mnemonic" fields for every card to facilitate multi-modal encoding.
 
-5. ${autoCount
-  ? `**Dynamic Card Count (CRITICAL)**: Automatically determine the optimal number of flashcards needed to comprehensively cover the material without fluff, trivia, or redundancy. Analyze the material's depth and breadth: generate as few as 3-5 cards if the material is brief or focused, or as many as needed (typically 8-20+ cards for deeper material) to ensure complete conceptual coverage. Do NOT artificially pad with trivial cards, and do NOT truncate important concepts.`
+6. ${autoCount
+  ? `**Dynamic Card Count (CRITICAL)**: Automatically determine the optimal number of flashcards needed to comprehensively cover the material without fluff, trivia, or redundancy. Analyze the material's depth and breadth: generate as few as 3-5 cards if the material is brief or focused, or as many as needed (typically 8-16 cards for standard lectures, strictly capped at 20 cards max for deeper material) to ensure complete conceptual coverage. Do NOT artificially pad with trivial cards, and do NOT truncate important concepts.`
   : `**Generate exactly ${minCards} flashcards** (do not generate more or fewer) — Cover all distinct concepts, definitions, and mechanisms evenly.`}
 
-6. **NO active recall questions.** Flashcards only.
+7. **NO active recall questions.** Flashcards only.
 
-7. **No Unnecessary Brackets**:
+8. **No Unnecessary Brackets**:
    - Do NOT wrap terms, concepts, or answers in square brackets like [Term] or [Concept]. Output clean, unbracketed text.
 
-8. **Mathematical & Scientific Formatting (LaTeX)**:
+9. **Mathematical & Scientific Formatting (LaTeX)**:
    - Wrap all mathematical equations, formulas, variables, exponents, and chemical/scientific expressions in standard LaTeX delimiters ($...$ for inline or $$...$$ for block math, e.g. $x^3$, $a^2 + b^2 = c^2$, $\text{H}_2\text{O}$). Never leave unformatted math expressions like x^3.
 
-9. **Strict Source Grounding (NotebookLM Mode - ZERO HALLUCINATIONS)**:
+10. **Strict Source Grounding (NotebookLM Mode - ZERO HALLUCINATIONS)**:
    - Flashcards MUST be strictly and exclusively derived from the SOURCE MATERIAL above.
    - Do NOT hallucinate or bring in external concepts, theories, or definitions from pre-trained knowledge. Every card must be directly verifiable in the text.${dedupSection}
 
@@ -427,31 +443,36 @@ Return valid JSON with this exact structure:
    - Questions must demand deep causal explanation ("Why does glycolysis lead to pyruvate production?", "How does ATP synthase produce energy?").
    - Avoid shallow factual lookups or simple single-word answers.
 
-2. **Scenario Application & Problem Solving**:
+2. **Strict Exclusion of Logistics & Conversational Noise (CRITICAL)**:
+   - Absolutely NEVER generate questions about syllabus schedules, assignment dates, textbook chapter alignments, or administrative procedures.
+   - Discard spoken tangents, personal banter, and rhetorical remarks from lecture transcripts.
+   - Focus exclusively on causal mechanisms, theoretical models, application problems, and boundary testing.
+
+3. **Scenario Application & Problem Solving**:
    - Include scenario-based questions: "If a neuron encounters hyperpolarization, what occurs at the axon terminal and why?"
 
-3. **Concept Discrimination (Interference Reduction)**:
+4. **Concept Discrimination (Interference Reduction)**:
    - For confusable concepts, ask boundary-testing comparison questions: "How does Mitosis differ from Meiosis in terms of genetic variation?"
 
-4. **Rigorous Model Answers**:
+5. **Rigorous Model Answers**:
    - Provide clear, comprehensive model answers with the key checkpoints needed for self-grading or AI evaluation.
 
-5. **Self-Containment**:
+6. **Self-Containment**:
    - Every question must be fully understandable without external pointers or vague references.
 
-6. ${autoCount
-  ? `**Dynamic Question Count (CRITICAL)**: Automatically determine the optimal number of active recall questions needed to comprehensively cover the core mechanisms, causal relationships, and reasoning without redundancy. Generate as few as 2-4 questions for brief material, or 6-12+ for deep material. Every question must test a distinct, high-impact concept.`
+7. ${autoCount
+  ? `**Dynamic Question Count (CRITICAL)**: Automatically determine the optimal number of active recall questions needed to comprehensively cover the core mechanisms, causal relationships, and reasoning without redundancy. Generate as few as 2-4 questions for brief material, or 4-6 for standard lectures, strictly capped at 8 max for deep material. Every question must test a distinct, high-impact concept.`
   : `**Generate exactly ${minQuestions} active recall questions** (do not generate more or fewer) — Covering all major topics in depth.`}
 
-7. **NO flashcards.** Active recall questions only.
+8. **NO flashcards.** Active recall questions only.
 
-8. **No Unnecessary Brackets**:
+9. **No Unnecessary Brackets**:
    - Do NOT wrap terms, concepts, questions, or answers in square brackets like [Term] or [Concept]. Output clean, unbracketed text.
 
-9. **Mathematical & Scientific Formatting (LaTeX)**:
+10. **Mathematical & Scientific Formatting (LaTeX)**:
    - Wrap all mathematical equations, formulas, variables, exponents, and scientific notation in standard LaTeX math delimiters ($...$ for inline or $$...$$ for block math, e.g. $x^3$, $a^2 + b^2 = c^2$). Never leave unformatted math expressions like x^3.
 
-10. **Strict Source Grounding (NotebookLM Mode - ZERO HALLUCINATIONS)**:
+11. **Strict Source Grounding (NotebookLM Mode - ZERO HALLUCINATIONS)**:
    - Questions and model answers MUST be derived exclusively from the SOURCE MATERIAL above.
    - Never introduce outside concepts, unmentioned facts, or theories not discussed in the text. Every model answer must be grounded directly in the source material.${dedupSection}
 

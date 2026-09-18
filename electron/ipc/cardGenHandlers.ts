@@ -18,6 +18,18 @@ export function setCardGenerationDatabase(database: Database.Database): void {
 }
 
 /**
+ * Strips raw transcript blocks embedded inside <details> tags (common in generated
+ * lecture notes) as well as any raw transcript sections, preventing conversational
+ * banter, course mechanics, and logistics from leaking into card generation.
+ */
+export function stripRawTranscript(text: string): string {
+  if (!text) return ''
+  let cleaned = text.replace(/<details\b[^>]*>[\s\S]*?(?:raw transcript|transcript)[\s\S]*?<\/details>/gi, '')
+  cleaned = cleaned.replace(/<details>\s*<summary>📜\s*Click to expand full raw transcript<\/summary>[\s\S]*?<\/details>/gi, '')
+  return cleaned.trim()
+}
+
+/**
  * Extracts card candidates from AI output, with multi-level fallbacks so valid
  * content is never dropped regardless of which keys or structures the LLM used.
  */
@@ -117,7 +129,8 @@ export function registerCardGenerationHandlers(): void {
         { name: string } | undefined
       if (!subject) throw new Error('Subject not found')
 
-      if (!material.content_text || material.content_text.length < 100) {
+      const cleanContent = stripRawTranscript(material.content_text) || material.content_text
+      if (!cleanContent || cleanContent.length < 100) {
         return { success: false, count: 0, error: 'Material content too short (< 100 chars)' }
       }
 
@@ -137,8 +150,8 @@ export function registerCardGenerationHandlers(): void {
       ).all(subjectId) as { front: string; back: string }[]
 
       const chunks: { text: string; title?: string }[] = []
-      if (material.content_text.length > 8000) {
-        const topology = parseDocumentTopology(material.content_text, material.filename, 1000)
+      if (cleanContent.length > 8000) {
+        const topology = parseDocumentTopology(cleanContent, material.filename, 1000)
         for (const c of topology.chunks) {
           if (c.text.trim().length > 100) {
             chunks.push({ text: c.text, title: c.title })
@@ -146,14 +159,17 @@ export function registerCardGenerationHandlers(): void {
         }
       }
       if (chunks.length === 0) {
-        chunks.push({ text: material.content_text, title: moduleTitle })
+        chunks.push({ text: cleanContent, title: moduleTitle })
       }
 
       const validFlashcards: { front: string; back: string; concept?: string }[] = []
       const validActiveRecall: { question: string; model_answer: string; concept?: string }[] = []
 
-      const fcPerChunk = Math.max(2, Math.ceil(8 / chunks.length))
-      const arPerChunk = Math.max(1, Math.ceil(4 / chunks.length))
+      // Calibrate total generation to optimal bounds (~14 flashcards and ~4 active recall across all chunks)
+      const targetTotalFc = 14
+      const targetTotalAr = 4
+      const fcPerChunk = Math.max(2, Math.ceil(targetTotalFc / chunks.length))
+      const arPerChunk = Math.max(1, Math.ceil(targetTotalAr / chunks.length))
 
       for (const chunk of chunks) {
         const prompt = buildAutoCardGenerationPrompt(
@@ -182,9 +198,13 @@ export function registerCardGenerationHandlers(): void {
         }
       }
 
+      // Cap total cards to pedagogical sweet spot (max 16 flashcards, max 5 active recall)
+      const cappedFlashcards = validFlashcards.slice(0, 16)
+      const cappedActiveRecall = validActiveRecall.slice(0, 5)
+
       const validatedCards: Partial<Card>[] = []
 
-      for (const fc of validFlashcards) {
+      for (const fc of cappedFlashcards) {
         const base = {
           subject_id: subjectId,
           material_id: materialId,
@@ -207,7 +227,7 @@ export function registerCardGenerationHandlers(): void {
         }
       }
 
-      for (const ar of validActiveRecall) {
+      for (const ar of cappedActiveRecall) {
         const base = {
           subject_id: subjectId,
           material_id: materialId,
@@ -355,12 +375,13 @@ export function registerCardGenerationHandlers(): void {
 
       const materialText = materials.length > 0
         ? `\n\nSource material:\n${materials.map(m => {
-            if (m.content_text.length > 8000) {
-              const topology = parseDocumentTopology(m.content_text, m.filename, 800)
+            const cleanText = stripRawTranscript(m.content_text) || m.content_text
+            if (cleanText.length > 8000) {
+              const topology = parseDocumentTopology(cleanText, m.filename, 800)
               const sections = topology.chunks.map(c => `[${c.title}]:\n${c.text}`).join('\n\n')
               return `[${m.filename}]:\n${sections}`
             }
-            return `[${m.filename}]:\n${m.content_text}`
+            return `[${m.filename}]:\n${cleanText}`
           }).join('\n\n')}`
         : ''
 
@@ -611,12 +632,13 @@ ${materialText}`
 
       const materialText = materials.length > 0
         ? `\n\nSource material:\n${materials.map(m => {
-            if (m.content_text.length > 8000) {
-              const topology = parseDocumentTopology(m.content_text, m.filename, 800)
+            const cleanText = stripRawTranscript(m.content_text) || m.content_text
+            if (cleanText.length > 8000) {
+              const topology = parseDocumentTopology(cleanText, m.filename, 800)
               const sections = topology.chunks.map(c => `[${c.title}]:\n${c.text}`).join('\n\n')
               return `[${m.filename}]:\n${sections}`
             }
-            return `[${m.filename}]:\n${m.content_text}`
+            return `[${m.filename}]:\n${cleanText}`
           }).join('\n\n')}`
         : ''
 
@@ -1159,7 +1181,8 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
     { name: string } | undefined
   if (!subject) return { success: false, count: 0, error: 'Subject not found' }
 
-  if (!material.content_text || material.content_text.length < 100) {
+  const cleanContent = stripRawTranscript(material.content_text) || material.content_text
+  if (!cleanContent || cleanContent.length < 100) {
     return { success: false, count: 0, error: 'Content too short' }
   }
 
@@ -1175,7 +1198,7 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
   ).all(subjectId) as { front: string; back: string }[]
 
   const prompt = buildAutoCardGenerationPrompt(
-    material.content_text, subject.name, moduleTitle, undefined, existingCards, 8, 4
+    cleanContent, subject.name, moduleTitle, undefined, existingCards, 10, 4
   )
 
   const config = getAIConfig()
