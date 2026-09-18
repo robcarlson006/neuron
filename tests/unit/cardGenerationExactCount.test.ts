@@ -167,6 +167,38 @@ Remember how I described the sodium channels popping open like dominoes?
       expect(parsed[1]).toBe('Mankiw_Ch4.pdf')
       expect(parsed[2]).toBe('Lecture_Audio_Notes.md')
     })
+
+    it('safely parses synthesis responses even with concise cards or conversational text', () => {
+      const rawAiResponse = `Here is your synthesized deck:
+\`\`\`json
+{
+  "flashcards": [
+    {
+      "front": "GDP deflator",
+      "back": "Nominal GDP / Real GDP * 100",
+      "concept": "Macroeconomics"
+    }
+  ],
+  "active_recall": [
+    {
+      "question": "How does monetary policy affect aggregate demand?",
+      "model_answer": "Lower interest rates reduce borrowing costs, increasing consumption and investment.",
+      "concept": "Macroeconomics"
+    }
+  ]
+}
+\`\`\`
+Hope this helps!`
+      const parsed = safeParseAICards(rawAiResponse)
+      expect(parsed.flashcards).toBeDefined()
+      expect(parsed.flashcards!.length).toBe(1)
+      expect(parsed.flashcards![0].front).toBe('GDP deflator')
+      expect(parsed.flashcards![0].back).toBe('Nominal GDP / Real GDP * 100')
+
+      expect(parsed.active_recall).toBeDefined()
+      expect(parsed.active_recall!.length).toBe(1)
+      expect(parsed.active_recall![0].question).toContain('monetary policy')
+    })
   })
 })
 

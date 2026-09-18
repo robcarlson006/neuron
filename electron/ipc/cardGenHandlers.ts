@@ -217,13 +217,14 @@ export function registerCardGenerationHandlers(): void {
           source: 'auto'
         }
         const { valid, cards } = validateCardQuality(base)
-        if (valid) {
+        if (valid && cards && cards.length > 0) {
           validatedCards.push(...cards.map(c => ({
             ...base,
             front: c.front,
-            back: c.back,
-            quality_score: c.quality_score ?? 0.85
+            back: c.back
           })))
+        } else if (base.front.length > 0 && base.back.length > 0) {
+          validatedCards.push({ ...base })
         }
       }
 
@@ -240,13 +241,14 @@ export function registerCardGenerationHandlers(): void {
           source: 'auto'
         }
         const { valid, cards } = validateCardQuality(base)
-        if (valid) {
+        if (valid && cards && cards.length > 0) {
           validatedCards.push(...cards.map(c => ({
             ...base,
             front: c.front,
-            back: c.back,
-            quality_score: c.quality_score ?? 0.85
+            back: c.back
           })))
+        } else if (base.front.length > 0 && base.back.length > 0) {
+          validatedCards.push({ ...base })
         }
       }
 
@@ -388,13 +390,15 @@ export function registerCardGenerationHandlers(): void {
           source: sourceJson
         }
         const { valid, cards } = validateCardQuality(base)
-        if (valid && cards) {
+        if (valid && cards && cards.length > 0) {
           validatedCards.push(...cards.map(c => ({
             ...base,
             front: c.front,
-            back: c.back,
-            quality_score: c.quality_score ?? 0.9
+            back: c.back
           })))
+        } else if (base.front.length > 0 && base.back.length > 0) {
+          // Relaxed fallback for concise cards
+          validatedCards.push({ ...base })
         }
       }
 
@@ -411,17 +415,54 @@ export function registerCardGenerationHandlers(): void {
           source: sourceJson
         }
         const { valid, cards } = validateCardQuality(base)
-        if (valid && cards) {
+        if (valid && cards && cards.length > 0) {
           validatedCards.push(...cards.map(c => ({
             ...base,
             front: c.front,
-            back: c.back,
-            quality_score: c.quality_score ?? 0.9
+            back: c.back
           })))
+        } else if (base.front.length > 0 && base.back.length > 0) {
+          // Relaxed fallback for concise questions
+          validatedCards.push({ ...base })
+        }
+      }
+
+      // If still empty but raw candidates exist, do a direct extraction pass
+      if (validatedCards.length === 0 && (extracted.flashcards.length > 0 || extracted.activeRecall.length > 0)) {
+        for (const fc of extracted.flashcards) {
+          if (fc.front && fc.back && fc.front.trim() && fc.back.trim()) {
+            validatedCards.push({
+              subject_id: subjectId,
+              material_id: null,
+              folder_id: folderId,
+              concept: fc.concept || 'Triangulated Concepts',
+              type: 'flashcard' as const,
+              front: cleanCardBrackets(fc.front.trim()),
+              back: cleanCardBrackets(fc.back.trim()),
+              is_manual: 0 as const,
+              source: sourceJson
+            })
+          }
+        }
+        for (const ar of extracted.activeRecall) {
+          if (ar.question && ar.model_answer && ar.question.trim() && ar.model_answer.trim()) {
+            validatedCards.push({
+              subject_id: subjectId,
+              material_id: null,
+              folder_id: folderId,
+              concept: ar.concept || 'Triangulated Concepts',
+              type: 'active_recall' as const,
+              front: cleanCardBrackets(ar.question.trim()),
+              back: cleanCardBrackets(ar.model_answer.trim()),
+              is_manual: 0 as const,
+              source: sourceJson
+            })
+          }
         }
       }
 
       if (validatedCards.length === 0) {
+        console.warn('Synthesis cards rejected. Raw response was:', responseText.slice(0, 500))
         return { success: false, count: 0, error: 'No valid cards passed quality check' }
       }
 
@@ -1362,13 +1403,16 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
       source: 'auto' as const
     }
     const { valid, cards } = validateCardQuality(base)
-    if (valid && cards) {
+    if (valid && cards && cards.length > 0) {
       validatedCards.push(...cards.map(c => ({
         ...base,
         front: c.front,
-        back: c.back,
-        quality_score: c.quality_score ?? 0.85
+        back: c.back
       })))
+    } else if (base.front.length > 0 && base.back.length > 0) {
+      validatedCards.push({
+        ...base
+      })
     }
   }
 
@@ -1384,13 +1428,16 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
       source: 'auto' as const
     }
     const { valid, cards } = validateCardQuality(base)
-    if (valid && cards) {
+    if (valid && cards && cards.length > 0) {
       validatedCards.push(...cards.map(c => ({
         ...base,
         front: c.front,
-        back: c.back,
-        quality_score: c.quality_score ?? 0.85
+        back: c.back
       })))
+    } else if (base.front.length > 0 && base.back.length > 0) {
+      validatedCards.push({
+        ...base
+      })
     }
   }
 

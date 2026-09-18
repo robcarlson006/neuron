@@ -79,6 +79,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [addingMaterial, setAddingMaterial] = useState(false)
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<number>>(new Set())
   const [isSynthesizing, setIsSynthesizing] = useState(false)
+  const [isGeneratingCards, setIsGeneratingCards] = useState(false)
   /** Material just uploaded to a subject that already has a syllabus — shows
    * the one-click "Update curriculum?" offer until acted on or dismissed. */
   const [pendingUpdateMaterial, setPendingUpdateMaterial] = useState<string | null>(null)
@@ -607,6 +608,54 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setTimeout(() => setToast(null), 5000)
     } finally {
       setIsSynthesizing(false)
+    }
+  }
+
+  async function handleGenerateCardsSelected(): Promise<void> {
+    if (selectedMaterialIds.size < 1 || isGeneratingCards) return
+    setIsGeneratingCards(true)
+    setToast({
+      message: `Generating individual flashcards across ${selectedMaterialIds.size} materials...`,
+      type: 'success'
+    })
+    try {
+      const result = await window.electronAPI.cardsBatchGenerate(
+        subjectId,
+        Array.from(selectedMaterialIds)
+      )
+      if (result.success) {
+        const successes = result.results.filter(r => r.success)
+        if (result.totalGenerated > 0) {
+          setToast({
+            message: `Generated ${result.totalGenerated} cards across ${successes.length} material${successes.length !== 1 ? 's' : ''}!`,
+            type: 'success'
+          })
+          setTimeout(() => setToast(null), 5000)
+          setSelectedMaterialIds(new Set())
+          await loadAllData()
+        } else {
+          const firstErr = result.results.find(r => !r.success)?.error
+          setToast({
+            message: `Card generation failed: ${firstErr || 'No valid cards passed quality check'}`,
+            type: 'error'
+          })
+          setTimeout(() => setToast(null), 5000)
+        }
+      } else {
+        setToast({
+          message: 'Card generation failed',
+          type: 'error'
+        })
+        setTimeout(() => setToast(null), 5000)
+      }
+    } catch (err: any) {
+      setToast({
+        message: `Generation error: ${err?.message || 'Unknown error'}`,
+        type: 'error'
+      })
+      setTimeout(() => setToast(null), 5000)
+    } finally {
+      setIsGeneratingCards(false)
     }
   }
 
@@ -1237,10 +1286,21 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               )}
             </div>
             <div className="flex items-center gap-2">
+              {selectedMaterialIds.size >= 1 && (
+                <button
+                  onClick={handleGenerateCardsSelected}
+                  disabled={isGeneratingCards || isSynthesizing}
+                  className="px-3 py-1.5 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                  title="Generate distinct flashcards for each selected material (preserves individual documents and folders)"
+                >
+                  <span className={isGeneratingCards ? 'animate-spin' : ''}>⚡</span>
+                  <span>{isGeneratingCards ? 'Generating...' : `Generate Flashcards (${selectedMaterialIds.size})`}</span>
+                </button>
+              )}
               {selectedMaterialIds.size >= 2 && (
                 <button
                   onClick={handleSynthesizeSelected}
-                  disabled={isSynthesizing}
+                  disabled={isSynthesizing || isGeneratingCards}
                   className="px-3 py-1.5 text-sm font-semibold rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer animate-pulse-subtle"
                   title="Synthesize and cross-reference selected materials into a unified deck (reads full text without chunking)"
                 >
@@ -1351,7 +1411,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                     checked={selectedMaterialIds.has(mat.id)}
                     onChange={() => toggleMaterialSelection(mat.id)}
                     className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 cursor-pointer shrink-0"
-                    title="Select to synthesize"
+                    title="Select material"
                   />
                   <span className="text-sm shrink-0">📄</span>
 
