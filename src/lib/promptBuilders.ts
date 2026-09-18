@@ -683,4 +683,93 @@ TEXT TO FORMAT:
 ${text}`
 }
 
+/**
+ * Build a multi-source triangulation card generation prompt that synthesizes
+ * across multiple course materials (e.g. slides, textbook, lecture transcript)
+ * without chunking, cross-referencing and unifying concepts.
+ */
+export function buildMultiSourceCardGenerationPrompt(
+  sourcesText: string,
+  subjectName: string,
+  sourceFilenames: string[],
+  existingCards?: { front: string; back?: string }[],
+  targetFlashcards: number = 14,
+  targetActiveRecall: number = 4
+): string {
+  let dedupSection = ''
+  if (existingCards && existingCards.length > 0) {
+    dedupSection = `\n\n## ⚠️ DEDUPLICATION REQUIREMENT (CRITICAL)
+Do NOT duplicate or re-test any concepts, questions, or terms already covered in the existing deck:
+${existingCards.slice(0, 40).map(c => `- "${c.front}"`).join('\n')}
+If a topic is already covered above, find fresh angles, deeper mechanisms, distinct applications, or unaddressed subtopics.`
+  }
+
+  return `You are a world-class cognitive scientist, learning engineer, and educational prompt designer.
+You have been provided with MULTIPLE distinct learning materials for the subject "${subjectName}":
+${sourceFilenames.map((f, i) => `${i + 1}. ${f}`).join('\n')}
+
+Your mission is to perform MULTI-SOURCE SYNTHESIS AND TRIANGULATION across these materials to produce an elite, high-yield deck of flashcards and active recall questions optimized for spaced repetition and deep semantic retention.
+
+## 🎯 TRIANGULATION DIRECTIVE (READ CAREFULLY)
+You are reading all source documents end-to-end. Do NOT treat each document in isolation. Instead:
+1. **Triangulate Core Concepts**: Identify the anchor concepts that appear across multiple sources (e.g. introduced in slides, deeply explained in the textbook, and discussed with verbal examples in the lecture transcript).
+2. **Synthesize Complementary Perspectives**:
+   - Draw precise mathematical rigor, formal definitions, and mechanisms from the textbook.
+   - Draw core structural hierarchies, emphasis, and key term priorities from the slides.
+   - Draw intuition, vivid analogies, practical examples, and clarification of common student questions from the lecture transcript.
+3. **Unify & Deduplicate Across Sources**: NEVER produce separate cards for the same concept from different documents. Combine insights into a single definitive, high-yield card.
+4. **Cross-Source Enrichment**: Enhance flashcards with "concrete_example" and "common_mistake" informed by how the professor explained them or how the textbook contrasted them.
+
+## 🚫 STRICT EXCLUSION RULES (CRITICAL):
+- Absolutely NEVER generate cards for course mechanics, syllabus rules, homework logistics, exam dates, or textbook chapter timelines (e.g. "What chapter introduces differentiation?", "When is the midterm?").
+- Discard all conversational tangents, professor jokes, rhetorical introductions, and classroom management chatter from transcripts.
+- ONLY generate cards testing durable academic concepts, theoretical mechanisms, mathematical equations, domain definitions, and analytical distinctions.
+
+ALL COMBINED SOURCE MATERIALS (READ IN FULL):
+${sourcesText}
+
+## RESPONSE FORMAT
+
+Return valid JSON with this exact structure:
+{
+  "flashcards": [
+    {
+      "front": "Atomic prompt or cloze deletion (e.g. 'Photosynthesis is the mechanism where ___')",
+      "back": "Concise, precise explanation synthesizing insights across sources (1-2 sentences)",
+      "concept": "Major overarching theme (Group cards under 3-5 themes across the entire deck)",
+      "card_subtype": "discrimination | boundary | mechanism | faded_step | misconception | definition",
+      "concrete_example": "A concrete real-world scenario or analogy illustrating this concept",
+      "common_mistake": "A frequent student misconception or trap to avoid",
+      "mnemonic": "An intuitive memory hook, acronym, or vivid mental visual",
+      "checkpoints": ["Key idea 1 student must recall", "Key idea 2 student must recall"]
+    }
+  ],
+  "active_recall": [
+    {
+      "question": "Deep conceptual inquiry starting with Why/How/Explain the mechanism of... or scenario analysis",
+      "model_answer": "Complete, structured explanation with key conceptual checkpoints for mastery",
+      "concept": "Major overarching theme (Must match one of the 3-5 themes across the deck)",
+      "card_subtype": "discrimination | boundary | mechanism | faded_step | misconception | definition",
+      "concrete_example": "A real-world application or case study",
+      "common_mistake": "A common reasoning flaw or incorrect assumption",
+      "mnemonic": "Optional memory aid or mental framework",
+      "checkpoints": ["Key conceptual criterion 1", "Key conceptual criterion 2"]
+    }
+  ]
+}
+
+## GENERATION CEILINGS & PEDAGOGICAL TARGETS
+- Generate approximately ${targetFlashcards} flashcards (calibrated to the pedagogical sweet spot of 12-16 items).
+- Generate approximately ${targetActiveRecall} active recall questions (calibrated to 3-5 high-impact questions).
+- Cover every essential concept triangulated across the sources without padding or trivial cards.
+
+## FORMATTING RULES
+1. Do NOT wrap terms, concepts, questions, or answers in square brackets (e.g. write "Mitochondria" NOT "[Mitochondria]").
+2. Wrap all mathematical equations, formulas, variables, and scientific expressions in standard LaTeX delimiters ($...$ for inline or $$...$$ for block math, e.g. $x^3$, $a^2 + b^2 = c^2$).
+3. Strict Grounding: Strictly ground all items in the provided SOURCE MATERIALS. No external fabrications.${dedupSection}
+
+Return ONLY valid JSON. No markdown fences. No preamble.`
+}
+
+
 

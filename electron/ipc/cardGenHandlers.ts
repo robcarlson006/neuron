@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import Database from 'better-sqlite3'
 import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
-import { buildAutoCardGenerationPrompt, buildFlashcardOnlyPrompt, buildActiveRecallOnlyPrompt } from '../../src/lib/promptBuilders'
+import { buildAutoCardGenerationPrompt, buildFlashcardOnlyPrompt, buildActiveRecallOnlyPrompt, buildMultiSourceCardGenerationPrompt } from '../../src/lib/promptBuilders'
 import { parseDocumentTopology } from '../../src/lib/coverage/documentTopologyParser'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
 import { safeParseAICards, type ParsedAICardsPayload } from '../../src/lib/jsonRepair'
@@ -300,6 +300,140 @@ export function registerCardGenerationHandlers(): void {
     const failed = results.filter(r => !r.success).length
     return { success: true, results, totalGenerated, totalFailed: failed, totalProcessed: results.length }
   })
+
+  // ── Multi-material triangulation without chunking (Reads every character) ─
+
+  ipcMain.handle('cards:generateFromMultiple', async (_event, subjectId: number, materialIds: number[]) => {
+    try {
+      if (!materialIds || materialIds.length < 2) {
+        return { success: false, count: 0, error: 'Select at least 2 materials for multi-source synthesis' }
+      }
+
+      const placeholders = materialIds.map(() => '?').join(',')
+      const materials = db.prepare(
+        `SELECT id, filename, content_text FROM materials WHERE id IN (${placeholders}) AND subject_id = ?`
+      ).all(...materialIds, subjectId) as { id: number; filename: string; content_text: string }[]
+
+      if (materials.length < 2) {
+        return { success: false, count: 0, error: 'Could not find all selected materials' }
+      }
+
+      const subject = db.prepare('SELECT name FROM subjects WHERE id = ?').get(subjectId) as
+        { name: string } | undefined
+      if (!subject) throw new Error('Subject not found')
+
+      // Clean contents and verify sufficient text
+      const cleanedMaterials = materials.map(m => ({
+        id: m.id,
+        filename: m.filename,
+        text: stripRawTranscript(m.content_text) || m.content_text
+      })).filter(m => m.text && m.text.trim().length > 50)
+
+      if (cleanedMaterials.length < 2) {
+        return { success: false, count: 0, error: 'Selected materials do not have enough text content to synthesize' }
+      }
+
+      const config = getAIConfig()
+      const apiKey = getApiKey()
+      if (!apiKey) throw new Error('AI API key not configured.')
+
+      // Query existing cards for deduplication
+      const existingCards = db.prepare(
+        'SELECT front, back FROM cards WHERE subject_id = ?'
+      ).all(subjectId) as { front: string; back: string }[]
+
+      // Concatenate all materials WITHOUT chunking so the AI reads every single character
+      const combinedText = cleanedMaterials
+        .map(m => `========================================\n[DOCUMENT: ${m.filename}]\n========================================\n${m.text}`)
+        .join('\n\n\n')
+
+      const filenames = cleanedMaterials.map(m => m.filename)
+      const prompt = buildMultiSourceCardGenerationPrompt(
+        combinedText,
+        subject.name,
+        filenames,
+        existingCards,
+        14, // target ~14 flashcards
+        4   // target ~4 active recall
+      )
+
+      const responseText = await callAIMessages(
+        [{ role: 'user', content: prompt }],
+        { ...config, apiKey },
+        { type: 'json_object' }
+      )
+
+      const parsed = safeParseAICards(responseText)
+      const extracted = extractCardCandidates(parsed, 'auto')
+
+      // Enforce pedagogical sweet spot ceilings
+      const cappedFlashcards = extracted.flashcards.slice(0, 16)
+      const cappedActiveRecall = extracted.activeRecall.slice(0, 5)
+
+      const sourceJson = JSON.stringify(filenames)
+      const folderId = getOrCreateMaterialFolder(db, subjectId, null, 'Multi-Source Synthesis')
+
+      const validatedCards: Partial<Card>[] = []
+
+      for (const fc of cappedFlashcards) {
+        const base = {
+          subject_id: subjectId,
+          material_id: null,
+          folder_id: folderId,
+          concept: fc.concept || 'Triangulated Concepts',
+          type: 'flashcard' as const,
+          front: fc.front.trim(),
+          back: fc.back.trim(),
+          is_manual: 0 as const,
+          source: sourceJson
+        }
+        const { valid, cards } = validateCardQuality(base)
+        if (valid && cards) {
+          validatedCards.push(...cards.map(c => ({
+            ...base,
+            front: c.front,
+            back: c.back,
+            quality_score: c.quality_score ?? 0.9
+          })))
+        }
+      }
+
+      for (const ar of cappedActiveRecall) {
+        const base = {
+          subject_id: subjectId,
+          material_id: null,
+          folder_id: folderId,
+          concept: ar.concept || 'Triangulated Concepts',
+          type: 'active_recall' as const,
+          front: ar.question.trim(),
+          back: ar.model_answer.trim(),
+          is_manual: 0 as const,
+          source: sourceJson
+        }
+        const { valid, cards } = validateCardQuality(base)
+        if (valid && cards) {
+          validatedCards.push(...cards.map(c => ({
+            ...base,
+            front: c.front,
+            back: c.back,
+            quality_score: c.quality_score ?? 0.9
+          })))
+        }
+      }
+
+      if (validatedCards.length === 0) {
+        return { success: false, count: 0, error: 'No valid cards passed quality check' }
+      }
+
+      const savedCards = saveGeneratedCards(validatedCards, db)
+      return { success: true, count: savedCards.length, filenames }
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error'
+      console.error('Multi-material card generation error:', errMsg)
+      return { success: false, count: 0, error: errMsg }
+    }
+  })
+
 
   // ── Check generation status for a subject ───────────────────────────────
 

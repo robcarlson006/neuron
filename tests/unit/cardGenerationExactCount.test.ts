@@ -3,7 +3,8 @@ import {
   buildAutoCardGenerationPrompt,
   buildFlashcardOnlyPrompt,
   buildActiveRecallOnlyPrompt,
-  buildCardGenerationPrompt
+  buildCardGenerationPrompt,
+  buildMultiSourceCardGenerationPrompt
 } from '../../src/lib/promptBuilders'
 
 describe('Card Generation Exact Count & Batch Slicing Logic', () => {
@@ -105,4 +106,67 @@ describe('Card Generation Exact Count & Batch Slicing Logic', () => {
       expect(flashcards).toHaveLength(10)
     })
   })
+
+  describe('Multi-Source Triangulation & Source Badges', () => {
+    it('builds a prompt with triangulation directives and all source document labels', () => {
+      const combinedText = `
+[DOCUMENT: Slides_Lec1.pdf]
+Action Potentials are all-or-nothing electrical impulses.
+
+[DOCUMENT: Textbook_Ch3.pdf]
+The resting membrane potential is typically -70mV, maintained by Na+/K+ ATPase.
+
+[DOCUMENT: Transcript_Lec1.txt]
+Remember how I described the sodium channels popping open like dominoes?
+      `.trim()
+
+      const filenames = ['Slides_Lec1.pdf', 'Textbook_Ch3.pdf', 'Transcript_Lec1.txt']
+      const prompt = buildMultiSourceCardGenerationPrompt(
+        combinedText,
+        'Neurobiology',
+        filenames,
+        [{ front: 'What is a neuron?', back: 'A specialized cell' }],
+        14,
+        4
+      )
+
+      // Checks that all filenames are listed in the header
+      expect(prompt).toContain('1. Slides_Lec1.pdf')
+      expect(prompt).toContain('2. Textbook_Ch3.pdf')
+      expect(prompt).toContain('3. Transcript_Lec1.txt')
+
+      // Checks triangulation directives
+      expect(prompt).toContain('TRIANGULATION DIRECTIVE')
+      expect(prompt).toContain('Triangulate Core Concepts')
+      expect(prompt).toContain('Synthesize Complementary Perspectives')
+      expect(prompt).toContain('Unify & Deduplicate Across Sources')
+
+      // Checks strict negative exclusions
+      expect(prompt).toContain('STRICT EXCLUSION RULES')
+      expect(prompt).toContain('course mechanics, syllabus rules, homework logistics')
+
+      // Checks full text is present
+      expect(prompt).toContain('Action Potentials are all-or-nothing')
+      expect(prompt).toContain('sodium channels popping open like dominoes')
+
+      // Checks deduplication requirement
+      expect(prompt).toContain('What is a neuron?')
+    })
+
+    it('correctly formats and parses JSON source array for visual source badges', () => {
+      const filenames = ['Macroeconomics_Slides.pdf', 'Mankiw_Ch4.pdf', 'Lecture_Audio_Notes.md']
+      const sourceJson = JSON.stringify(filenames)
+
+      expect(sourceJson.startsWith('[')).toBe(true)
+      expect(sourceJson.endsWith(']')).toBe(true)
+
+      const parsed = JSON.parse(sourceJson)
+      expect(Array.isArray(parsed)).toBe(true)
+      expect(parsed).toHaveLength(3)
+      expect(parsed[0]).toBe('Macroeconomics_Slides.pdf')
+      expect(parsed[1]).toBe('Mankiw_Ch4.pdf')
+      expect(parsed[2]).toBe('Lecture_Audio_Notes.md')
+    })
+  })
 })
+

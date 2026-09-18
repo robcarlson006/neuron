@@ -117,12 +117,18 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
     const groups = new Map<string, Card[]>()
 
     filtered.forEach((card) => {
-      const materialName = card.material_id ? (materialMap.get(card.material_id) || 'Uploaded Document') : 'General / Direct Text'
+      let materialName = 'General / Direct Text'
+      if (card.material_id) {
+        materialName = materialMap.get(card.material_id) || 'Uploaded Document'
+      } else if (card.source && card.source.startsWith('[') && card.source.endsWith(']')) {
+        materialName = '🔗 Multi-Source Synthesis'
+      }
       if (!groups.has(materialName)) {
         groups.set(materialName, [])
       }
       groups.get(materialName)!.push(card)
     })
+
 
     return groups
   }, [filtered, materialMap])
@@ -283,6 +289,29 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
                 📄 {materialLabel.length > 30 ? materialLabel.slice(0, 30) + '...' : materialLabel}
               </span>
             )}
+
+            {/* Triangulated Multi-Source Badges */}
+            {(() => {
+              if (!card.source) return null
+              try {
+                if (card.source.startsWith('[') && card.source.endsWith(']')) {
+                  const sources: string[] = JSON.parse(card.source)
+                  if (Array.isArray(sources) && sources.length > 0) {
+                    return sources.map((src, idx) => (
+                      <span
+                        key={idx}
+                        className="text-xs font-medium px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1"
+                        title={`Triangulated from: ${src}`}
+                      >
+                        🔗 {src.length > 25 ? src.slice(0, 25) + '...' : src}
+                      </span>
+                    ))
+                  }
+                }
+              } catch {}
+              return null
+            })()}
+
 
             {/* Folder Badge */}
             {folderLabel && (

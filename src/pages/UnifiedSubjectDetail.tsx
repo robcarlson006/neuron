@@ -77,6 +77,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   // ── Materials state ──
   const [materials, setMaterials] = useState<Material[]>([])
   const [addingMaterial, setAddingMaterial] = useState(false)
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<number>>(new Set())
+  const [isSynthesizing, setIsSynthesizing] = useState(false)
   /** Material just uploaded to a subject that already has a syllabus — shows
    * the one-click "Update curriculum?" offer until acted on or dismissed. */
   const [pendingUpdateMaterial, setPendingUpdateMaterial] = useState<string | null>(null)
@@ -542,11 +544,72 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     try {
       await window.electronAPI.deleteMaterial(materialId)
       setMaterials(prev => prev.filter(m => m.id !== materialId))
+      setSelectedMaterialIds(prev => {
+        const next = new Set(prev)
+        next.delete(materialId)
+        return next
+      })
       setToast({ message: `Deleted "${filename}"`, type: 'success' })
     } catch (err: any) {
       setToast({ message: `Failed to delete material: ${err.message}`, type: 'error' })
     }
   }
+
+  function toggleMaterialSelection(id: number) {
+    setSelectedMaterialIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function handleSelectAllMaterials() {
+    if (selectedMaterialIds.size === materials.length) {
+      setSelectedMaterialIds(new Set())
+    } else {
+      setSelectedMaterialIds(new Set(materials.map(m => m.id)))
+    }
+  }
+
+  async function handleSynthesizeSelected(): Promise<void> {
+    if (selectedMaterialIds.size < 2 || isSynthesizing) return
+    setIsSynthesizing(true)
+    setToast({
+      message: `Scanning all text across ${selectedMaterialIds.size} materials without chunking...`,
+      type: 'success'
+    })
+    try {
+      const result = await window.electronAPI.cardsGenerateFromMultiple(
+        subjectId,
+        Array.from(selectedMaterialIds)
+      )
+      if (result.success) {
+        setToast({
+          message: `Generated ${result.count} triangulated cards from ${result.filenames?.length || selectedMaterialIds.size} materials!`,
+          type: 'success'
+        })
+        setTimeout(() => setToast(null), 5000)
+        setSelectedMaterialIds(new Set())
+        await loadAllData()
+      } else {
+        setToast({
+          message: `Synthesis failed: ${result.error || 'Unknown error'}`,
+          type: 'error'
+        })
+        setTimeout(() => setToast(null), 5000)
+      }
+    } catch (err: any) {
+      setToast({
+        message: `Synthesis error: ${err.message || 'Unknown error'}`,
+        type: 'error'
+      })
+      setTimeout(() => setToast(null), 5000)
+    } finally {
+      setIsSynthesizing(false)
+    }
+  }
+
 
   // ── Linked folder action handlers ──
   function getFolderBaseName(folderPath: string): string {
@@ -1159,10 +1222,32 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       {activeTab === 'materials' && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-sm text-slate-500 dark:text-slate-400">
-              {materials.length} material{materials.length !== 1 ? 's' : ''}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-slate-500 dark:text-slate-400">
+                {materials.length} material{materials.length !== 1 ? 's' : ''}
+                {selectedMaterialIds.size > 0 && ` (${selectedMaterialIds.size} selected)`}
+              </span>
+              {materials.length > 1 && (
+                <button
+                  onClick={handleSelectAllMaterials}
+                  className="text-xs text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 font-medium transition-colors cursor-pointer"
+                >
+                  {selectedMaterialIds.size === materials.length ? 'Deselect all' : 'Select all'}
+                </button>
+              )}
+            </div>
             <div className="flex items-center gap-2">
+              {selectedMaterialIds.size >= 2 && (
+                <button
+                  onClick={handleSynthesizeSelected}
+                  disabled={isSynthesizing}
+                  className="px-3 py-1.5 text-sm font-semibold rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer animate-pulse-subtle"
+                  title="Synthesize and cross-reference selected materials into a unified deck (reads full text without chunking)"
+                >
+                  <span className={isSynthesizing ? 'animate-spin' : ''}>✨</span>
+                  <span>{isSynthesizing ? 'Synthesizing...' : `Synthesize Selected (${selectedMaterialIds.size})`}</span>
+                </button>
+              )}
               {!subject?.linked_folder_path && (
                 <button
                   onClick={handleLinkFolder}
@@ -1255,9 +1340,21 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               {materials.map(mat => (
                 <div
                   key={mat.id}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg bg-white dark:bg-slate-800 border transition-all ${
+                    selectedMaterialIds.has(mat.id)
+                      ? 'border-violet-500/70 dark:border-violet-500/70 bg-violet-50/20 dark:bg-violet-950/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700'
+                  }`}
                 >
-                  <span className="text-sm">📄</span>
+                  <input
+                    type="checkbox"
+                    checked={selectedMaterialIds.has(mat.id)}
+                    onChange={() => toggleMaterialSelection(mat.id)}
+                    className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 cursor-pointer shrink-0"
+                    title="Select to synthesize"
+                  />
+                  <span className="text-sm shrink-0">📄</span>
+
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     <span className="text-sm text-slate-700 dark:text-slate-300 truncate">
                       {mat.filename}
@@ -1995,6 +2092,34 @@ function CardDetailModal({
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Avg response</p>
           </div>
         </div>
+        {/* Source info & Triangulation badges */}
+        {card.source && (
+          <div className="mb-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Source Materials</p>
+            <div className="flex flex-wrap gap-1.5">
+              {(() => {
+                try {
+                  if (card.source.startsWith('[') && card.source.endsWith(']')) {
+                    const sources = JSON.parse(card.source)
+                    if (Array.isArray(sources) && sources.length > 0) {
+                      return sources.map((s, idx) => (
+                        <span key={idx} className="text-xs px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 font-medium">
+                          🔗 {s}
+                        </span>
+                      ))
+                    }
+                  }
+                } catch {}
+                return (
+                  <span className="text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                    {card.source}
+                  </span>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
         <div>
           <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">Folder</label>
           <select className="input text-sm" value={card.folder_id ?? ''} onChange={e => onMoveToFolder(e.target.value ? Number(e.target.value) : null)}>
@@ -2002,6 +2127,7 @@ function CardDetailModal({
             {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </div>
+
       </div>
     </div>
   )

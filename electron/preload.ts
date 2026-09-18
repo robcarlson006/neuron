@@ -436,7 +436,10 @@ const electronAPI = {
     ipcRenderer.invoke('cards:autoGenerate', subjectId, materialId),
   cardsBatchGenerate: (subjectId: number, materialIds?: number[]): Promise<{ success: boolean; results: { materialId: number; filename: string; success: boolean; count: number; error?: string }[]; totalGenerated: number; totalFailed: number; totalProcessed: number }> =>
     ipcRenderer.invoke('cards:batchGenerate', subjectId, materialIds),
+  cardsGenerateFromMultiple: (subjectId: number, materialIds: number[]): Promise<{ success: boolean; count: number; error?: string; filenames?: string[] }> =>
+    ipcRenderer.invoke('cards:generateFromMultiple', subjectId, materialIds),
   cardsGenerateStatus: (subjectId: number): Promise<{ totalFiles: number; filesWithCards: number; pending: number }> =>
+
     ipcRenderer.invoke('cards:generateStatus', subjectId),
   cardsGenerateFromModule: (
     subjectId: number,
