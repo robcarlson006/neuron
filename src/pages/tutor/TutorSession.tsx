@@ -59,6 +59,8 @@ export default function TutorSession(): React.JSX.Element {
     weak_topics: [],
   })
   const [showTimeUp, setShowTimeUp] = useState(false)
+  const [showTimerMenu, setShowTimerMenu] = useState(false)
+  const timerMenuRef = useRef<HTMLDivElement>(null)
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -68,6 +70,7 @@ export default function TutorSession(): React.JSX.Element {
   const streamDoneRef = useRef(false) // guards against duplicate done events
   const sessionIdRef = useRef<number | null>(null)
   const sessionPhaseRef = useRef<SessionPhase>('structured_qa')
+  const createdSessionIdRef = useRef<number | null>(null)
 
   sessionIdRef.current = sessionId
   sessionPhaseRef.current = sessionPhase
@@ -115,6 +118,19 @@ export default function TutorSession(): React.JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // ── Close timer menu on outside click ──
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (timerMenuRef.current && !timerMenuRef.current.contains(e.target as Node)) {
+        setShowTimerMenu(false)
+      }
+    }
+    if (showTimerMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showTimerMenu])
+
   // ── Load / init session ──
   useEffect(() => {
     if (user && subjectId) {
@@ -124,6 +140,12 @@ export default function TutorSession(): React.JSX.Element {
 
   async function initSession(): Promise<void> {
     if (!user) return
+
+    // Guard against re-initializing if we just navigated to the newly created session
+    if (routeSessionId && Number(routeSessionId) === createdSessionIdRef.current) {
+      return
+    }
+
     setPageState('loading')
     setError(null)
     setSessionEnded(false)
@@ -165,6 +187,14 @@ export default function TutorSession(): React.JSX.Element {
           setSessionPhase(s.phase as SessionPhase)
           sessionPhaseRef.current = s.phase as SessionPhase
 
+          const restoredConfig: TutorSessionConfig = {
+            duration_minutes: s.duration_minutes ?? null,
+            depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5) ?? 3),
+            never_studied: Boolean(s.never_studied),
+            module_id: s.module_id ?? null
+          }
+          setSessionConfig(restoredConfig)
+
           if (s.module_id) {
             const targetMod = mods.find(m => m.id === s.module_id)
             if (targetMod) setCurrentModule(targetMod)
@@ -187,20 +217,32 @@ export default function TutorSession(): React.JSX.Element {
           const startedAt = new Date(s.started_at).getTime()
           const now = Date.now()
           const durationMins = s.duration_minutes ?? null
-          const elapsedSecs = Math.max(0, Math.round((now - startedAt) / 1000))
           const totalSecs = durationMins ? durationMins * 60 : 0
-          const remainingSecs = durationMins ? Math.max(0, totalSecs - elapsedSecs) : 0
+          let elapsedSecs = 0
+          let remainingSecs = 0
+
+          if (durationMins !== null) {
+            const wallElapsed = Math.max(0, Math.round((now - startedAt) / 1000))
+            if (s.phase === 'complete') {
+              elapsedSecs = totalSecs
+              remainingSecs = 0
+            } else if (wallElapsed < totalSecs) {
+              elapsedSecs = wallElapsed
+              remainingSecs = totalSecs - wallElapsed
+            } else {
+              // Resumed an incomplete session after elapsed time expired:
+              // Give them fresh durationMins so student can continue learning without being locked out
+              elapsedSecs = 0
+              remainingSecs = durationMins * 60
+            }
+          }
 
           setRuntime({
-            config: {
-              duration_minutes: durationMins,
-              depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5) ?? 3),
-              never_studied: Boolean(s.never_studied)
-            },
-            started_at: startedAt,
+            config: restoredConfig,
+            started_at: now - (elapsedSecs * 1000),
             time_elapsed_seconds: elapsedSecs,
             time_remaining_seconds: remainingSecs,
-            is_time_up: durationMins !== null && remainingSecs <= 0,
+            is_time_up: s.phase === 'complete',
             topics_covered: [],
             questions_asked: [],
             topics_mastered: [],
@@ -261,6 +303,7 @@ export default function TutorSession(): React.JSX.Element {
         } : undefined
       ) as { id: number; phase: string }
 
+      createdSessionIdRef.current = session.id
       setSessionId(session.id)
       sessionIdRef.current = session.id
       setSessionPhase(session.phase as SessionPhase)
@@ -464,27 +507,33 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
   // ── Wall-clock timer ──
   useEffect(() => {
-    if (sessionConfig?.duration_minutes === null) return
+    if (runtime.config.duration_minutes === null) return
     if (runtime.is_time_up) return
 
+    let lastTick = Date.now()
     const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - runtime.started_at) / 1000)
-      const remaining = Math.max(0, (runtime.config.duration_minutes ?? 0) * 60 - elapsed)
+      const now = Date.now()
+      const delta = Math.max(1, Math.round((now - lastTick) / 1000))
+      lastTick = now
 
-      setRuntime(prev => ({
-        ...prev,
-        time_elapsed_seconds: elapsed,
-        time_remaining_seconds: remaining,
-        is_time_up: remaining <= 0,
-      }))
+      setRuntime(prev => {
+        if (prev.config.duration_minutes === null || prev.is_time_up) return prev
+        const newElapsed = prev.time_elapsed_seconds + delta
+        const totalSecs = prev.config.duration_minutes * 60
+        const newRemaining = Math.max(0, totalSecs - newElapsed)
+        const isUp = newRemaining <= 0
 
-      if (remaining <= 0) {
-        clearInterval(interval)
-      }
+        return {
+          ...prev,
+          time_elapsed_seconds: newElapsed,
+          time_remaining_seconds: newRemaining,
+          is_time_up: isUp,
+        }
+      })
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [sessionConfig?.duration_minutes, runtime.started_at, runtime.is_time_up])
+  }, [runtime.config.duration_minutes, runtime.is_time_up])
 
   // ── Time-up handler ──
   useEffect(() => {
@@ -493,19 +542,90 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     setShowTimeUp(true)
   }, [runtime.is_time_up, pageState, focusBlock?.isRunning])
 
+  async function handleAdjustTime(deltaMinutes: number): Promise<void> {
+    const currentDuration = runtime.config.duration_minutes ?? 15
+    const newDuration = Math.max(1, currentDuration + deltaMinutes)
+    const newRemaining = Math.max(0, runtime.time_remaining_seconds + (deltaMinutes * 60))
+    const isUp = newRemaining <= 0
+
+    const updatedConfig: TutorSessionConfig = {
+      ...runtime.config,
+      duration_minutes: newDuration
+    }
+    setSessionConfig(updatedConfig)
+    setRuntime(prev => ({
+      ...prev,
+      config: updatedConfig,
+      time_remaining_seconds: newRemaining,
+      is_time_up: isUp
+    }))
+    if (isUp) {
+      setShowTimeUp(true)
+    } else {
+      setShowTimeUp(false)
+      if (pageState === 'error') setPageState('awaiting_input')
+    }
+
+    if (sessionId) {
+      try {
+        await window.electronAPI.tutorUpdateSessionDuration(sessionId, newDuration)
+      } catch (err) {
+        console.error('Failed to update session duration:', err)
+      }
+    }
+  }
+
+  async function handleSetDuration(durationMinutes: number | null): Promise<void> {
+    const updatedConfig: TutorSessionConfig = {
+      ...runtime.config,
+      duration_minutes: durationMinutes
+    }
+    setSessionConfig(updatedConfig)
+
+    let newRemaining = 0
+    if (durationMinutes !== null) {
+      const totalSec = durationMinutes * 60
+      if (runtime.time_elapsed_seconds >= totalSec) {
+        newRemaining = totalSec
+      } else {
+        newRemaining = totalSec - runtime.time_elapsed_seconds
+      }
+    }
+
+    setRuntime(prev => ({
+      ...prev,
+      config: updatedConfig,
+      time_remaining_seconds: newRemaining,
+      is_time_up: false
+    }))
+    setShowTimeUp(false)
+
+    if (sessionId) {
+      try {
+        await window.electronAPI.tutorUpdateSessionDuration(sessionId, durationMinutes)
+      } catch (err) {
+        console.error('Failed to update session duration:', err)
+      }
+    }
+  }
+
   function handleAddTime(extraMinutes: number): void {
     const config = runtime.config
     const newDuration = (config.duration_minutes ?? 0) + extraMinutes
+    const newRemaining = extraMinutes * 60
+    const updatedConfig: TutorSessionConfig = { ...config, duration_minutes: newDuration }
+    setSessionConfig(updatedConfig)
     setRuntime(prev => ({
       ...prev,
-      config: { ...config, duration_minutes: newDuration },
-      started_at: Date.now(),
-      time_elapsed_seconds: 0,
-      time_remaining_seconds: newDuration * 60,
+      config: updatedConfig,
+      time_remaining_seconds: newRemaining,
       is_time_up: false,
     }))
     setShowTimeUp(false)
     setPageState('awaiting_input')
+    if (sessionId) {
+      window.electronAPI.tutorUpdateSessionDuration(sessionId, newDuration).catch(() => {})
+    }
   }
 
 
@@ -1126,23 +1246,155 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               ))}
             </div>
 
-            {/* Timer display */}
-            {runtime.config.duration_minutes !== null && !runtime.is_time_up && (
-              <div className={`text-xs font-medium px-2 py-1 rounded-md ${
-                runtime.time_remaining_seconds < 60
-                  ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
-                  : runtime.time_remaining_seconds < 300
-                    ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20'
-                    : 'text-slate-400 dark:text-slate-500'
-              }`}>
-                ⏱️ {Math.floor(runtime.time_remaining_seconds / 60)}:{(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}
-              </div>
-            )}
-            {runtime.config.duration_minutes === null && (
-              <div className="text-xs text-slate-400 dark:text-slate-500 px-2 py-1">
-                ♾️ No time limit
-              </div>
-            )}
+            {/* Timer interactive dropdown */}
+            <div className="relative" ref={timerMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowTimerMenu(prev => !prev)}
+                title="Click to adjust session duration and pacing"
+                className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-all ${
+                  runtime.config.duration_minutes === null
+                    ? 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200/80 dark:border-slate-700/80'
+                    : runtime.is_time_up || runtime.time_remaining_seconds === 0
+                      ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 font-semibold'
+                      : runtime.time_remaining_seconds < 60
+                        ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 font-semibold'
+                        : runtime.time_remaining_seconds < 300
+                          ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800 font-semibold'
+                          : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200/80 dark:border-slate-700/80'
+                }`}
+              >
+                <span>⏱️</span>
+                <span>
+                  {runtime.config.duration_minutes === null
+                    ? 'No limit'
+                    : runtime.is_time_up || runtime.time_remaining_seconds === 0
+                      ? '0:00 (Time up)'
+                      : `${Math.floor(runtime.time_remaining_seconds / 60)}:${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}`
+                  }
+                </span>
+                <svg className="w-3 h-3 text-slate-400 dark:text-slate-500 ml-0.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+
+              {/* Popover Dropdown */}
+              {showTimerMenu && (
+                <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-4 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                    <div>
+                      <div className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                        <span>⏱️ Session Timer</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        AI tutor paces questions to fit your available time.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Current Status Pill */}
+                  <div className="my-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500 block">Remaining</span>
+                      <span className="text-base font-bold text-slate-900 dark:text-slate-100">
+                        {runtime.config.duration_minutes === null
+                          ? 'Unlimited'
+                          : `${Math.floor(runtime.time_remaining_seconds / 60)}m ${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}s`
+                        }
+                      </span>
+                    </div>
+                    {runtime.config.duration_minutes !== null && (
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        runtime.time_remaining_seconds < 120
+                          ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                          : runtime.time_remaining_seconds < 300
+                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                      }`}>
+                        {runtime.time_remaining_seconds < 120 ? 'Wrapping Up' : runtime.time_remaining_seconds < 300 ? 'Final Questions' : 'Pacing Well'}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Quick Adjustments */}
+                  {runtime.config.duration_minutes !== null && (
+                    <div className="mb-3">
+                      <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5">
+                        Quick Adjust
+                      </div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleAdjustTime(5)}
+                          className="px-2 py-1.5 bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/20 dark:hover:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded-lg text-xs font-semibold transition-colors"
+                        >
+                          +5 min
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAdjustTime(10)}
+                          className="px-2 py-1.5 bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/20 dark:hover:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded-lg text-xs font-semibold transition-colors"
+                        >
+                          +10 min
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAdjustTime(15)}
+                          className="px-2 py-1.5 bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/20 dark:hover:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded-lg text-xs font-semibold transition-colors"
+                        >
+                          +15 min
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAdjustTime(-5)}
+                          disabled={runtime.time_remaining_seconds <= 300}
+                          className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold transition-colors"
+                        >
+                          -5 min
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Duration Presets */}
+                  <div>
+                    <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5">
+                      Set Session Length
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[5, 10, 15, 20, 30, 45].map(mins => {
+                        const isSelected = runtime.config.duration_minutes === mins
+                        return (
+                          <button
+                            key={mins}
+                            type="button"
+                            onClick={() => handleSetDuration(mins)}
+                            className={`px-2 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                              isSelected
+                                ? 'border-violet-500 bg-violet-500 text-white shadow-sm'
+                                : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {mins} min
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSetDuration(null)}
+                      className={`w-full mt-2 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
+                        runtime.config.duration_minutes === null
+                          ? 'border-violet-500 bg-violet-500 text-white shadow-sm'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <span>♾️</span> No time limit (Open-ended)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <button
               onClick={handleOpenEndModal}

@@ -90,10 +90,10 @@ function buildTimeContext(params: {
   pacingStatus?: PacingStatus
   depthLevel?: number
 }): string {
-  if (params.durationMinutes === null) return ''
+  if (params.durationMinutes === null || params.durationMinutes <= 0) return ''
 
   const elapsed = Math.floor((params.timeElapsedSeconds ?? 0) / 60)
-  const remaining = Math.floor((params.timeRemainingSeconds ?? params.durationMinutes * 60) / 60)
+  const remaining = Math.max(0, Math.floor((params.timeRemainingSeconds ?? params.durationMinutes * 60) / 60))
   const total = params.durationMinutes
   const status = params.pacingStatus ?? 'ON_TRACK'
   const depthNames: Record<number, string> = { 1: 'Beginner', 2: 'Intermediate', 3: 'Proficient', 4: 'Expert', 5: 'Professor' }
@@ -109,12 +109,14 @@ function buildTimeContext(params: {
     `- Pacing status: ${status}`,
     '',
     'PACING RULES:',
-    `- Use the time proportionally at ${diffLabel} difficulty: more time = more angles of approach on each topic.`,
-    '- If AHEAD OF PACE: Use extra time to revisit covered topics from new angles. Ask harder follow-ups.',
-    '- If BEHIND: Focus on core topics. Keep explanations tight but do NOT wrap up early.',
-    '- If ON_TRACK: Alternate between new topics and deeper dives on current topics.',
-    '- Do NOT introduce completely new topics in the final minute — deepen the current topic instead.',
-    '- When time runs out, finish your current thought and include [SESSION_END] in your response.',
+    `- ADAPT ACTIVELY TO REMAINING TIME (~${remaining} min remaining of ${total} min):`,
+    `- If remaining time is generous (> 5 min): Explore topics thoroughly with multi-angle questions, practical scenarios, and follow-ups.`,
+    `- If remaining time is medium (3-5 min): Focus on core takeaways, testing critical understanding, and reinforcing key concepts.`,
+    `- If remaining time is low (< 3 min): Begin wrapping up. Ask a synthesis question or summarize progress. Do NOT introduce new heavy concepts.`,
+    `- When time runs out, finish your current thought and include [SESSION_END] in your response.`,
+    `- If AHEAD OF PACE: Use extra time to revisit covered topics from new angles. Ask harder follow-ups.`,
+    `- If BEHIND: Focus on core topics. Keep explanations tight but do NOT wrap up early.`,
+    `- If ON_TRACK: Alternate between new topics and deeper dives on current topics.`,
     '- CRITICAL: Keep generating questions and challenges as long as time remains. Do not let the session go silent.',
     ''
   ].join('\n')
@@ -1027,6 +1029,11 @@ export function registerTutorHandlers(): void {
     return { success: true }
   })
 
+  ipcMain.handle('tutor:updateSessionDuration', (_event, sessionId: number, durationMinutes: number | null) => {
+    db.prepare('UPDATE tutor_sessions SET duration_minutes = ? WHERE id = ?').run(durationMinutes, sessionId)
+    return { success: true }
+  })
+
   ipcMain.handle('tutor:endSession', async (_event, sessionId: number, summary?: string, options?: { targetTopics?: string[]; moduleId?: number }) => {
     const now = new Date().toISOString()
     db.prepare(`
@@ -1289,14 +1296,14 @@ STRICT DESIGN RULES (CRITICAL):
     // Detect first turn — skip noisy context blocks that have no useful info yet
     const isFirstTurn = !params.conversationHistory?.length
 
-    // Build time context (skip on first turn — all defaults, purely noise)
-    const timeContext = !isFirstTurn ? buildTimeContext({
+    // Build time context
+    const timeContext = buildTimeContext({
       durationMinutes: params.durationMinutes ?? null,
       timeElapsedSeconds: params.timeElapsedSeconds,
       timeRemainingSeconds: params.timeRemainingSeconds,
       pacingStatus: params.pacingStatus,
       depthLevel: params.depthLevel
-    }) : ''
+    })
 
     // Build depth/beginner instruction
     const depthBlock = buildDepthInstruction(

@@ -576,35 +576,31 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   async function handleSynthesizeSelected(): Promise<void> {
     if (selectedMaterialIds.size < 2 || isSynthesizing) return
     setIsSynthesizing(true)
-    setToast({
-      message: `Scanning all text across ${selectedMaterialIds.size} materials without chunking...`,
-      type: 'success'
-    })
+    const startMsg = `Scanning all text across ${selectedMaterialIds.size} materials without chunking...`
+    setToast({ message: startMsg, type: 'success' })
+    addToast({ type: 'info', title: 'Synthesizing Materials', message: startMsg })
     try {
       const result = await window.electronAPI.cardsGenerateFromMultiple(
         subjectId,
         Array.from(selectedMaterialIds)
       )
       if (result.success) {
-        setToast({
-          message: `Generated ${result.count} triangulated cards from ${result.filenames?.length || selectedMaterialIds.size} materials!`,
-          type: 'success'
-        })
+        const successMsg = `Generated ${result.count} triangulated cards from ${result.filenames?.length || selectedMaterialIds.size} materials!`
+        setToast({ message: successMsg, type: 'success' })
+        addToast({ type: 'success', title: 'Cards Synthesized', message: successMsg })
         setTimeout(() => setToast(null), 5000)
         setSelectedMaterialIds(new Set())
         await loadAllData()
       } else {
-        setToast({
-          message: `Synthesis failed: ${result.error || 'Unknown error'}`,
-          type: 'error'
-        })
+        const errMsg = result.error || 'Unknown error'
+        setToast({ message: `Synthesis failed: ${errMsg}`, type: 'error' })
+        addToast({ type: 'error', title: 'Synthesis Failed', message: errMsg })
         setTimeout(() => setToast(null), 5000)
       }
     } catch (err: any) {
-      setToast({
-        message: `Synthesis error: ${err.message || 'Unknown error'}`,
-        type: 'error'
-      })
+      const errMsg = err?.message || 'Unknown error'
+      setToast({ message: `Synthesis error: ${errMsg}`, type: 'error' })
+      addToast({ type: 'error', title: 'Synthesis Error', message: errMsg })
       setTimeout(() => setToast(null), 5000)
     } finally {
       setIsSynthesizing(false)
@@ -614,10 +610,9 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   async function handleGenerateCardsSelected(): Promise<void> {
     if (selectedMaterialIds.size < 1 || isGeneratingCards) return
     setIsGeneratingCards(true)
-    setToast({
-      message: `Generating individual flashcards across ${selectedMaterialIds.size} materials...`,
-      type: 'success'
-    })
+    const startMsg = `Generating individual flashcards across ${selectedMaterialIds.size} materials...`
+    setToast({ message: startMsg, type: 'success' })
+    addToast({ type: 'info', title: 'Generating Flashcards', message: startMsg })
     try {
       const result = await window.electronAPI.cardsBatchGenerate(
         subjectId,
@@ -626,33 +621,27 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       if (result.success) {
         const successes = result.results.filter(r => r.success)
         if (result.totalGenerated > 0) {
-          setToast({
-            message: `Generated ${result.totalGenerated} cards across ${successes.length} material${successes.length !== 1 ? 's' : ''}!`,
-            type: 'success'
-          })
+          const successMsg = `Generated ${result.totalGenerated} cards across ${successes.length} material${successes.length !== 1 ? 's' : ''}!`
+          setToast({ message: successMsg, type: 'success' })
+          addToast({ type: 'success', title: 'Cards Generated', message: successMsg })
           setTimeout(() => setToast(null), 5000)
           setSelectedMaterialIds(new Set())
           await loadAllData()
         } else {
-          const firstErr = result.results.find(r => !r.success)?.error
-          setToast({
-            message: `Card generation failed: ${firstErr || 'No valid cards passed quality check'}`,
-            type: 'error'
-          })
+          const firstErr = result.results.find(r => !r.success)?.error || 'No valid cards passed quality check'
+          setToast({ message: `Card generation failed: ${firstErr}`, type: 'error' })
+          addToast({ type: 'error', title: 'Card Generation Failed', message: firstErr })
           setTimeout(() => setToast(null), 5000)
         }
       } else {
-        setToast({
-          message: 'Card generation failed',
-          type: 'error'
-        })
+        setToast({ message: 'Card generation failed', type: 'error' })
+        addToast({ type: 'error', title: 'Card Generation Failed', message: 'Failed to generate cards across selected materials' })
         setTimeout(() => setToast(null), 5000)
       }
     } catch (err: any) {
-      setToast({
-        message: `Generation error: ${err?.message || 'Unknown error'}`,
-        type: 'error'
-      })
+      const errMsg = err?.message || 'Unknown error'
+      setToast({ message: `Generation error: ${errMsg}`, type: 'error' })
+      addToast({ type: 'error', title: 'Generation Error', message: errMsg })
       setTimeout(() => setToast(null), 5000)
     } finally {
       setIsGeneratingCards(false)
@@ -1890,7 +1879,12 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           folders={folders}
           userId={user?.id}
           initialMaterialId={selectedImportMaterialId}
-          initialAutoCount={selectedImportMaterialId ? true : false}
+          initialMaterialIds={
+            selectedMaterialIds.size > 0
+              ? Array.from(selectedMaterialIds)
+              : (selectedImportMaterialId ? [selectedImportMaterialId] : undefined)
+          }
+          initialAutoCount={selectedImportMaterialId || selectedMaterialIds.size > 0 ? true : false}
           onClose={() => {
             setShowTextImport(false)
             setSelectedImportMaterialId(null)

@@ -326,6 +326,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:toggleSessionPin', sessionId, isPinned),
   tutorUpdateSessionPhase: (sessionId: number, phase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:updateSessionPhase', sessionId, phase),
+  tutorUpdateSessionDuration: (sessionId: number, durationMinutes: number | null): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('tutor:updateSessionDuration', sessionId, durationMinutes),
   tutorEndSession: (sessionId: number, summary?: string, options?: { targetTopics?: string[]; moduleId?: number }): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
     ipcRenderer.invoke('tutor:endSession', sessionId, summary, options),
   tutorGetGapAnalysis: (subjectId: number, userId: number): Promise<import('../src/types').GapAnalysisResult> =>

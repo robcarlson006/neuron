@@ -46,6 +46,8 @@ describe('CardImportModal', () => {
     window.electronAPI = {
       ...window.electronAPI,
       cardsGenerateFromText: jest.fn().mockResolvedValue({ success: true, count: 15, duplicates_filtered: 0 }),
+      cardsBatchGenerate: jest.fn().mockResolvedValue({ success: true, totalGenerated: 20, results: [{ success: true, count: 10 }, { success: true, count: 10 }] }),
+      cardsGenerateFromMultiple: jest.fn().mockResolvedValue({ success: true, count: 16 }),
       saveManyCards: jest.fn().mockResolvedValue(true),
       getFolders: jest.fn().mockResolvedValue(mockFolders),
       getMaterials: jest.fn().mockResolvedValue(mockMaterials),
@@ -480,5 +482,186 @@ describe('CardImportModal', () => {
     expect(window.electronAPI.formatMathEquations).toHaveBeenCalledWith('Pythagorean Theorem...a^2 + b^2 = c^2')
     expect(manualTextarea).toHaveValue('Pythagorean Theorem...$a^2 + b^2 = c^2$')
   })
+
+  it('allows selecting multiple materials and combines their text for generation', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          subjects={[mockSubject]}
+          folders={mockFolders}
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Switch to Subject Materials mode
+    const materialsTabBtn = screen.getByRole('button', { name: /subject materials/i })
+    await React.act(async () => {
+      fireEvent.click(materialsTabBtn)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Lecture_03_Action_Potentials.pdf')).toBeInTheDocument()
+    })
+
+    // Select first material
+    const useBtns = screen.getAllByRole('button', { name: /use material/i })
+    await React.act(async () => {
+      fireEvent.click(useBtns[0])
+    })
+
+    expect(screen.getByText(/using: lecture_03_action_potentials\.pdf/i)).toBeInTheDocument()
+
+    // Select second material
+    const secondUseBtn = screen.getByRole('button', { name: /use material/i })
+    await React.act(async () => {
+      fireEvent.click(secondUseBtn)
+    })
+
+    // Verify multi-selection banner
+    expect(screen.getByText(/using: 2 materials selected/i)).toBeInTheDocument()
+
+    // Both should show Selected button
+    const selectedBtns = screen.getAllByRole('button', { name: /^selected$/i })
+    expect(selectedBtns.length).toBe(2)
+
+    // Generate cards
+    const generateBtn = screen.getByRole('button', { name: /generate 15 flashcards/i })
+    await React.act(async () => {
+      fireEvent.click(generateBtn)
+    })
+
+    expect(window.electronAPI.cardsGenerateFromText).toHaveBeenCalledWith(
+      10,
+      expect.stringContaining('# Lecture_03_Action_Potentials.pdf'),
+      expect.objectContaining({
+        type: 'flashcard',
+        count: 15,
+        materialIds: [101, 102],
+        materialId: undefined
+      })
+    )
+    expect(window.electronAPI.cardsGenerateFromText).toHaveBeenCalledWith(
+      10,
+      expect.stringContaining('# Neurotransmitters_Overview.docx'),
+      expect.anything()
+    )
+  })
+
+  it('allows removing an individual material via its tag/chip and using Select All / Deselect All', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          subjects={[mockSubject]}
+          folders={mockFolders}
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Switch to Subject Materials mode
+    const materialsTabBtn = screen.getByRole('button', { name: /subject materials/i })
+    await React.act(async () => {
+      fireEvent.click(materialsTabBtn)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Lecture_03_Action_Potentials.pdf')).toBeInTheDocument()
+    })
+
+    // Click Select All
+    const selectAllBtn = screen.getByRole('button', { name: /select all/i })
+    await React.act(async () => {
+      fireEvent.click(selectAllBtn)
+    })
+
+    expect(screen.getByText(/using: 2 materials selected/i)).toBeInTheDocument()
+
+    // Remove first material via chip
+    const removeBtn = screen.getByRole('button', { name: /remove lecture_03_action_potentials\.pdf/i })
+    await React.act(async () => {
+      fireEvent.click(removeBtn)
+    })
+
+    // Now only 1 material remains selected
+    expect(screen.getByText(/using: neurotransmitters_overview\.docx/i)).toBeInTheDocument()
+
+    // Select All again to select both
+    const selectAllBtnAgain = screen.getByRole('button', { name: /select all/i })
+    await React.act(async () => {
+      fireEvent.click(selectAllBtnAgain)
+    })
+
+    // Now it should show Deselect All
+    const deselectAllBtn = screen.getByRole('button', { name: /deselect all/i })
+    await React.act(async () => {
+      fireEvent.click(deselectAllBtn)
+    })
+
+    // Banner should be gone
+    expect(screen.queryByText(/using:/i)).toBeNull()
+  })
+
+  it('supports toggling multi-material strategy between Synthesize and Batch generation', async () => {
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          subjects={[mockSubject]}
+          folders={mockFolders}
+          userId={1}
+          initialMaterialIds={[101, 102]}
+          initialAutoCount={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    // Both materials preloaded from initialMaterialIds
+    await waitFor(() => {
+      expect(screen.getByText(/using: 2 materials selected/i)).toBeInTheDocument()
+    })
+
+    // Strategy switcher should be visible
+    expect(screen.getByText(/multi-material generation strategy:/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /synthesize \(unified\)/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /generate for each/i })).toBeInTheDocument()
+
+    // Default is Synthesize Selected
+    const synthesizeBtn = screen.getByRole('button', { name: /synthesize selected \(2\)/i })
+    expect(synthesizeBtn).toBeInTheDocument()
+
+    // Switch to Batch mode
+    const batchToggle = screen.getByRole('button', { name: /generate for each/i })
+    await React.act(async () => {
+      fireEvent.click(batchToggle)
+    })
+
+    // Button should now be Generate Flashcards (2)
+    const batchBtn = screen.getByRole('button', { name: /generate flashcards \(2\)/i })
+    expect(batchBtn).toBeInTheDocument()
+
+    // Click Generate in Batch mode
+    await React.act(async () => {
+      fireEvent.click(batchBtn)
+    })
+
+    expect(window.electronAPI.cardsBatchGenerate).toHaveBeenCalledWith(10, [101, 102])
+    expect(mockOnSuccess).toHaveBeenCalledWith(20, 'generate')
+  })
 })
+
 

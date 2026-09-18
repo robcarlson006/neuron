@@ -842,6 +842,7 @@ export interface ModuleCardGenOptions {
   activeRecallCount?: number
   folderId?: number | null
   materialId?: number | null
+  materialIds?: number[]
   topicId?: number | null
   concept?: string | null
   userId?: number

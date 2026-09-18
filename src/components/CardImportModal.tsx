@@ -12,6 +12,7 @@ interface CardImportModalProps {
   folders?: CardFolder[]
   userId?: number
   initialMaterialId?: number | null
+  initialMaterialIds?: number[]
   initialAutoCount?: boolean
   onSuccess?: (count: number, mode: 'generate' | 'import') => void
   onManualSave?: (cards: { type: 'flashcard' | 'active_recall'; front: string; back: string; folder_id?: number | null }[]) => Promise<void>
@@ -28,6 +29,7 @@ export default function CardImportModal({
   folders: initialFolders = [],
   userId,
   initialMaterialId,
+  initialMaterialIds,
   initialAutoCount,
   onSuccess,
   onManualSave
@@ -56,8 +58,9 @@ export default function CardImportModal({
     initialSubjectId ?? (subjects.length > 0 ? subjects[0].id : null)
   )
   const [subjectMaterials, setSubjectMaterials] = useState<Material[]>([])
-  const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null)
-  const [selectedMaterialName, setSelectedMaterialName] = useState<string | null>(null)
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([])
+  const [multiGenMode, setMultiGenMode] = useState<'synthesize' | 'batch'>('synthesize')
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
   const [isLoadingMaterials, setIsLoadingMaterials] = useState(false)
   const [materialSearchQuery, setMaterialSearchQuery] = useState('')
   const [showTextPreview, setShowTextPreview] = useState(false)
@@ -181,39 +184,121 @@ export default function CardImportModal({
     allSubjects.find(s => s.id === selectedSubjectId)?.name ||
     'Select a subject'
 
-  function handleSelectMaterial(mat: Material): void {
-    setSelectedMaterialId(mat.id)
-    setSelectedMaterialName(mat.filename)
-    setSourceText(mat.content_text || '')
+  const selectedMaterials = useMemo(() => {
+    return selectedMaterialIds
+      .map(id => subjectMaterials.find(m => m.id === id))
+      .filter((m): m is Material => !!m)
+  }, [selectedMaterialIds, subjectMaterials])
+
+  const selectedMaterialId = selectedMaterialIds.length > 0 ? selectedMaterialIds[0] : null
+  const selectedMaterialName =
+    selectedMaterials.length === 1
+      ? selectedMaterials[0].filename
+      : selectedMaterials.length > 1
+        ? `${selectedMaterials.length} materials selected`
+        : null
+
+  function getCombinedMaterialText(materials: Material[]): string {
+    if (materials.length === 0) return ''
+    if (materials.length === 1) return materials[0].content_text || ''
+    return materials
+      .map(m => `# ${m.filename}\n\n${(m.content_text || '').trim()}`)
+      .join('\n\n\n')
+  }
+
+  function handleToggleMaterial(mat: Material): void {
+    const isCurrentlySelected = selectedMaterialIds.includes(mat.id)
+    const newIds = isCurrentlySelected
+      ? selectedMaterialIds.filter(id => id !== mat.id)
+      : [...selectedMaterialIds, mat.id]
+
+    setSelectedMaterialIds(newIds)
     setErrorMessage(null)
+
+    if (newIds.length === 0) {
+      setSourceText('')
+    } else if (newIds.length === 1) {
+      const single = subjectMaterials.find(m => m.id === newIds[0]) || (mat.id === newIds[0] ? mat : null)
+      setSourceText(single?.content_text || '')
+    } else {
+      const selected = newIds
+        .map(id => subjectMaterials.find(m => m.id === id) || (mat.id === id ? mat : null))
+        .filter((m): m is Material => !!m)
+      setSourceText(getCombinedMaterialText(selected))
+    }
+  }
+
+  function handleToggleAllMaterials(): void {
+    if (filteredMaterials.length === 0) return
+    const allFilteredSelected = filteredMaterials.every(m => selectedMaterialIds.includes(m.id))
+
+    let newIds: number[]
+    if (allFilteredSelected) {
+      const filteredIdSet = new Set(filteredMaterials.map(m => m.id))
+      newIds = selectedMaterialIds.filter(id => !filteredIdSet.has(id))
+    } else {
+      const existingSet = new Set(selectedMaterialIds)
+      const toAdd = filteredMaterials.map(m => m.id).filter(id => !existingSet.has(id))
+      newIds = [...selectedMaterialIds, ...toAdd]
+    }
+
+    setSelectedMaterialIds(newIds)
+    setErrorMessage(null)
+
+    if (newIds.length === 0) {
+      setSourceText('')
+    } else if (newIds.length === 1) {
+      const single = subjectMaterials.find(m => m.id === newIds[0])
+      setSourceText(single?.content_text || '')
+    } else {
+      const selected = newIds
+        .map(id => subjectMaterials.find(m => m.id === id))
+        .filter((m): m is Material => !!m)
+      setSourceText(getCombinedMaterialText(selected))
+    }
+  }
+
+  function handleSelectMaterial(mat: Material): void {
+    handleToggleMaterial(mat)
   }
 
   function handleClearMaterial(): void {
-    setSelectedMaterialId(null)
-    setSelectedMaterialName(null)
+    setSelectedMaterialIds([])
     setSourceText('')
   }
 
-  // Handle initialMaterialId and initialAutoCount when modal opens
+  // Handle initialMaterialId / initialMaterialIds and initialAutoCount when modal opens
   useEffect(() => {
-    if (isOpen && initialMaterialId) {
-      setSelectedMaterialId(initialMaterialId)
-      setSourceMode('materials')
-      if (initialAutoCount !== false) {
-        setIsAutoCount(true)
+    if (isOpen) {
+      if (initialMaterialIds && initialMaterialIds.length > 0) {
+        setSelectedMaterialIds(initialMaterialIds)
+        setSourceMode('materials')
+        if (initialAutoCount !== false) {
+          setIsAutoCount(true)
+        }
+      } else if (initialMaterialId) {
+        setSelectedMaterialIds([initialMaterialId])
+        setSourceMode('materials')
+        if (initialAutoCount !== false) {
+          setIsAutoCount(true)
+        }
       }
     }
-  }, [isOpen, initialMaterialId, initialAutoCount])
+  }, [isOpen, initialMaterialId, initialMaterialIds, initialAutoCount])
 
-  // Select material data once subjectMaterials loads if initialMaterialId is set
+  // Select material data once subjectMaterials loads if selectedMaterialIds are set
   useEffect(() => {
-    if (selectedMaterialId && subjectMaterials.length > 0 && !sourceText) {
-      const mat = subjectMaterials.find(m => m.id === selectedMaterialId)
-      if (mat) {
-        handleSelectMaterial(mat)
+    if (selectedMaterialIds.length > 0 && subjectMaterials.length > 0 && !sourceText) {
+      const selected = selectedMaterialIds
+        .map(id => subjectMaterials.find(m => m.id === id))
+        .filter((m): m is Material => !!m)
+      if (selected.length === 1) {
+        setSourceText(selected[0].content_text || '')
+      } else if (selected.length > 1) {
+        setSourceText(getCombinedMaterialText(selected))
       }
     }
-  }, [selectedMaterialId, subjectMaterials, sourceText])
+  }, [selectedMaterialIds, subjectMaterials, sourceText])
 
   function handleSourceFileUpload(e: React.ChangeEvent<HTMLInputElement>): void {
     const file = e.target.files?.[0]
@@ -222,8 +307,8 @@ export default function CardImportModal({
     reader.onload = (ev) => {
       const content = (ev.target?.result as string) || ''
       setSourceText(content)
-      setSelectedMaterialName(file.name)
-      setSelectedMaterialId(null)
+      setUploadedFileName(file.name)
+      setSelectedMaterialIds([])
       setErrorMessage(null)
     }
     reader.readAsText(file)
@@ -242,8 +327,8 @@ export default function CardImportModal({
       const parsed = await window.electronAPI.parseFile(filePath)
       if (parsed && parsed.contentText) {
         setSourceText(parsed.contentText)
-        setSelectedMaterialName(parsed.filename)
-        setSelectedMaterialId(null)
+        setUploadedFileName(parsed.filename)
+        setSelectedMaterialIds([])
         setErrorMessage(null)
       }
     } catch (err) {
@@ -275,7 +360,7 @@ export default function CardImportModal({
         setSubjectMaterials(mats || [])
         const newMat = mats.find(m => m.filename === parsed.filename) || mats[0]
         if (newMat) {
-          handleSelectMaterial(newMat)
+          handleToggleMaterial(newMat)
         }
       }
     } catch (err) {
@@ -367,12 +452,44 @@ export default function CardImportModal({
     setIsGenerating(true)
 
     try {
+      if (sourceMode === 'materials' && selectedMaterialIds.length > 1) {
+        if (multiGenMode === 'batch') {
+          const result = await window.electronAPI.cardsBatchGenerate(
+            selectedSubjectId,
+            selectedMaterialIds
+          )
+          if (result.success && result.totalGenerated > 0) {
+            onSuccess?.(result.totalGenerated, 'generate')
+            onClose()
+            return
+          } else {
+            const firstErr = result.results?.find(r => !r.success)?.error
+            setErrorMessage(firstErr || 'Failed to generate batch cards across selected materials.')
+            return
+          }
+        } else if (multiGenMode === 'synthesize' && isAutoCount && cardType === 'flashcard') {
+          const result = await window.electronAPI.cardsGenerateFromMultiple(
+            selectedSubjectId,
+            selectedMaterialIds
+          )
+          if (result.success && result.count > 0) {
+            onSuccess?.(result.count, 'generate')
+            onClose()
+            return
+          } else {
+            setErrorMessage(result.error || 'Failed to synthesize cards from selected materials.')
+            return
+          }
+        }
+      }
+
       const options: ModuleCardGenOptions = {
         type: cardType,
         count: cardCount,
         autoCount: isAutoCount,
         folderId: aiFolderId,
-        materialId: selectedMaterialId || undefined,
+        materialId: selectedMaterialIds.length === 1 ? selectedMaterialIds[0] : undefined,
+        materialIds: selectedMaterialIds.length > 0 ? selectedMaterialIds : undefined,
         userId
       }
 
@@ -712,8 +829,8 @@ export default function CardImportModal({
                           onChange={e => {
                             const id = Number(e.target.value)
                             setMaterialSubjectId(id)
-                            setSelectedMaterialId(null)
-                            setSelectedMaterialName(null)
+                            setSelectedMaterialIds([])
+                            setSourceText('')
                           }}
                           disabled={isGenerating}
                         >
@@ -738,39 +855,113 @@ export default function CardImportModal({
                     </div>
 
                     {/* Active Selected Material Banner */}
-                    {selectedMaterialId && selectedMaterialName && (
-                      <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg flex items-center justify-between gap-2 text-xs text-emerald-900 dark:text-emerald-200 animate-fade-in">
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <span className="text-base flex-shrink-0">✓</span>
-                          <span className="font-semibold truncate">
-                            Using: {selectedMaterialName}
-                          </span>
-                          <span className="text-[11px] text-emerald-700 dark:text-emerald-400 flex-shrink-0">
-                            ({Math.round(sourceText.length / 5)} words)
-                          </span>
+                    {selectedMaterials.length > 0 && (
+                      <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs text-emerald-900 dark:text-emerald-200 animate-fade-in space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="text-base flex-shrink-0">✓</span>
+                            <span className="font-semibold truncate">
+                              Using: {selectedMaterials.length === 1 ? selectedMaterials[0].filename : `${selectedMaterials.length} materials selected`}
+                            </span>
+                            <span className="text-[11px] text-emerald-700 dark:text-emerald-400 flex-shrink-0">
+                              ({Math.round(sourceText.length / 5)} words)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setShowTextPreview(prev => !prev)}
+                              className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/60 hover:bg-emerald-200 text-emerald-800 dark:text-emerald-200 text-[11px] font-medium transition-colors cursor-pointer"
+                            >
+                              {showTextPreview ? 'Hide Text' : 'View Text'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleClearMaterial}
+                              className="text-emerald-600 hover:text-red-500 transition-colors p-1 cursor-pointer"
+                              title={selectedMaterials.length > 1 ? 'Clear all selected materials' : 'Unselect material'}
+                              aria-label={selectedMaterials.length > 1 ? 'Clear all selected materials' : 'Unselect material'}
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setShowTextPreview(prev => !prev)}
-                            className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/60 hover:bg-emerald-200 text-emerald-800 dark:text-emerald-200 text-[11px] font-medium transition-colors cursor-pointer"
-                          >
-                            {showTextPreview ? 'Hide Text' : 'View Text'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleClearMaterial}
-                            className="text-emerald-600 hover:text-red-500 transition-colors p-1 cursor-pointer"
-                            title="Unselect material"
-                          >
-                            ✕
-                          </button>
-                        </div>
+
+                        {/* Removable chips if multiple materials are selected */}
+                        {selectedMaterials.length > 1 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-emerald-200/60 dark:border-emerald-800/60">
+                            {selectedMaterials.map(mat => (
+                              <span
+                                key={mat.id}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 text-[11px] font-medium max-w-full"
+                              >
+                                <span className="truncate max-w-[200px]">{mat.filename}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleToggleMaterial(mat)
+                                  }}
+                                  className="text-emerald-700 dark:text-emerald-300 hover:text-red-500 transition-colors cursor-pointer ml-0.5 text-xs font-bold leading-none"
+                                  title={`Remove ${mat.filename}`}
+                                  aria-label={`Remove ${mat.filename}`}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
 
+                      {/* Strategy switcher for multiple materials */}
+                      {selectedMaterials.length > 1 && (
+                        <div className="p-3 rounded-xl bg-violet-50/80 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 space-y-2 animate-fade-in">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                              <span className="text-xs font-semibold text-violet-900 dark:text-violet-200 block">
+                                Multi-Material Generation Strategy:
+                              </span>
+                              <span className="text-[11px] text-violet-600 dark:text-violet-400">
+                                {multiGenMode === 'synthesize'
+                                  ? 'Cross-references and triangulates core concepts across all documents into a unified deck.'
+                                  : 'Generates distinct flashcards for each selected material (preserves individual documents and folders).'
+                                }
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 bg-white/90 dark:bg-slate-800/90 p-0.5 rounded-lg border border-violet-200 dark:border-violet-800 flex-shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setMultiGenMode('synthesize')}
+                                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                                  multiGenMode === 'synthesize'
+                                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-xs'
+                                    : 'text-slate-600 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-300'
+                                }`}
+                              >
+                                <span>✨</span>
+                                <span>Synthesize (Unified)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setMultiGenMode('batch')}
+                                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                                  multiGenMode === 'batch'
+                                    ? 'bg-indigo-600 text-white shadow-xs'
+                                    : 'text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-300'
+                                }`}
+                              >
+                                <span>⚡</span>
+                                <span>Generate for Each</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                     {/* Expandable Text Preview / Editor */}
-                    {showTextPreview && selectedMaterialId && (
+                    {showTextPreview && selectedMaterials.length > 0 && (
                       <div className="animate-fade-in space-y-1">
                         <label className="text-[11px] font-medium text-slate-400">
                           Extracted Material Text (editable for fine-tuning prompt):
@@ -784,17 +975,30 @@ export default function CardImportModal({
                       </div>
                     )}
 
-                    {/* Search if more than 3 materials */}
-                    {subjectMaterials.length > 3 && (
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder="Search materials in this subject..."
-                          value={materialSearchQuery}
-                          onChange={e => setMaterialSearchQuery(e.target.value)}
-                          className="input text-xs py-1 pl-7 w-full"
-                        />
-                        <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">🔍</span>
+                    {/* Search & Select All controls */}
+                    {subjectMaterials.length > 0 && (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            placeholder="Search materials in this subject..."
+                            value={materialSearchQuery}
+                            onChange={e => setMaterialSearchQuery(e.target.value)}
+                            className="input text-xs py-1 pl-7 w-full"
+                          />
+                          <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">🔍</span>
+                        </div>
+                        {filteredMaterials.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleToggleAllMaterials}
+                            className="text-xs font-medium px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-300 dark:hover:border-violet-600 transition-colors flex-shrink-0 cursor-pointer"
+                          >
+                            {filteredMaterials.every(m => selectedMaterialIds.includes(m.id))
+                              ? 'Deselect All'
+                              : `Select All (${filteredMaterials.length})`}
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -827,12 +1031,12 @@ export default function CardImportModal({
                     ) : (
                       <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
                         {filteredMaterials.map(mat => {
-                          const isSelected = selectedMaterialId === mat.id
+                          const isSelected = selectedMaterialIds.includes(mat.id)
                           const wordCount = Math.round((mat.content_text || '').length / 5)
                           return (
                             <div
                               key={mat.id}
-                              onClick={() => handleSelectMaterial(mat)}
+                              onClick={() => handleToggleMaterial(mat)}
                               className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between gap-3 ${
                                 isSelected
                                   ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-500/30'
@@ -840,6 +1044,19 @@ export default function CardImportModal({
                               }`}
                             >
                               <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <div
+                                  className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                                    isSelected
+                                      ? 'bg-violet-600 text-white border border-violet-600'
+                                      : 'border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'
+                                  }`}
+                                >
+                                  {isSelected && (
+                                    <svg className="w-2.5 h-2.5 fill-current" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                  )}
+                                </div>
                                 <span className="text-base flex-shrink-0">
                                   {getFileIcon(mat.filename, mat.file_type)}
                                 </span>
@@ -857,7 +1074,7 @@ export default function CardImportModal({
                                 type="button"
                                 onClick={e => {
                                   e.stopPropagation()
-                                  handleSelectMaterial(mat)
+                                  handleToggleMaterial(mat)
                                 }}
                                 className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all flex-shrink-0 ${
                                   isSelected
@@ -926,7 +1143,7 @@ export default function CardImportModal({
                       <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5 animate-fade-in">
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-semibold text-slate-800 dark:text-slate-200">
-                            {selectedMaterialName ? `Loaded: ${selectedMaterialName}` : 'File Loaded'}
+                            {uploadedFileName ? `Loaded: ${uploadedFileName}` : 'File Loaded'}
                           </span>
                           <span className="text-slate-400">
                             {sourceText.trim().split(/\s+/).length} words
@@ -1344,24 +1561,40 @@ export default function CardImportModal({
               type="button"
               onClick={handleAIGenerate}
               disabled={isGenerating || !sourceText.trim() || !selectedSubjectId}
-              className="flex-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white text-xs font-semibold rounded-lg transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+              className={`flex-1 px-4 py-2 text-white text-xs font-semibold rounded-lg transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed ${
+                sourceMode === 'materials' && selectedMaterialIds.length > 1 && multiGenMode === 'synthesize'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:bg-slate-300 dark:disabled:bg-slate-700'
+                  : sourceMode === 'materials' && selectedMaterialIds.length > 1 && multiGenMode === 'batch'
+                    ? 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 dark:disabled:bg-slate-700'
+                    : 'bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 dark:disabled:bg-slate-700'
+              }`}
             >
               {isGenerating ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   <span>
-                    {isAutoCount
-                      ? `Generating ${cardType === 'active_recall' ? 'Questions' : 'Cards'} (AI Deciding Count)...`
-                      : `Generating ${cardCount} ${cardType === 'active_recall' ? 'Questions' : 'Cards'}...`}
+                    {sourceMode === 'materials' && selectedMaterialIds.length > 1
+                      ? multiGenMode === 'batch'
+                        ? `Generating flashcards across ${selectedMaterialIds.length} materials...`
+                        : `Synthesizing ${selectedMaterialIds.length} materials...`
+                      : isAutoCount
+                        ? `Generating ${cardType === 'active_recall' ? 'Questions' : 'Cards'} (AI Deciding Count)...`
+                        : `Generating ${cardCount} ${cardType === 'active_recall' ? 'Questions' : 'Cards'}...`}
                   </span>
                 </>
               ) : (
                 <>
-                  <span>✨</span>
+                  <span>{sourceMode === 'materials' && selectedMaterialIds.length > 1 && multiGenMode === 'batch' ? '⚡' : '✨'}</span>
                   <span>
-                    {isAutoCount
-                      ? `Generate ${cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'} (AI Decides)`
-                      : `Generate ${cardCount} ${cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'}`}
+                    {sourceMode === 'materials' && selectedMaterialIds.length > 1
+                      ? multiGenMode === 'batch'
+                        ? `Generate Flashcards (${selectedMaterialIds.length})`
+                        : isAutoCount
+                          ? `Synthesize Selected (${selectedMaterialIds.length})`
+                          : `Generate ${cardCount} ${cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'} (Synthesized)`
+                      : isAutoCount
+                        ? `Generate ${cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'} (AI Decides)`
+                        : `Generate ${cardCount} ${cardType === 'flashcard' ? 'Flashcards' : cardType === 'active_recall' ? 'Questions' : 'Cards'}`}
                   </span>
                 </>
               )}
