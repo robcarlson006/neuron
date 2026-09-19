@@ -170,7 +170,7 @@ export function validateCardQuality(card: {
   front: string
   back: string
   type?: string
-  concept?: string
+  concept?: string | null
   conceptual_lens?: ConceptualLens
   bloom_level?: BloomLevel
   card_type?: CardTypology

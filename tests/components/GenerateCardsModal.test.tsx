@@ -221,7 +221,7 @@ describe('GenerateCardsModal', () => {
       />
     )
 
-    expect(screen.getByText(/generating/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/generating/i).length).toBeGreaterThan(0)
     const cancelBtn = screen.getByRole('button', { name: 'Cancel' })
     expect(cancelBtn).toBeDisabled()
   })

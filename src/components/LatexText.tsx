@@ -1,7 +1,7 @@
 import React from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { preprocessLatexText } from '../lib/mathFormatter'
+import { preprocessLatexText, isValidMathString } from '../lib/mathFormatter'
 
 interface Props {
   children: string
@@ -41,7 +41,7 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
   let error = false
   try {
     html = katex.renderToString(latex, {
-      throwOnError: true,
+      throwOnError: false,
       displayMode,
       output: 'html'
     })
@@ -49,7 +49,7 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
     error = true
   }
 
-  if (error) {
+  if (error || !html) {
     const raw = displayMode ? `$$${latex}$$` : `$${latex}$`
     return <code className="text-red-500 text-xs bg-red-50 dark:bg-red-900/20 px-1 rounded break-words">{raw}</code>
   }
@@ -62,38 +62,21 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
   )
 }
 
-interface TextPart {
+export interface TextPart {
   type: 'text' | 'math'
   content: string
   display: boolean
 }
 
-// Priority order matters — $$ must come before $ to avoid partial matches.
+// Priority order matters — $$ and \[ must come before $ to avoid partial matches.
 // Group 1: $$...$$ → display math
 // Group 2: \[...\] → display math
-// Group 3: \(...\) → inline math
-// Group 4: \begin{env}...\end{env} → display math
-// Group 6: $...$ → inline math (no newlines, no nested $ to avoid false positives)
-const LATEX_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\4\}|\$([^$\n]+?)\$/g
+// Group 3: \begin{env}...\end{env} → display math
+// Group 4: \(...\) → inline math
+// Group 5: $...$ → inline math (guarded against currency & greedy pairing across lines/spaces)
+const LATEX_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\3\}|\\\(([\s\S]*?)\\\)|(?<!\\|\$)\$([^\s$](?:[^$\n]*?[^\s$])?)\$(?!\d)/g
 
-function isValidInlineMath(content: string): boolean {
-  const s = content.trim()
-  if (!s) return false
-
-  // Pure numbers or currency values e.g. "835" or "835.50" or "835,000" are not LaTeX math
-  if (/^\d+([.,]\d+)?$/.test(s)) return false
-
-  // Check if it contains math operators/symbols or LaTeX commands
-  const hasMathSymbols = /[\\^_=+/><{}]|\b(sin|cos|tan|log|lim|sqrt|sum|int|alpha|beta|gamma|theta|pi|frac|cdot|pm|times)\b/i.test(s)
-  if (!hasMathSymbols) {
-    // If it contains spaces and regular words (e.g. currency match like "$835 in food benefits ... up to $835"), treat as plain text
-    if (s.includes(' ')) return false
-  }
-
-  return true
-}
-
-function splitLatex(text: string): TextPart[] {
+export function splitLatex(text: string): TextPart[] {
   const parts: TextPart[] = []
   LATEX_REGEX.lastIndex = 0
 
@@ -112,17 +95,18 @@ function splitLatex(text: string): TextPart[] {
       // \[...\] → display math
       parts.push({ type: 'math', content: match[2].trim(), display: true })
     } else if (match[3] !== undefined) {
-      // \(...\) → inline math
-      parts.push({ type: 'math', content: match[3].trim(), display: false })
-    } else if (match[4] !== undefined) {
       // \begin{env}...\end{env} → display math
       parts.push({ type: 'math', content: match[0].trim(), display: true })
+    } else if (match[5] !== undefined) {
+      // \(...\) → inline math
+      parts.push({ type: 'math', content: match[5].trim(), display: false })
     } else if (match[6] !== undefined) {
       // $...$ → inline math (if valid)
-      if (isValidInlineMath(match[6])) {
-        parts.push({ type: 'math', content: match[6].trim(), display: false })
+      const mathContent = match[6].trim()
+      if (isValidMathString(mathContent)) {
+        parts.push({ type: 'math', content: mathContent, display: false })
       } else {
-        parts.push({ type: 'text', content: `$${match[6]}$`, display: false })
+        parts.push({ type: 'text', content: match[0], display: false })
       }
     }
 

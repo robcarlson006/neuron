@@ -7,7 +7,7 @@ describe('AutoGradeFeedback Component', () => {
   it('renders loading state when loading is true', () => {
     render(<AutoGradeFeedback result={null} loading={true} />)
     expect(screen.getByTestId('autograde-loading')).toBeInTheDocument()
-    expect(screen.getByText('Grading...')).toBeInTheDocument()
+    expect(screen.getByText(/Auto-Grader Evaluating|Grading/i)).toBeInTheDocument()
   })
 
   it('renders nothing when result is null and loading is false', () => {

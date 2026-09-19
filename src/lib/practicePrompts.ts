@@ -1,10 +1,5 @@
 import type {
-  PracticeProblem,
-  ExtractedPracticeProblem,
-  WebbsDOK,
-  BloomsRevised,
-  DisciplineParadigm,
-  DistractorStrategy
+  PracticeProblem
 } from "../types"
 import type { DomainClassificationResult, EpistemicArchetype } from "./classification/domainClassifier"
 

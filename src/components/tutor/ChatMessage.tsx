@@ -11,91 +11,104 @@ interface ChatMessageProps {
 }
 
 /**
- * Simplified markdown renderer that handles:
- * - **bold** text
- * - Bullet lists (- , *)
- * - Numbered lists
+ * Enhanced markdown renderer that handles:
  * - Paragraph breaks
- * - LaTeX math ($...$, $$...$$) via LatexText
+ * - **bold** text
+ * - `inline code`
+ * - Bullet lists (- , *, •) and numbered lists (1. , (a) )
+ * - LaTeX math ($...$, $$...$$, \[...\], \(...\)) via LatexText
  */
 function SimpleMarkdown({ content }: { content: string }): React.JSX.Element {
-  // Split into segments by math blocks for LatexText processing
-  const parts = content.split(/(\$\$[\s\S]*?\$\$|\$[^$\n]+?\$)/g)
+  const paragraphs = content.split(/\n\n+/)
 
   return (
-    <span className="text-sm leading-relaxed whitespace-pre-wrap">
-      {parts.map((part, i) => {
-        if (part.startsWith('$$') || (part.startsWith('$') && part.endsWith('$'))) {
-          return <LatexText key={i}>{part}</LatexText>
-        }
-        return <PlainText key={i} text={part} />
-      })}
-    </span>
-  )
-}
-
-function PlainText({ text }: { text: string }): React.JSX.Element {
-  // Split by \n\n for paragraphs
-  const paragraphs = text.split(/\n\n+/)
-  return (
-    <>
+    <div className="text-sm leading-relaxed space-y-2">
       {paragraphs.map((para, pi) => {
+        const trimmed = para.trim()
+        if (!trimmed) return null
+
+        // Check if paragraph is a standalone display math block $$...$$ or \[...\]
+        if (
+          (trimmed.startsWith('$$') && trimmed.endsWith('$$')) ||
+          (trimmed.startsWith('\\[') && trimmed.endsWith('\\]'))
+        ) {
+          return <LatexText key={pi} className="my-2 block">{trimmed}</LatexText>
+        }
+
         // Check if it's a list
         const lines = para.split('\n')
-        const isList = lines.some(l => /^\s*[-*•]\s/.test(l) || /^\s*\d+[.)]\s/.test(l))
+        const isList = lines.some(l => /^\s*([-*•]|\d+[.)]|\([a-zA-Z0-9]+\))\s/.test(l))
 
         if (isList) {
           return (
-            <span key={pi}>
+            <div key={pi} className="space-y-1 my-1">
               {renderListLines(lines)}
-              {pi < paragraphs.length - 1 && <><br /><br /></>}
-            </span>
+            </div>
           )
         }
 
         return (
-          <span key={pi}>
-            {renderBold(para)}
-            {pi < paragraphs.length - 1 && <><br /><br /></>}
-          </span>
+          <p key={pi} className="leading-relaxed">
+            {renderInlineFormatting(para)}
+          </p>
         )
       })}
-    </>
+    </div>
   )
 }
 
 function renderListLines(lines: string[]): React.ReactNode {
-  return (
-    <span className="block">
-      {lines.map((line, li) => {
-        const trimmed = line.trim()
-        if (!trimmed) return <br key={li} />
-        const match = trimmed.match(/^\s*([-*•]|\d+[.)])\s+(.*)$/)
-        if (match) {
-          return (
-            <span key={li} className="block ml-4">
-              <span className="inline-block w-4 text-slate-400 dark:text-slate-500">{match[1]}</span>
-              {renderBold(match[2])}
-              <br />
-            </span>
-          )
-        }
-        return <span key={li}>{renderBold(trimmed)}<br /></span>
-      })}
-    </span>
-  )
+  return lines.map((line, li) => {
+    const trimmed = line.trim()
+    if (!trimmed) return <div key={li} className="h-1" />
+    const match = trimmed.match(/^\s*([-*•]|\d+[.)]|\([a-zA-Z0-9]+\))\s+(.*)$/)
+    if (match) {
+      return (
+        <div key={li} className="flex items-start gap-2 ml-2">
+          <span className="inline-block text-slate-400 dark:text-slate-500 font-medium shrink-0 select-none">
+            {match[1].startsWith('-') || match[1].startsWith('*') ? '•' : match[1]}
+          </span>
+          <span className="flex-1 min-w-0">{renderInlineFormatting(match[2])}</span>
+        </div>
+      )
+    }
+    return <div key={li} className="ml-2">{renderInlineFormatting(trimmed)}</div>
+  })
 }
 
-function renderBold(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+function renderInlineFormatting(text: string): React.ReactNode {
+  // Handles **bold**, `inline code`, and passes text segments through LatexText
+  const tokens = text.split(/(`[^`\n]+`|\*\*[^*]+\*\*)/g)
+
   return (
     <>
-      {parts.map((part, i) => {
-        const boldMatch = part.match(/^\*\*(.+)\*\*$/)
-        if (boldMatch) {
-          return <strong key={i} className="font-semibold text-slate-800 dark:text-slate-100">{boldMatch[1]}</strong>
+      {tokens.map((token, i) => {
+        if (!token) return null
+
+        // Inline code: `code`
+        if (token.startsWith('`') && token.endsWith('`') && token.length > 2) {
+          return (
+            <code
+              key={i}
+              className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-violet-600 dark:text-violet-400 font-mono text-xs border border-slate-200/50 dark:border-slate-700/50 inline-block align-baseline"
+            >
+              {token.slice(1, -1)}
+            </code>
+          )
         }
-        return <span key={i}>{part}</span>
+
+        // Bold: **bold**
+        const boldMatch = token.match(/^\*\*(.+)\*\*$/)
+        if (boldMatch) {
+          return (
+            <strong key={i} className="font-semibold text-slate-900 dark:text-slate-100">
+              <LatexText>{boldMatch[1]}</LatexText>
+            </strong>
+          )
+        }
+
+        // Standard text segment (contains LaTeX math, currency, etc.)
+        return <LatexText key={i}>{token}</LatexText>
       })}
     </>
   )

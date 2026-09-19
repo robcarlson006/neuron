@@ -1129,6 +1129,7 @@ export interface ExtractedPracticeProblem {
   correct_key?: string
   blooms_revised?: BloomsRevised | string
   webbs_dok?: WebbsDOK | string
+  cognitive_level?: { blooms_revised?: string; webbs_dok?: string }
   discipline_paradigm?: DisciplineParadigm | string
   subgoals?: string[]
   item_validation?: ItemValidation

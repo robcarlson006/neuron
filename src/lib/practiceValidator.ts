@@ -1,10 +1,7 @@
 import type {
   ExtractedPracticeProblem,
   PracticeProblem,
-  DistractorStrategy,
-  WebbsDOK,
-  BloomsRevised,
-  DisciplineParadigm
+  DistractorStrategy
 } from '../types'
 
 export interface PracticeProblemQualityScorecard {
@@ -172,7 +169,6 @@ export function evaluateOptionHomogeneity(
   }
 
   const lengths = optionList.map(o => o.text.length)
-  const avgLength = lengths.reduce((a, b) => a + b, 0) / lengths.length
 
   // Check correct key length if known
   if (correctKeyIndexOrLetter !== undefined) {
