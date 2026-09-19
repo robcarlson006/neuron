@@ -65,6 +65,9 @@ const mockElectronAPI = {
   tutorCheckDuplicates: jest.fn().mockResolvedValue([]),
   tutorUpdateMastery: jest.fn().mockResolvedValue({ mastery_prob: 0.8 }),
   tutorStreamChat: jest.fn().mockResolvedValue({ success: true, fullResponse: '' }),
+  tutorGetSubjectRetentionSummary: jest.fn().mockResolvedValue({ subjectId: 1, totalTopics: 0, completedTopics: 0, averageRetention: 1.0, freshCount: 0, fadingCount: 0, overdueCount: 0, dueTopics: [] }),
+  tutorGetTopDueMaintenanceTopics: jest.fn().mockResolvedValue([]),
+  tutorGetSubjectModuleStats: jest.fn().mockResolvedValue({}),
   onTutorChunk: jest.fn(),
 
   // Daily Plans

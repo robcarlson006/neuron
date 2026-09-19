@@ -1,9 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
+import LatexText from '../LatexText'
+import MathKeyboard from '../practice/MathKeyboard'
+import { Sigma, Calculator as CalcIcon } from '../icons'
 
 interface ChatInputProps {
   onSend: (message: string) => void
   onAttachFile?: () => void
   onSelectFromLibrary?: () => void
+  onToggleCalculator?: () => void
   disabled?: boolean
   placeholder?: string
   attachedFile?: string | null
@@ -15,6 +19,7 @@ export default function ChatInput({
   onSend,
   onAttachFile,
   onSelectFromLibrary,
+  onToggleCalculator,
   disabled,
   placeholder,
   attachedFile,
@@ -22,6 +27,7 @@ export default function ChatInput({
   refocusKey
 }: ChatInputProps): React.JSX.Element {
   const [input, setInput] = useState('')
+  const [showMathPalette, setShowMathPalette] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Auto-resize textarea
@@ -43,6 +49,26 @@ export default function ChatInput({
     textareaRef.current?.focus()
   }, [refocusKey])
 
+  const handleInsertSnippet = (snippet: string) => {
+    if (!textareaRef.current) {
+      setInput((prev) => prev + snippet)
+      return
+    }
+
+    const textarea = textareaRef.current
+    const start = textarea.selectionStart || 0
+    const end = textarea.selectionEnd || 0
+    const text = textarea.value
+    const updated = text.substring(0, start) + snippet + text.substring(end)
+    setInput(updated)
+
+    setTimeout(() => {
+      textarea.focus()
+      const nextPos = start + snippet.length
+      textarea.setSelectionRange(nextPos, nextPos)
+    }, 0)
+  }
+
   function handleSubmit(): void {
     const trimmed = input.trim()
     if (!trimmed || disabled) return
@@ -61,10 +87,10 @@ export default function ChatInput({
   }, [input, disabled])
 
   return (
-    <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3">
+    <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 space-y-2">
       {/* Attached file indicator */}
       {attachedFile && (
-        <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-violet-50 dark:bg-violet-900/20 rounded-xl border border-violet-200 dark:border-violet-800">
+        <div className="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-900/20 rounded-xl border border-violet-200 dark:border-violet-800">
           <span className="text-sm">📎</span>
           <span className="text-sm text-slate-700 dark:text-slate-300 flex-1 truncate">
             {attachedFile}
@@ -79,6 +105,25 @@ export default function ChatInput({
               </svg>
             </button>
           )}
+        </div>
+      )}
+
+      {/* Math Keyboard Palette */}
+      {showMathPalette && (
+        <div className="animate-in fade-in slide-in-from-bottom-2 duration-150 p-2 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700">
+          <MathKeyboard onInsert={handleInsertSnippet} />
+        </div>
+      )}
+
+      {/* Live Math Preview */}
+      {(input.includes('$') || input.includes('\\') || input.includes('^') || input.includes('_')) && (
+        <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-left animate-in fade-in">
+          <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block mb-1">
+            Live Math Preview:
+          </span>
+          <div className="text-sm text-slate-800 dark:text-slate-200 font-sans">
+            <LatexText>{input}</LatexText>
+          </div>
         </div>
       )}
 
@@ -113,13 +158,39 @@ export default function ChatInput({
           </button>
         )}
 
+        {/* Math Palette Toggle */}
+        <button
+          type="button"
+          onClick={() => setShowMathPalette((prev) => !prev)}
+          className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${
+            showMathPalette
+              ? 'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-950/60 font-bold'
+              : 'text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+          }`}
+          title="Toggle Math Keyboard Palette"
+        >
+          <Sigma size={16} />
+        </button>
+
+        {/* Calculator Widget Toggle */}
+        {onToggleCalculator && (
+          <button
+            type="button"
+            onClick={onToggleCalculator}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
+            title="Open Scientific Calculator"
+          >
+            <CalcIcon size={16} />
+          </button>
+        )}
+
         {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder || 'Ask a question about your studies...'}
+          placeholder={placeholder || 'Ask a question (use standard text or LaTeX math)...'}
           disabled={disabled}
           rows={1}
           className="flex-1 bg-transparent text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 resize-none outline-none py-1.5 max-h-[200px]"
@@ -142,8 +213,8 @@ export default function ChatInput({
       </div>
 
       {/* Helper text */}
-      <p className="text-[10px] text-slate-400 dark:text-slate-500 text-center mt-1.5">
-        <kbd className="text-xs">Enter</kbd> to send · <kbd className="text-xs">Shift</kbd>+<kbd className="text-xs">Enter</kbd> for new line
+      <p className="text-[10px] text-slate-400 dark:text-slate-500 text-center mt-1">
+        <kbd className="text-xs">Enter</kbd> to send · <kbd className="text-xs">Shift</kbd>+<kbd className="text-xs">Enter</kbd> for newline · Click <Sigma size={10} className="inline mx-0.5" /> for Math Keyboard
       </p>
     </div>
   )

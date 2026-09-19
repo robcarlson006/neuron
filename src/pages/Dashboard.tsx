@@ -183,13 +183,14 @@ export default function Dashboard({
             <button
               onClick={() => setShowImportModal(true)}
               className="px-3.5 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5"
-              aria-label="Import or generate cards"
+              aria-label="Generate or import cards"
+              title="Generate or import flashcards"
             >
               <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
                 <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
-              <span>Import / Generate</span>
+              <span>Cards</span>
             </button>
           )}
           <button

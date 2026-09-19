@@ -330,8 +330,14 @@ Rules:
 
 async function generateCardsAsync(subjectId: number, materialIds: number[]): Promise<void> {
   try {
-    // Dynamic import of renderer-side code — promptBuilders uses no Node.js APIs
-    const { buildAutoCardGenerationPrompt } = await import('../../src/lib/promptBuilders')
+    const {
+      buildAutoCardGenerationPrompt,
+      buildSlideDeckCardGenerationPrompt,
+      buildTranscriptCardGenerationPrompt,
+      buildTextbookCardGenerationPrompt
+    } = await import('../../src/lib/promptBuilders')
+    const { validateCardQuality } = await import('../../src/lib/cardValidator')
+    const { detectModality } = await import('./cardGenHandlers')
 
     for (const materialId of materialIds) {
       const material = db.prepare('SELECT * FROM materials WHERE id = ?').get(materialId) as
@@ -346,9 +352,19 @@ async function generateCardsAsync(subjectId: number, materialIds: number[]): Pro
         'SELECT front, back FROM cards WHERE subject_id = ? AND material_id IS NOT NULL'
       ).all(subjectId) as { front: string; back: string }[]
 
-      const prompt = buildAutoCardGenerationPrompt(
-        material.content_text, subject.name, undefined, undefined, existingCards, 5, 3
-      )
+      const modality = detectModality(material.filename, material.content_text)
+      let prompt: string
+      if (modality === 'slides') {
+        prompt = buildSlideDeckCardGenerationPrompt(material.content_text, subject.name, material.filename, 8)
+      } else if (modality === 'transcript') {
+        prompt = buildTranscriptCardGenerationPrompt(material.content_text, subject.name, material.filename, 8)
+      } else if (modality === 'textbook') {
+        prompt = buildTextbookCardGenerationPrompt(material.content_text, subject.name, material.filename, 8)
+      } else {
+        prompt = buildAutoCardGenerationPrompt(
+          material.content_text, subject.name, undefined, undefined, existingCards, 5, 3
+        )
+      }
 
       const config = getAIConfig()
       const apiKey = getApiKey()
@@ -362,29 +378,51 @@ async function generateCardsAsync(subjectId: number, materialIds: number[]): Pro
 
       const parsed = safeParseAICards(responseText)
 
-      const rawCards: Partial<Card>[] = []
+      const validatedCards: Partial<Card>[] = []
       for (const fc of (parsed.flashcards || [])) {
         if (fc.front?.trim() && fc.back?.trim()) {
-          rawCards.push({
-            type: 'flashcard',
+          const base = {
+            subject_id: subjectId,
+            material_id: materialId,
+            type: 'flashcard' as const,
             front: fc.front.trim(),
             back: fc.back.trim(),
-            concept: fc.concept
-          })
+            concept: fc.concept || subject.name,
+            is_manual: 0 as const,
+            source: 'auto'
+          }
+          const { valid, cards } = validateCardQuality(base)
+          if (valid && cards && cards.length > 0) {
+            validatedCards.push(...cards.map(c => ({ ...base, front: c.front, back: c.back })))
+          } else if (base.front.length > 0 && base.back.length > 0) {
+            validatedCards.push(base)
+          }
         }
       }
       for (const ar of (parsed.active_recall || [])) {
         if (ar.question?.trim() && ar.model_answer?.trim()) {
-          rawCards.push({
-            type: 'active_recall',
+          const base = {
+            subject_id: subjectId,
+            material_id: materialId,
+            type: 'active_recall' as const,
             front: ar.question.trim(),
             back: ar.model_answer.trim(),
-            concept: ar.concept
-          })
+            concept: ar.concept || subject.name,
+            is_manual: 0 as const,
+            source: 'auto'
+          }
+          const { valid, cards } = validateCardQuality(base)
+          if (valid && cards && cards.length > 0) {
+            validatedCards.push(...cards.map(c => ({ ...base, front: c.front, back: c.back })))
+          } else if (base.front.length > 0 && base.back.length > 0) {
+            validatedCards.push(base)
+          }
         }
       }
 
-      const consolidated = consolidateCardTopics(rawCards, {
+      if (validatedCards.length === 0) continue
+
+      const consolidated = consolidateCardTopics(validatedCards, {
         maxTopics: 4,
         defaultTopic: subject.name
       })

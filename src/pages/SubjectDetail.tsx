@@ -266,12 +266,13 @@ export default function SubjectDetail(): React.JSX.Element {
           <button
             onClick={() => setShowTextImport(true)}
             className="btn-secondary text-sm flex items-center gap-1.5"
+            title="Generate or import flashcards"
           >
             <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
               <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
-            Import
+            Cards
           </button>
           <button
             onClick={handleAnkiImport}

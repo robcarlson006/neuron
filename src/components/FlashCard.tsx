@@ -6,6 +6,8 @@ import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEval
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
 
+import { useAppStore } from '../store/appStore'
+
 interface FlashCardProps {
   card: Card
   onResult: (quality: number) => void
@@ -23,6 +25,7 @@ export default function FlashCard({
   cardNumber,
   totalCards
 }: FlashCardProps): React.JSX.Element {
+  const { autoGradeEnabled } = useAppStore()
   const [phase, setPhase] = useState<Phase>('front')
   const [answer, setAnswer] = useState('')
   const [flipped, setFlipped] = useState(false)
@@ -70,7 +73,7 @@ export default function FlashCard({
   const reveal = useCallback(async () => {
     setFlipped(true)
     setPhase('revealed')
-    if (answer.trim()) {
+    if (autoGradeEnabled && answer.trim()) {
       setGrading(true)
       try {
         const res = await evaluateStudentAnswer(card.front, card.back, answer)
@@ -81,7 +84,7 @@ export default function FlashCard({
         setGrading(false)
       }
     }
-  }, [card.front, card.back, answer])
+  }, [card.front, card.back, answer, autoGradeEnabled])
 
   const handlerRef = useRef<{
     phase: Phase
@@ -267,7 +270,7 @@ export default function FlashCard({
           )}
 
           {/* Auto-grade feedback if typed answer or grading */}
-          {(answer.trim() || autoGradeResult || grading) && (
+          {autoGradeEnabled && (answer.trim() || autoGradeResult || grading) && (
             <AutoGradeFeedback
               result={autoGradeResult}
               loading={grading}

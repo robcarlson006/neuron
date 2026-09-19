@@ -1187,28 +1187,32 @@ export function registerTutorHandlers(): void {
       ? `\n\nCRITICAL ANTI-DUPLICATION LIST: Existing cards in this deck that you MUST NOT duplicate (avoid similar questions, terms, or answers):\n${existingCards.slice(0, 80).map(c => `- "${c.front}" -> "${c.back.substring(0, 80)}"`).join('\n')}\nEvery generated card MUST introduce a novel concept or a distinctly fresh perspective not covered above.`
       : ''
 
-    const prompt = `You are an expert cognitive scientist and flashcard designer creating high-yield, bite-sized study cards from a tutoring session about "${subjectName}".${moduleContext}
+    const prompt = `You are a Senior Cognitive Systems Engineer, Psychometric Assessment Specialist, and expert flashcard designer creating high-yield, atomic study cards from a tutoring session about "${subjectName}".${moduleContext}
 
-SESSION CONTENT:
+<source_material>
 ${sessionContent.substring(0, 6000)}
+</source_material>
 
-Create a balanced MIX of flashcards (term -> concise definition) and active recall questions (focused question -> punchy answer) based on the session's key takeaways and trouble spots.${existingCardHints}
+Create a balanced MIX of atomic flashcards (term -> concise definition) and active recall questions (focused question -> concise mechanism/application) based on the session's key takeaways and trouble spots.${existingCardHints}
 
 Generate 6-10 cards total. Format each card on its own line using this exact format:
 
-**Term or Question** -> Concise Answer or Definition
+**[Topic] Question or Term** -> Concise Answer or Definition
 
-STRICT DESIGN RULES (CRITICAL):
-1. STRICT SOURCE GROUNDING (NOTEBOOKLM MODE): All generated cards MUST be derived strictly and exclusively from the SESSION CONTENT above. Absolutely NO hallucinations, outside knowledge, or facts not mentioned in the session.
-2. ATOMICITY (Minimum Information Principle): Each card must test exactly ONE idea, mechanism, or fact. Never create compound cards or multi-item lists.
-3. CONCISENESS (NO LONG ANSWERS):
-   - Front: 1 clear question or term (max 15 words). Do NOT include numbering (like "1.") inside the bold tags.
-   - Back: 1 to 2 short, punchy sentences (STRICTLY under 30 words). Get straight to the point—no fluff, filler, or textbook paragraphs.
-4. HIGH YIELD: Focus on the core mechanism or conceptual distinction that matters most for exam mastery.
-5. For mathematical expressions, use proper LaTeX in $...$ or $$...$$ format (e.g. $E = mc^2$).
-6. STRICT ANTI-DUPLICATION: Do NOT duplicate any existing cards listed above. Focus on fresh takeaways from this session.
-7. NO BRACKETS: Do NOT wrap terms, questions, or answers in square brackets (e.g. write "Mitochondria -> Powerhouse of the cell", NOT "[Mitochondria] -> [Powerhouse of the cell]").
-8. Return ONLY the formatted cards. No introductory text, numbering outside format, or commentary.`
+## STRICT PSYCHOMETRIC DESIGN RULES (CRITICAL):
+1. **MINIMUM INFORMATION PRINCIPLE (ATOMICITY)**: Each card must test exactly ONE indivisible idea, mechanism, or fact. Never create compound cards or multi-item lists.
+2. **ANSWER CONCISENESS (<15 WORDS / SINGLE BREATH)**:
+   - Front: 1 clear, unambiguous question or term with optional domain tag in brackets (max 15 words). Do NOT include numbering (like "1.") inside the bold tags.
+   - Back: Direct target answer (<15 words, speakable in a single breath). Get straight to the point—no filler, no paragraphs.
+3. **SPOILER-FREE PROMPT FRAMING**: Never give away the answer or causal link inside the question (e.g. do NOT ask "Why does X cause Y?", ask "What effect is produced by X?").
+4. **PROHIBITION OF LOW-EFFORT FORMATS**:
+   - NO binary (Yes/No, True/False) prompts.
+   - NO unranked list enumeration questions ("List the 4 types...").
+5. **MATUSCHAK'S CONCEPTUAL LENSES**: Formulate items across defining attributes, differences (discrimination between confusable concepts), causes/effects, and practical implications.
+6. **MATHEMATICAL NOTATION**: Wrap all equations and variables in LaTeX ($...$).
+7. **STRICT ANTI-DUPLICATION**: Do NOT duplicate any existing cards listed above. Focus on fresh takeaways from this session.
+8. **ZERO HALLUCINATIONS**: All cards MUST be derived strictly and exclusively from the <source_material> above.
+9. Return ONLY the formatted cards. No introductory text, numbering outside format, or commentary.`
 
     const config = getAIConfig()
     const apiKey = getApiKey()
@@ -1576,8 +1580,12 @@ PEDAGOGICAL METHOD — Session Summary Phase:
 2. Identify what the student understood with clarity and precision (be specific).
 3. Identify specific conceptual gaps or misconceptions that still require reinforcement.
 4. Generate 5-7 high-yield study cards based strictly on the uploaded source material in this format (one per line):
-   **[Term or Question]** -> [Answer or Definition]
-5. Mix contrast-pair flashcards AND active recall application questions grounded in the materials.
+   **[Topic] Question or Term** -> Concise Answer or Definition
+5. STRICT RETRIEVAL ENGINEERING RULES:
+   - Minimum Information Principle: Each card tests exactly ONE atomic proposition.
+   - Answer Conciseness: Backs must be strictly concise (<15 words, spoken in a single breath).
+   - Anti-Pattern Prohibitions: NO binary questions (Yes/No), NO unranked lists ("List the 5..."), NO spoiler prompts.
+   - Mix contrast-pair discrimination cards AND 2-step application questions across Bloom's Taxonomy.
 6. Cover BOTH mastered concepts (for retention) and identified weak areas.
 7. End with a clear, actionable recommendation for what module or problem archetype to tackle next.${syllabusContext}
 8. When showing formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents.`
@@ -2486,6 +2494,82 @@ Rules:
     } catch (err) {
       console.error('Failed to get top due maintenance topics:', err)
       return []
+    }
+  })
+
+  ipcMain.handle('tutor:getSubjectModuleStats', (_event, subjectId: number, userId?: number) => {
+    try {
+      if (!subjectId) return {}
+      let rows: any[]
+      if (userId && userId > 0) {
+        rows = db.prepare(`
+          SELECT 
+            module_id,
+            COUNT(*) as session_count,
+            COALESCE(SUM(
+              CASE 
+                WHEN duration_minutes IS NOT NULL AND duration_minutes > 0 THEN duration_minutes
+                WHEN ended_at IS NOT NULL AND started_at IS NOT NULL THEN MAX(1, ROUND((strftime('%s', ended_at) - strftime('%s', started_at)) / 60.0))
+                ELSE 15 
+              END
+            ), 0) as total_minutes,
+            AVG(COALESCE(depth_level, 3)) as avg_depth_level,
+            GROUP_CONCAT(COALESCE(depth_level, 3)) as raw_depth_levels,
+            MAX(COALESCE(ended_at, started_at)) as last_studied_at
+          FROM tutor_sessions
+          WHERE subject_id = ? AND module_id IS NOT NULL AND (user_id = ? OR user_id IS NULL)
+          GROUP BY module_id
+        `).all(subjectId, userId)
+      } else {
+        rows = db.prepare(`
+          SELECT 
+            module_id,
+            COUNT(*) as session_count,
+            COALESCE(SUM(
+              CASE 
+                WHEN duration_minutes IS NOT NULL AND duration_minutes > 0 THEN duration_minutes
+                WHEN ended_at IS NOT NULL AND started_at IS NOT NULL THEN MAX(1, ROUND((strftime('%s', ended_at) - strftime('%s', started_at)) / 60.0))
+                ELSE 15 
+              END
+            ), 0) as total_minutes,
+            AVG(COALESCE(depth_level, 3)) as avg_depth_level,
+            GROUP_CONCAT(COALESCE(depth_level, 3)) as raw_depth_levels,
+            MAX(COALESCE(ended_at, started_at)) as last_studied_at
+          FROM tutor_sessions
+          WHERE subject_id = ? AND module_id IS NOT NULL
+          GROUP BY module_id
+        `).all(subjectId)
+      }
+
+      const result: Record<number, {
+        moduleId: number
+        sessionCount: number
+        totalMinutes: number
+        avgDepthLevel: number
+        depthLevels: number[]
+        lastStudiedAt: string | null
+      }> = {}
+
+      for (const row of rows) {
+        if (row.module_id) {
+          const depthLevels = typeof row.raw_depth_levels === 'string'
+            ? row.raw_depth_levels.split(',').map((d: string) => Number(d)).filter((n: number) => !isNaN(n))
+            : []
+          result[row.module_id] = {
+            moduleId: Number(row.module_id),
+            sessionCount: Number(row.session_count) || 0,
+            totalMinutes: Math.round(Number(row.total_minutes) || 0),
+            avgDepthLevel: Number(row.avg_depth_level) || 3,
+            depthLevels,
+            lastStudiedAt: row.last_studied_at || null
+          }
+        }
+      }
+
+      return result
+    } catch (err) {
+      console.error('Failed to get subject module tutor stats:', err)
+      return {}
     }
   })
 }

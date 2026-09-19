@@ -6,6 +6,8 @@ import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEval
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
 
+import { useAppStore } from '../store/appStore'
+
 interface ActiveRecallCardProps {
   card: Card
   onResult: (quality: number) => void
@@ -23,6 +25,7 @@ export default function ActiveRecallCard({
   cardNumber,
   totalCards
 }: ActiveRecallCardProps): React.JSX.Element {
+  const { autoGradeEnabled } = useAppStore()
   const [phase, setPhase] = useState<Phase>('question')
   const [answer, setAnswer] = useState('')
   const [autoGradeResult, setAutoGradeResult] = useState<AutoGradeResult | null>(null)
@@ -60,7 +63,7 @@ export default function ActiveRecallCard({
 
   const revealAnswer = useCallback(async () => {
     setPhase('revealed')
-    if (answer.trim()) {
+    if (autoGradeEnabled && answer.trim()) {
       setGrading(true)
       try {
         const res = await evaluateStudentAnswer(card.front, card.back, answer)
@@ -71,7 +74,7 @@ export default function ActiveRecallCard({
         setGrading(false)
       }
     }
-  }, [card.front, card.back, answer])
+  }, [card.front, card.back, answer, autoGradeEnabled])
 
   const handlerRef = useRef<{
     phase: Phase
@@ -241,7 +244,7 @@ export default function ActiveRecallCard({
           )}
 
           {/* Auto-grade feedback */}
-          {(answer.trim() || autoGradeResult || grading) && (
+          {autoGradeEnabled && (answer.trim() || autoGradeResult || grading) && (
             <AutoGradeFeedback
               result={autoGradeResult}
               loading={grading}

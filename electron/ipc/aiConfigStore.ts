@@ -174,6 +174,27 @@ export function getApiKey(): string {
     return 'ollama'
   }
 
+  // Check Multi-Key Vault based on active provider configuration
+  try {
+    const activeProvider = readMeta('ai_provider') || DEFAULT_PROVIDER
+    const activeBaseUrl = readMeta('ai_base_url') || DEFAULT_BASE_URL
+    if (activeProvider === 'gemini') {
+      const k = getStoredKey('gemini')
+      if (k) return k
+    } else if (activeBaseUrl.includes('deepseek.com')) {
+      const k = getStoredKey('deepseek')
+      if (k) return k
+    } else if (activeBaseUrl.includes('openai.com')) {
+      const k = getStoredKey('openai')
+      if (k) return k
+    } else if (activeBaseUrl.includes('groq.com')) {
+      const k = getStoredKey('groq')
+      if (k) return k
+    }
+  } catch {
+    // ignore
+  }
+
   return ''
 }
 
@@ -570,5 +591,72 @@ export function saveMultiKeyVault(updates: {
 
   if (updates.visionModel) {
     writeMeta('vision_model', updates.visionModel.trim())
+  }
+}
+
+export function resolveAIConfig(providerOverride?: string): {
+  provider: string
+  baseUrl: string
+  model: string
+  apiKey: string
+} {
+  const norm = (providerOverride || '').toLowerCase().trim()
+
+  if (norm === 'deepseek') {
+    const key = getStoredKey('deepseek') || getApiKey()
+    return {
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      apiKey: key
+    }
+  }
+
+  if (norm === 'gemini') {
+    const key = getStoredKey('gemini') || getApiKey()
+    return {
+      provider: 'gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-2.0-flash',
+      apiKey: key
+    }
+  }
+
+  if (norm === 'openai') {
+    const key = getStoredKey('openai') || getApiKey()
+    return {
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.openai.com',
+      model: 'gpt-4o-mini',
+      apiKey: key
+    }
+  }
+
+  if (norm === 'groq') {
+    const key = getStoredKey('groq') || getApiKey()
+    return {
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.groq.com/openai',
+      model: 'llama-3.3-70b-versatile',
+      apiKey: key
+    }
+  }
+
+  // Default system provider
+  const cfg = getAIConfig()
+  let key = getApiKey()
+  if (!key) {
+    if (cfg.provider === 'gemini') key = getStoredKey('gemini')
+    else if (cfg.baseUrl?.includes('deepseek')) key = getStoredKey('deepseek')
+    else if (cfg.baseUrl?.includes('openai')) key = getStoredKey('openai')
+    else if (cfg.baseUrl?.includes('groq')) key = getStoredKey('groq')
+    else key = getStoredKey('deepseek') || getStoredKey('gemini') || getStoredKey('openai')
+  }
+
+  return {
+    provider: cfg.provider,
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    apiKey: key
   }
 }

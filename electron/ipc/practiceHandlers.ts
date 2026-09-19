@@ -1,16 +1,17 @@
 import { ipcMain } from "electron"
 import Database from "better-sqlite3"
 import { callAIMessages } from "./aiHandlers"
-import { getAIConfig, getApiKey } from "./aiConfigStore"
+import { resolveAIConfig } from "./aiConfigStore"
 import {
   buildExtractPracticeProblemsPrompt,
   buildGenerateVariantPrompt,
   buildEvaluatePracticeAttemptPrompt,
   buildAutonomousPracticeProblemPrompt
 } from "../../src/lib/practicePrompts"
+import { evaluatePracticeProblemQuality } from "../../src/lib/practiceValidator"
 import { parseDocumentTopology } from "../../src/lib/coverage/documentTopologyParser"
 import { classifyMaterialDomain } from "../../src/lib/classification/domainClassifier"
-import { cleanMarkdownFences } from "../../src/lib/jsonRepair"
+import { cleanMarkdownFences, safeParseAIJson } from "../../src/lib/jsonRepair"
 import {
   recordTopicAssessment,
   recordMisconception,
@@ -34,18 +35,38 @@ export function setPracticeDatabase(database: Database.Database): void {
   db = database
 }
 
+function detectModality(filename?: string, content?: string): 'slides' | 'textbook' | 'transcript' | 'general' {
+  const lowerName = (filename || '').toLowerCase()
+  const lowerContent = (content || '').toLowerCase()
+  if (lowerName.includes('slide') || lowerName.includes('presentation') || lowerName.includes('deck') || lowerName.endsWith('.pptx')) {
+    return 'slides'
+  }
+  if (lowerName.includes('transcript') || lowerName.includes('lecture') || lowerName.includes('audio') || lowerName.endsWith('.vtt') || lowerName.endsWith('.srt') || lowerContent.includes('[00:') || lowerContent.includes('timestamp')) {
+    return 'transcript'
+  }
+  if (lowerName.includes('chapter') || lowerName.includes('textbook') || lowerName.includes('book') || lowerName.includes('ch_') || lowerName.includes('ch0') || lowerName.includes('ch1')) {
+    return 'textbook'
+  }
+  return 'general'
+}
+
 async function extractProblemsFromMaterialText(
   text: string,
   subjectName: string,
   filename?: string,
   moduleTitle?: string,
-  topicTitle?: string
+  topicTitle?: string,
+  engineOverride?: string
 ): Promise<ExtractedPracticeProblem[]> {
-  const config = getAIConfig()
-  const apiKey = getApiKey()
-  if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+  const aiConfig = resolveAIConfig(engineOverride)
+  if (!aiConfig.apiKey) {
+    throw new Error(
+      `No API key configured for ${engineOverride || aiConfig.provider}. Please configure your API key in Settings.`
+    )
+  }
 
   const domainResult = classifyMaterialDomain(text, subjectName, filename)
+  const modality = detectModality(filename, text)
 
   const chunksToProcess: { text: string; title?: string }[] = []
   if (text.length > 6000) {
@@ -62,6 +83,7 @@ async function extractProblemsFromMaterialText(
   }
 
   const allProblems: ExtractedPracticeProblem[] = []
+  let lastError: Error | null = null
 
   for (const chunk of chunksToProcess) {
     const prompt = buildExtractPracticeProblemsPrompt(
@@ -69,33 +91,64 @@ async function extractProblemsFromMaterialText(
       subjectName,
       moduleTitle ? `${moduleTitle}${chunk.title ? ` - ${chunk.title}` : ''}` : chunk.title,
       topicTitle,
-      domainResult
+      domainResult,
+      modality
     )
 
     try {
       const responseText = await callAIMessages(
         [{ role: "user", content: prompt }],
-        { ...config, apiKey },
+        aiConfig,
         { type: "json_object" }
       )
 
-      const cleanedJson = cleanMarkdownFences(responseText)
-      let parsed: { problems?: ExtractedPracticeProblem[] } = {}
-      try {
-        parsed = JSON.parse(cleanedJson)
-      } catch {
-        const match = cleanedJson.match(/\{.*"problems"\s*:\s*\[([\s\S]*?)\]\s*\}/)
-        if (match) {
-          parsed = JSON.parse(match[0])
+      const parsed = safeParseAIJson<{ problems?: ExtractedPracticeProblem[] }>(responseText, {})
+      if (parsed.problems && Array.isArray(parsed.problems) && parsed.problems.length > 0) {
+        for (const p of parsed.problems) {
+          const quality = evaluatePracticeProblemQuality(p)
+          p.quality_score = quality.quality_score
+          p.cover_test_passed = quality.cover_test_passed
+          p.discipline_paradigm = p.discipline_paradigm || domainResult.primaryArchetype
+          allProblems.push(p)
         }
+      } else {
+        throw new Error("Model returned empty or unparseable problem list.")
       }
+    } catch (chunkErr: any) {
+      console.warn("Primary model failed for chunk:", chunk.title, chunkErr)
+      lastError = chunkErr instanceof Error ? chunkErr : new Error(String(chunkErr))
 
-      if (parsed.problems && Array.isArray(parsed.problems)) {
-        allProblems.push(...parsed.problems)
+      // Fallback: If primary model was Gemini and failed, try DeepSeek if key is available, or vice-versa
+      try {
+        const fallbackProvider = aiConfig.provider === 'gemini' ? 'deepseek' : 'gemini'
+        const fallbackConfig = resolveAIConfig(fallbackProvider)
+        if (fallbackConfig.apiKey && fallbackConfig.apiKey !== aiConfig.apiKey) {
+          console.log(`Attempting fallback extraction using ${fallbackProvider}…`)
+          const fallbackText = await callAIMessages(
+            [{ role: "user", content: prompt }],
+            fallbackConfig,
+            { type: "json_object" }
+          )
+          const fallbackParsed = safeParseAIJson<{ problems?: ExtractedPracticeProblem[] }>(fallbackText, {})
+          if (fallbackParsed.problems && Array.isArray(fallbackParsed.problems) && fallbackParsed.problems.length > 0) {
+            for (const p of fallbackParsed.problems) {
+              const quality = evaluatePracticeProblemQuality(p)
+              p.quality_score = quality.quality_score
+              p.cover_test_passed = quality.cover_test_passed
+              p.discipline_paradigm = p.discipline_paradigm || domainResult.primaryArchetype
+              allProblems.push(p)
+            }
+            lastError = null
+          }
+        }
+      } catch (fallbackErr) {
+        console.warn("Fallback model also failed:", fallbackErr)
       }
-    } catch (chunkErr) {
-      console.warn("Error extracting problems from chunk:", chunk.title, chunkErr)
     }
+  }
+
+  if (allProblems.length === 0 && lastError) {
+    throw new Error(`Practice problem extraction failed: ${lastError.message}`)
   }
 
   // Deduplicate extracted problems across chunks
@@ -152,12 +205,16 @@ export function registerPracticeHandlers(): void {
   // ── 3. Create Problem ────────────────────────────────────────────────────
   ipcMain.handle("practice:createProblem", (_event, problem: Partial<PracticeProblem>) => {
     try {
+      const quality = evaluatePracticeProblemQuality(problem as PracticeProblem)
       const stmt = db.prepare(`
         INSERT INTO practice_problems (
           subject_id, module_id, topic_id, material_id,
           title, problem_text, solution_steps, final_answer,
-          difficulty, principles_json, is_ai_generated, parent_problem_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          difficulty, principles_json, is_ai_generated, parent_problem_id,
+          stimulus, stem_lead_in, options_json, correct_key,
+          blooms_revised, webbs_dok, discipline_paradigm,
+          subgoals_json, item_validation_json, quality_score, cover_test_passed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       const res = stmt.run(
         problem.subject_id,
@@ -171,7 +228,18 @@ export function registerPracticeHandlers(): void {
         problem.difficulty || 2,
         problem.principles_json || "[]",
         problem.is_ai_generated || 0,
-        problem.parent_problem_id || null
+        problem.parent_problem_id || null,
+        problem.stimulus || null,
+        problem.stem_lead_in || null,
+        problem.options_json || null,
+        problem.correct_key || null,
+        problem.blooms_revised || null,
+        problem.webbs_dok || null,
+        problem.discipline_paradigm || null,
+        problem.subgoals_json || null,
+        problem.item_validation_json || null,
+        problem.quality_score ?? quality.quality_score,
+        problem.cover_test_passed !== undefined ? (problem.cover_test_passed ? 1 : 0) : (quality.cover_test_passed ? 1 : 0)
       )
       return db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
     } catch (err) {
@@ -194,7 +262,7 @@ export function registerPracticeHandlers(): void {
   // ── 5. Extract Problems from Material ────────────────────────────────────
   ipcMain.handle(
     "practice:extractFromMaterial",
-    async (_event, subjectId: number, materialId: number, moduleId?: number, topicId?: number) => {
+    async (_event, subjectId: number, materialId: number, moduleId?: number, topicId?: number, engineOverride?: string) => {
       try {
         const material = db.prepare("SELECT * FROM materials WHERE id = ?").get(materialId) as
           | { filename: string; content_text: string }
@@ -224,8 +292,13 @@ export function registerPracticeHandlers(): void {
           subject?.name || "Subject",
           material.filename,
           moduleTitle,
-          topicTitle
+          topicTitle,
+          engineOverride
         )
+
+        if (!problems || problems.length === 0) {
+          throw new Error("No practice problems could be identified or extracted from this material.")
+        }
 
         const created: PracticeProblem[] = []
 
@@ -233,12 +306,16 @@ export function registerPracticeHandlers(): void {
           INSERT INTO practice_problems (
             subject_id, module_id, topic_id, material_id,
             title, problem_text, solution_steps, final_answer,
-            difficulty, principles_json, is_ai_generated
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            difficulty, principles_json, is_ai_generated, parent_problem_id,
+            stimulus, stem_lead_in, options_json, correct_key,
+            blooms_revised, webbs_dok, discipline_paradigm,
+            subgoals_json, item_validation_json, quality_score, cover_test_passed
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
 
         for (const p of problems) {
           if (!p.problem_text) continue
+          const quality = evaluatePracticeProblemQuality(p)
           const res = insertStmt.run(
             subjectId,
             moduleId || null,
@@ -249,7 +326,18 @@ export function registerPracticeHandlers(): void {
             p.solution_steps || null,
             p.final_answer || null,
             p.difficulty || 2,
-            JSON.stringify(p.principles || [])
+            JSON.stringify(p.principles || []),
+            p.stimulus || null,
+            p.stem_lead_in || null,
+            p.options ? JSON.stringify(p.options) : null,
+            p.correct_key || null,
+            typeof p.cognitive_level === 'object' ? p.cognitive_level?.blooms_revised : (p.blooms_revised || null),
+            typeof p.cognitive_level === 'object' ? p.cognitive_level?.webbs_dok : (p.webbs_dok || null),
+            p.discipline_paradigm || null,
+            p.subgoals ? JSON.stringify(p.subgoals) : null,
+            p.item_validation ? JSON.stringify(p.item_validation) : null,
+            p.quality_score ?? quality.quality_score,
+            p.cover_test_passed !== undefined ? (p.cover_test_passed ? 1 : 0) : (quality.cover_test_passed ? 1 : 0)
           )
           const row = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
           if (row) created.push(row)
@@ -266,7 +354,7 @@ export function registerPracticeHandlers(): void {
   // ── 6. Extract Problems from Text ────────────────────────────────────────
   ipcMain.handle(
     "practice:extractFromText",
-    async (_event, subjectId: number, text: string, moduleId?: number, topicId?: number) => {
+    async (_event, subjectId: number, text: string, moduleId?: number, topicId?: number, engineOverride?: string) => {
       try {
         if (!text || text.trim().length < 20) {
           throw new Error("Text is too short to extract practice problems.")
@@ -293,20 +381,30 @@ export function registerPracticeHandlers(): void {
           subject?.name || "Subject",
           undefined,
           moduleTitle,
-          topicTitle
+          topicTitle,
+          engineOverride
         )
+
+        if (!problems || problems.length === 0) {
+          throw new Error("No practice problems could be identified or extracted from this text.")
+        }
+
         const created: PracticeProblem[] = []
 
         const insertStmt = db.prepare(`
           INSERT INTO practice_problems (
             subject_id, module_id, topic_id,
             title, problem_text, solution_steps, final_answer,
-            difficulty, principles_json, is_ai_generated
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            difficulty, principles_json, is_ai_generated, parent_problem_id,
+            stimulus, stem_lead_in, options_json, correct_key,
+            blooms_revised, webbs_dok, discipline_paradigm,
+            subgoals_json, item_validation_json, quality_score, cover_test_passed
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
 
         for (const p of problems) {
           if (!p.problem_text) continue
+          const quality = evaluatePracticeProblemQuality(p)
           const res = insertStmt.run(
             subjectId,
             moduleId || null,
@@ -316,7 +414,18 @@ export function registerPracticeHandlers(): void {
             p.solution_steps || null,
             p.final_answer || null,
             p.difficulty || 2,
-            JSON.stringify(p.principles || [])
+            JSON.stringify(p.principles || []),
+            p.stimulus || null,
+            p.stem_lead_in || null,
+            p.options ? JSON.stringify(p.options) : null,
+            p.correct_key || null,
+            typeof p.cognitive_level === 'object' ? p.cognitive_level?.blooms_revised : (p.blooms_revised || null),
+            typeof p.cognitive_level === 'object' ? p.cognitive_level?.webbs_dok : (p.webbs_dok || null),
+            p.discipline_paradigm || null,
+            p.subgoals ? JSON.stringify(p.subgoals) : null,
+            p.item_validation ? JSON.stringify(p.item_validation) : null,
+            p.quality_score ?? quality.quality_score,
+            p.cover_test_passed !== undefined ? (p.cover_test_passed ? 1 : 0) : (quality.cover_test_passed ? 1 : 0)
           )
           const row = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
           if (row) created.push(row)
@@ -340,13 +449,12 @@ export function registerPracticeHandlers(): void {
 
         const prompt = buildGenerateVariantPrompt(baseProblem, userStruggles)
 
-        const config = getAIConfig()
-        const apiKey = getApiKey()
-        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+        const aiConfig = resolveAIConfig()
+        if (!aiConfig.apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
 
         const responseText = await callAIMessages(
           [{ role: "user", content: prompt }],
-          { ...config, apiKey },
+          aiConfig,
           { type: "json_object" }
         )
 
@@ -358,12 +466,17 @@ export function registerPracticeHandlers(): void {
           throw new Error("Failed to parse generated variant JSON.")
         }
 
+        const quality = evaluatePracticeProblemQuality(parsed)
+
         const stmt = db.prepare(`
           INSERT INTO practice_problems (
             subject_id, module_id, topic_id, material_id,
             title, problem_text, solution_steps, final_answer,
-            difficulty, principles_json, is_ai_generated, parent_problem_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            difficulty, principles_json, is_ai_generated, parent_problem_id,
+            stimulus, stem_lead_in, options_json, correct_key,
+            blooms_revised, webbs_dok, discipline_paradigm,
+            subgoals_json, item_validation_json, quality_score, cover_test_passed
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
 
         const res = stmt.run(
@@ -377,7 +490,18 @@ export function registerPracticeHandlers(): void {
           parsed.final_answer,
           parsed.difficulty || baseProblem.difficulty,
           JSON.stringify(parsed.principles || []),
-          baseProblem.id
+          baseProblem.id,
+          parsed.stimulus || null,
+          parsed.stem_lead_in || null,
+          parsed.options ? JSON.stringify(parsed.options) : null,
+          parsed.correct_key || null,
+          parsed.blooms_revised || baseProblem.blooms_revised || 'Apply',
+          parsed.webbs_dok || baseProblem.webbs_dok || 'DOK2',
+          parsed.discipline_paradigm || baseProblem.discipline_paradigm || null,
+          parsed.subgoals ? JSON.stringify(parsed.subgoals) : null,
+          parsed.item_validation ? JSON.stringify(parsed.item_validation) : null,
+          parsed.quality_score ?? quality.quality_score,
+          parsed.cover_test_passed !== undefined ? (parsed.cover_test_passed ? 1 : 0) : (quality.cover_test_passed ? 1 : 0)
         )
 
         const variant = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
@@ -402,12 +526,12 @@ export function registerPracticeHandlers(): void {
           materialId,
           count = 4,
           autoCount = false,
-          difficultyFocus = 'adaptive'
+          difficultyFocus = 'adaptive',
+          customInstructions
         } = options
 
-        const config = getAIConfig()
-        const apiKey = getApiKey()
-        if (!apiKey) {
+        const aiConfig = resolveAIConfig()
+        if (!aiConfig.apiKey) {
           throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
         }
 
@@ -505,13 +629,14 @@ export function registerPracticeHandlers(): void {
           count,
           autoCount,
           difficultyFocus,
-          domainResult
+          domainResult,
+          customInstructions
         })
 
         // 8. Execute LLM Call
         const responseText = await callAIMessages(
           [{ role: "user", content: prompt }],
-          { ...config, apiKey },
+          aiConfig,
           { type: "json_object" }
         )
 
@@ -538,8 +663,11 @@ export function registerPracticeHandlers(): void {
           INSERT INTO practice_problems (
             subject_id, module_id, topic_id, material_id,
             title, problem_text, solution_steps, final_answer,
-            difficulty, principles_json, is_ai_generated, parent_problem_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            difficulty, principles_json, is_ai_generated, parent_problem_id,
+            stimulus, stem_lead_in, options_json, correct_key,
+            blooms_revised, webbs_dok, discipline_paradigm,
+            subgoals_json, item_validation_json, quality_score, cover_test_passed
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
 
         const created: PracticeProblem[] = []
@@ -547,6 +675,7 @@ export function registerPracticeHandlers(): void {
 
         for (const p of parsed.problems) {
           if (!p || !p.problem_text) continue
+          const quality = evaluatePracticeProblemQuality(p)
 
           const res = insertStmt.run(
             subjectId,
@@ -559,7 +688,18 @@ export function registerPracticeHandlers(): void {
             p.final_answer || null,
             p.difficulty || 3,
             JSON.stringify(p.principles || []),
-            parentExemplarId
+            parentExemplarId,
+            p.stimulus || null,
+            p.stem_lead_in || null,
+            p.options ? JSON.stringify(p.options) : null,
+            p.correct_key || null,
+            typeof p.cognitive_level === 'object' ? p.cognitive_level?.blooms_revised : (p.blooms_revised || 'Apply'),
+            typeof p.cognitive_level === 'object' ? p.cognitive_level?.webbs_dok : (p.webbs_dok || 'DOK2'),
+            p.discipline_paradigm || domainResult.primaryArchetype,
+            p.subgoals ? JSON.stringify(p.subgoals) : null,
+            p.item_validation ? JSON.stringify(p.item_validation) : null,
+            p.quality_score ?? quality.quality_score,
+            p.cover_test_passed !== undefined ? (p.cover_test_passed ? 1 : 0) : (quality.cover_test_passed ? 1 : 0)
           )
 
           const row = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
@@ -661,13 +801,12 @@ export function registerPracticeHandlers(): void {
 
         // Run AI evaluation
         const prompt = buildEvaluatePracticeAttemptPrompt(problem, userAnswer)
-        const config = getAIConfig()
-        const apiKey = getApiKey()
-        if (!apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+        const aiConfig = resolveAIConfig()
+        if (!aiConfig.apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
 
         const responseText = await callAIMessages(
           [{ role: "user", content: prompt }],
-          { ...config, apiKey },
+          aiConfig,
           { type: "json_object" }
         )
 

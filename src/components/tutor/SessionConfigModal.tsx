@@ -26,7 +26,7 @@ interface SessionConfigModalProps {
   onClose: () => void
 }
 
-type StudyMode = 'fill_gaps' | 'syllabus' | 'material' | 'custom'
+type StudyMode = 'fill_gaps' | 'active_recall' | 'syllabus' | 'material' | 'custom'
 
 export default function SessionConfigModal({
   subjectId,
@@ -210,11 +210,16 @@ export default function SessionConfigModal({
     let isFillGaps = false
     let gapTopics: string[] = []
 
+    let isActiveRecall = false
+
     if (studyMode === 'fill_gaps') {
       isFillGaps = true
       gapTopics = gapAnalysis?.recommendedTopics || []
       chosenTopic = gapAnalysis?.recommendedFocus || 'Identified Knowledge Gaps'
       chosenModuleId = gapAnalysis?.recommendedModuleId
+    } else if (studyMode === 'active_recall') {
+      isActiveRecall = true
+      chosenTopic = 'Active Recall Drill — Rapid Q&A'
     } else if (studyMode === 'syllabus') {
       const activeMod = modules.find(m => m.id === selectedModuleId)
       chosenModuleId = activeMod?.id
@@ -248,7 +253,8 @@ export default function SessionConfigModal({
       target_topic: chosenTopic,
       target_topics: chosenTopics.length > 0 ? chosenTopics : undefined,
       is_fill_gaps: isFillGaps,
-      gap_topics: gapTopics
+      gap_topics: gapTopics,
+      is_active_recall: isActiveRecall
     }
 
     const encoded = encodeURIComponent(JSON.stringify(config))
@@ -306,7 +312,7 @@ export default function SessionConfigModal({
             </label>
 
             {/* Mode selection buttons */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
               <button
                 type="button"
                 onClick={() => setStudyMode('fill_gaps')}
@@ -320,7 +326,24 @@ export default function SessionConfigModal({
                   <span>⚡</span> Fill Gaps
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Auto-target weaknesses
+                  Auto-target gaps
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStudyMode('active_recall')}
+                className={`p-2.5 rounded-xl text-left border transition-all relative ${
+                  studyMode === 'active_recall'
+                    ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100 shadow-sm'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1 text-emerald-600 dark:text-emerald-400">
+                  <span>🎯</span> Active Recall
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                  Continuous Q&A
                 </div>
               </button>
 
@@ -337,7 +360,7 @@ export default function SessionConfigModal({
                   <span>📖</span> Syllabus
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Choose module/topic
+                  Choose module
                 </div>
               </button>
 
@@ -354,7 +377,7 @@ export default function SessionConfigModal({
                   <span>📄</span> Material
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Study specific file
+                  Study file
                 </div>
               </button>
 
@@ -371,10 +394,22 @@ export default function SessionConfigModal({
                   <span>✏️</span> Custom
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Type any topic
+                  Type topic
                 </div>
               </button>
             </div>
+
+            {/* ── Mode Active Recall Box ── */}
+            {studyMode === 'active_recall' && (
+              <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-50/80 to-teal-50/50 dark:from-emerald-950/40 dark:to-teal-950/20 border border-emerald-200 dark:border-emerald-800 space-y-2">
+                <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                  <span>🎯</span> Continuous Active Recall Drill
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  The AI tutor will ask sharp active recall questions one after another, correct your answers immediately with clean LaTeX math solutions, and keep going continuously until you finish.
+                </p>
+              </div>
+            )}
 
             {/* ── Mode 1: Fill in Gaps Box ── */}
             {studyMode === 'fill_gaps' && (

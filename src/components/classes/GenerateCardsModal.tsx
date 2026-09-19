@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import type { SyllabusModule, ModuleTopic, ModuleCardGenType, ModuleCardGenOptions } from '../../types'
-import { CARD_GEN_PRESETS } from '../../types'
+import LoadingProgressBar from '../common/LoadingProgressBar'
+import type { SyllabusModule, ModuleTopic, ModuleCardGenOptions, ModuleCardGenType } from '../../types'
+
+const CARD_GEN_PRESETS = [5, 10, 15, 20, 30]
 
 interface GenerateCardsModalProps {
   isOpen: boolean
@@ -288,6 +290,17 @@ export default function GenerateCardsModal({
                 </div>
               )}
           </div>
+
+          {/* Generating Loading Progress Bar */}
+          {isGenerating && (
+            <div className="p-4 rounded-xl bg-violet-50/80 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 animate-in fade-in">
+              <LoadingProgressBar
+                label={isAutoCount ? "AI Deciding Optimal Card Count & Generating..." : `Generating ${cardCount} High-Yield Cards...`}
+                sublabel="Extracting concepts, formatting LaTeX math, and running deduplication check..."
+                size="md"
+              />
+            </div>
+          )}
 
           {/* Cognitive Science & Deduplication Badges */}
           <div className="space-y-2 pt-1">

@@ -94,7 +94,7 @@ async function transcribeWithGeminiVision(
   model: string = 'gemini-2.0-flash'
 ): Promise<string> {
   const base64Data = imageBuffer.toString('base64')
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
 
   const prompt =
     'You are an expert academic assistant and transcriber. Transcribe all text, questions, homework exercises, ' +
@@ -105,15 +105,18 @@ async function transcribeWithGeminiVision(
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey
+    },
     body: JSON.stringify({
       contents: [
         {
           parts: [
             { text: prompt },
             {
-              inline_data: {
-                mime_type: mimeType,
+              inlineData: {
+                mimeType,
                 data: base64Data
               }
             }
@@ -321,9 +324,29 @@ export async function extractTextFromImage(input: string | Buffer): Promise<stri
       try {
         let visionText = ''
         if (visionConfig.provider === 'gemini') {
-          visionText = await transcribeWithGeminiVision(buffer, mimeType, visionConfig.apiKey, visionConfig.model)
+          try {
+            visionText = await transcribeWithGeminiVision(buffer, mimeType, visionConfig.apiKey, visionConfig.model)
+          } catch (geminiErr) {
+            console.warn('Gemini Vision failed, checking for secondary OpenAI key:', geminiErr)
+            const openaiKey = getStoredKey('openai')
+            if (openaiKey) {
+              visionText = await transcribeWithOpenAIVision(buffer, mimeType, openaiKey, 'gpt-4o-mini')
+            } else {
+              throw geminiErr
+            }
+          }
         } else {
-          visionText = await transcribeWithOpenAIVision(buffer, mimeType, visionConfig.apiKey, visionConfig.model)
+          try {
+            visionText = await transcribeWithOpenAIVision(buffer, mimeType, visionConfig.apiKey, visionConfig.model)
+          } catch (openaiErr) {
+            console.warn('OpenAI Vision failed, checking for secondary Gemini key:', openaiErr)
+            const geminiKey = getStoredKey('gemini')
+            if (geminiKey) {
+              visionText = await transcribeWithGeminiVision(buffer, mimeType, geminiKey, 'gemini-2.0-flash')
+            } else {
+              throw openaiErr
+            }
+          }
         }
         if (visionText && visionText.trim().length >= 10) {
           return cleanExtractedText(visionText)

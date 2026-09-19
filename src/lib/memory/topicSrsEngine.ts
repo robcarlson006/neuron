@@ -288,7 +288,7 @@ export function updateTopicSrsState(
 
   const newReps = (existing?.reps ?? 0) + 1
   const newLapses = rating === 1 ? (existing?.lapses ?? 0) + 1 : (existing?.lapses ?? 0)
-  const currentR = computeTopicRetrievability(next.stability, now)
+  const currentR = computeTopicRetrievability(next.stability, now, now)
   const status = classifyRetentionStatus(currentR, next.dueDate, todayStr)
 
   db.prepare(`

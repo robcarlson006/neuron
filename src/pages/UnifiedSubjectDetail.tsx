@@ -8,7 +8,7 @@ import CurriculumView from '../components/classes/CurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
 import CardImportModal from '../components/CardImportModal'
-import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture } from '../types'
+import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats } from '../types'
 import { useLectureRecordingStore } from '../store/lectureRecordingStore'
 import LectureAudioPlayer from '../components/classes/LectureAudioPlayer'
 import LectureNotesModal from '../components/classes/LectureNotesModal'
@@ -71,6 +71,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
   // ── Curriculum state (from ClassOverview) ──
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
+  const [moduleTutorStats, setModuleTutorStats] = useState<Record<number, ModuleTutorStats>>({})
   const [loadingCards, setLoadingCards] = useState<Record<number, boolean>>({})
   const [, setStudyLog] = useState<Record<number, boolean>>({})
 
@@ -183,6 +184,14 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             modsWithTopics.push({ ...mod, topics: topList || [] })
           }
           setModules(modsWithTopics)
+
+          // Load module-level tutor stats
+          if (window.electronAPI.tutorGetSubjectModuleStats) {
+            try {
+              const stats = await window.electronAPI.tutorGetSubjectModuleStats(subjectId, user?.id)
+              setModuleTutorStats(stats || {})
+            } catch { /* ignore */ }
+          }
 
           // Load study log
           if (hasCurriculum && user) {
@@ -906,12 +915,13 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           <button
             onClick={() => setShowTextImport(true)}
             className="btn-secondary text-sm flex items-center gap-1.5"
+            title="Generate or import flashcards"
           >
             <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
               <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
-            Import
+            Cards
           </button>
           <button
             onClick={handleAnkiImport}
@@ -1158,6 +1168,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             <CurriculumView
               modules={modules}
               subjectName={subject?.name}
+              moduleTutorStats={moduleTutorStats}
               onStartTutor={handleStartTutor}
               onStartSpacedReview={handleStartSpacedReview}
               onGenerateCards={handleGenerateCards}

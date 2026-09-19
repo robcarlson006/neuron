@@ -5,6 +5,7 @@ import ChatMessage from '../../components/tutor/ChatMessage'
 import ChatInput from '../../components/tutor/ChatInput'
 import TutorCardReviewModal from '../../components/tutor/TutorCardReviewModal'
 import TutorChatSidebar from './TutorChatSidebar'
+import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
@@ -715,17 +716,17 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           const suggestsDeepDive = assistantCount >= 2 && lower.includes('deep dive')
           const suggestsSummary = assistantCount >= 2 && (lower.includes('session summary') || lower.includes('wrap up'))
 
-          // Only honor transition suggestions if >30% time has elapsed or time is unlimited
-          const canTransition = runtime.config.duration_minutes === null ||
-            (runtime.config.duration_minutes > 0 &&
-              runtime.time_elapsed_seconds / (runtime.config.duration_minutes * 60) > 0.3)
+          // Only honor transition suggestions if remaining time is under 30s or duration is unlimited
+          const isNearTimeUp = runtime.config.duration_minutes === null ||
+            runtime.time_remaining_seconds <= 30 ||
+            runtime.is_time_up
 
           const curPhase = sessionPhaseRef.current
-          if (curPhase === 'structured_qa' && suggestsDeepDive && canTransition) {
+          if (curPhase === 'structured_qa' && suggestsDeepDive) {
             setPageState('phase_transition')
             return
           }
-          if (curPhase === 'socratic' && suggestsSummary && canTransition) {
+          if (curPhase === 'socratic' && suggestsSummary && isNearTimeUp) {
             setPageState('phase_transition')
             return
           }
@@ -1655,6 +1656,22 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 Continue Studying
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ending Session Loading Progress Overlay */}
+      {endingSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl max-w-md w-full space-y-4 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-violet-100 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center text-2xl mx-auto">
+              📊
+            </div>
+            <LoadingProgressBar
+              label="Finishing Tutor Session..."
+              sublabel="Analyzing dialogue, recording strengths & struggles, and updating your curriculum progress..."
+              size="lg"
+            />
           </div>
         </div>
       )}

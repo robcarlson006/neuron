@@ -18,9 +18,11 @@ export default function PracticeUploadModal({
   const [tab, setTab] = useState<"file" | "paste">("file")
   const [selectedModuleId, setSelectedModuleId] = useState<number | undefined>()
   const [selectedTopicId, setSelectedTopicId] = useState<number | undefined>()
+  const [extractionEngine, setExtractionEngine] = useState<string>("deepseek")
   const [pastedText, setPastedText] = useState<string>("")
   const [selectedFile, setSelectedFile] = useState<{ path: string; name: string } | null>(null)
   const [isDragging, setIsDragging] = useState<boolean>(false)
+  const [fallbackToPaste, setFallbackToPaste] = useState<boolean>(false)
   const [loading, setLoading] = useState<boolean>(false)
   const [loadingMessage, setLoadingMessage] = useState<string>("Extracting with AI…")
   const [error, setError] = useState<string | null>(null)
@@ -126,7 +128,8 @@ export default function PracticeUploadModal({
         // Parse file (includes OCR and Vision AI fallback for images & scanned PDFs)
         const parsed = await window.electronAPI.parseFile(selectedFile.path)
         if (!parsed.contentText || parsed.contentText.trim().length < 15) {
-          setError("Could not extract sufficient text from this file. Ensure the image or PDF is clear and readable.")
+          setError("The scan could not read clear text from this screenshot. Switch to 'Paste Text' so DeepSeek can extract problems directly from your input.")
+          setFallbackToPaste(true)
           setLoading(false)
           return
         }
@@ -146,7 +149,8 @@ export default function PracticeUploadModal({
           subjectId,
           matRes.id,
           selectedModuleId,
-          selectedTopicId
+          selectedTopicId,
+          extractionEngine
         )
 
         if (!res.success) {
@@ -167,7 +171,8 @@ export default function PracticeUploadModal({
           subjectId,
           pastedText,
           selectedModuleId,
-          selectedTopicId
+          selectedTopicId,
+          extractionEngine
         )
 
         if (!res.success) {
@@ -265,6 +270,24 @@ export default function PracticeUploadModal({
             </div>
           </div>
 
+          {/* AI Extraction Engine Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+              <span>AI Extraction Engine</span>
+              <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium">DeepSeek recommended</span>
+            </label>
+            <select
+              value={extractionEngine}
+              onChange={(e) => setExtractionEngine(e.target.value)}
+              className="w-full text-xs px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            >
+              <option value="deepseek">DeepSeek (deepseek-chat) — Best for math, code & complex logic</option>
+              <option value="gemini">Google Gemini (gemini-2.0-flash) — Ultra-fast extraction</option>
+              <option value="openai">OpenAI (gpt-4o-mini) — Fast & reliable</option>
+              <option value="default">System Default (configured in Settings)</option>
+            </select>
+          </div>
+
           {/* File Picker or Paste Area */}
           {tab === "file" ? (
             <div
@@ -283,9 +306,19 @@ export default function PracticeUploadModal({
                 <Upload size={22} />
               </div>
               {selectedFile ? (
-                <div>
+                <div className="flex flex-col items-center">
                   <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{selectedFile.name}</p>
                   <p className="text-xs text-violet-600 dark:text-violet-400 mt-1">Click, drop, or paste (⌘V) a different file</p>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTab("paste")
+                    }}
+                    className="mt-2 text-xs text-slate-500 hover:text-violet-600 dark:text-slate-400 dark:hover:text-violet-400 underline cursor-pointer"
+                  >
+                    Screenshot text not scanning? Switch to Paste Text for DeepSeek →
+                  </button>
                 </div>
               ) : (
                 <div>
@@ -297,6 +330,18 @@ export default function PracticeUploadModal({
                     <span>💡 Tip: Press</span>
                     <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-xs font-mono font-bold">⌘V</kbd>
                     <span>to paste a screenshot directly</span>
+                  </div>
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setTab("paste")
+                      }}
+                      className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline cursor-pointer"
+                    >
+                      Have raw problem text instead? Use Paste Text →
+                    </button>
                   </div>
                 </div>
               )}
@@ -315,9 +360,24 @@ export default function PracticeUploadModal({
           )}
 
           {error && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs border border-rose-200 dark:border-rose-900">
-              <AlertCircle size={16} className="shrink-0" />
-              <span>{error}</span>
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs border border-rose-200 dark:border-rose-900 space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle size={16} className="shrink-0" />
+                <span>{error}</span>
+              </div>
+              {fallbackToPaste && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTab("paste")
+                    setError(null)
+                    setFallbackToPaste(false)
+                  }}
+                  className="w-full py-1.5 px-3 bg-violet-600 hover:bg-violet-700 text-white font-medium rounded-lg text-xs transition-colors cursor-pointer text-center"
+                >
+                  Switch to Paste Text for DeepSeek →
+                </button>
+              )}
             </div>
           )}
         </div>

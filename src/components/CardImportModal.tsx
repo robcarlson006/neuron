@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react'
 import type { Subject, CardFolder, ModuleCardGenType, ModuleCardGenOptions, Material } from '../types'
 import { CARD_GEN_PRESETS } from '../types'
 import LatexText from './LatexText'
+import { autoFormatMathLocal, preprocessLatexText } from '../lib/mathFormatter'
 
 interface CardImportModalProps {
   isOpen: boolean
@@ -157,10 +158,10 @@ export default function CardImportModal({
       .map(chunk => {
         const sepIndex = chunk.indexOf(termSep)
         if (sepIndex === -1) return null
-        const front = chunk.slice(0, sepIndex).trim()
-        const back = chunk.slice(sepIndex + termSep.length).trim()
-        if (!front || !back) return null
-        return { front, back }
+        const rawFront = chunk.slice(0, sepIndex).trim()
+        const rawBack = chunk.slice(sepIndex + termSep.length).trim()
+        if (!rawFront || !rawBack) return null
+        return { front: preprocessLatexText(rawFront), back: preprocessLatexText(rawBack) }
       })
       .filter((c): c is { front: string; back: string } => c !== null)
   }, [manualText, termSep, cardSep, eachLineIsCard])
@@ -385,19 +386,20 @@ export default function CardImportModal({
 
   async function handleAutoFormatMath(): Promise<void> {
     if (!manualText.trim()) return
-    if (!window.electronAPI?.formatMathEquations) return
 
     setIsFormattingMath(true)
     setErrorMessage(null)
     try {
-      const result = await window.electronAPI.formatMathEquations(manualText)
-      if (result.success && result.text !== undefined) {
-        setManualText(result.text)
-      } else {
-        setErrorMessage(result.error || 'Failed to auto-format math formulas')
+      if (window.electronAPI?.formatMathEquations) {
+        const result = await window.electronAPI.formatMathEquations(manualText)
+        if (result.success && result.text !== undefined) {
+          setManualText(result.text)
+          return
+        }
       }
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Error formatting math equations')
+      setManualText(autoFormatMathLocal(manualText))
+    } catch {
+      setManualText(autoFormatMathLocal(manualText))
     } finally {
       setIsFormattingMath(false)
     }
@@ -405,19 +407,20 @@ export default function CardImportModal({
 
   async function handleFormatSourceMath(): Promise<void> {
     if (!sourceText.trim()) return
-    if (!window.electronAPI?.formatMathEquations) return
 
     setIsFormattingMath(true)
     setErrorMessage(null)
     try {
-      const result = await window.electronAPI.formatMathEquations(sourceText)
-      if (result.success && result.text !== undefined) {
-        setSourceText(result.text)
-      } else {
-        setErrorMessage(result.error || 'Failed to auto-format math formulas')
+      if (window.electronAPI?.formatMathEquations) {
+        const result = await window.electronAPI.formatMathEquations(sourceText)
+        if (result.success && result.text !== undefined) {
+          setSourceText(result.text)
+          return
+        }
       }
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Error formatting math equations')
+      setSourceText(autoFormatMathLocal(sourceText))
+    } catch {
+      setSourceText(autoFormatMathLocal(sourceText))
     } finally {
       setIsFormattingMath(false)
     }

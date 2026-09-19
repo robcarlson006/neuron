@@ -86,6 +86,18 @@ export default function PracticeProblemSolver({
             </div>
 
             <div className="flex items-center gap-3">
+              {/* Cognitive / DOK Badge */}
+              {problem.webbs_dok && (
+                <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300">
+                  {problem.webbs_dok}
+                </span>
+              )}
+              {problem.blooms_revised && (
+                <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300">
+                  {problem.blooms_revised}
+                </span>
+              )}
+
               {/* Difficulty Stars */}
               <div className="flex items-center gap-0.5" title={`Difficulty: ${problem.difficulty}/5`}>
                 {[1, 2, 3, 4, 5].map((s) => (
@@ -118,9 +130,66 @@ export default function PracticeProblemSolver({
             {problem.title}
           </h2>
 
+          {/* Stimulus vignette if distinct from problem text */}
+          {problem.stimulus && (
+            <div className="mb-3 p-3.5 rounded-xl bg-violet-50/60 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-900/40 text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-serif">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-violet-600 dark:text-violet-400 block mb-1">Scenario / Context:</span>
+              <LatexText>{problem.stimulus}</LatexText>
+            </div>
+          )}
+
           <div className="text-base text-slate-800 dark:text-slate-200 leading-relaxed font-sans bg-slate-50/80 dark:bg-slate-800/30 p-4 rounded-xl border border-slate-100 dark:border-slate-800/60">
-            <LatexText>{problem.problem_text}</LatexText>
+            <LatexText>{problem.stem_lead_in || problem.problem_text}</LatexText>
           </div>
+
+          {/* Diagnostic Options (if present) */}
+          {(() => {
+            let optionsObj: Record<string, string> | null = null
+            if (problem.options_json) {
+              try {
+                optionsObj = JSON.parse(problem.options_json)
+              } catch {}
+            }
+            if (!optionsObj || Object.keys(optionsObj).length === 0) return null
+
+            return (
+              <div className="mt-4 space-y-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                  Diagnostic Options:
+                </span>
+                <div className="grid grid-cols-1 gap-2">
+                  {Object.entries(optionsObj).map(([key, text]) => {
+                    const isSelected = userAnswer.startsWith(`Option ${key}:`) || userAnswer.trim() === key || userAnswer.trim() === text
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => {
+                          setUserAnswer(`Option ${key}: ${text}`)
+                        }}
+                        className={`w-full text-left p-3 rounded-xl border text-sm transition-all flex items-start gap-3 ${
+                          isSelected
+                            ? "bg-violet-50 dark:bg-violet-950/50 border-violet-500 text-violet-950 dark:text-violet-100 font-medium shadow-xs"
+                            : "bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-violet-300 dark:hover:border-violet-700"
+                        }`}
+                      >
+                        <span className={`px-2 py-0.5 rounded-lg text-xs font-bold shrink-0 ${
+                          isSelected
+                            ? "bg-violet-600 text-white"
+                            : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                        }`}>
+                          {key}
+                        </span>
+                        <div className="flex-1">
+                          <LatexText>{text}</LatexText>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Principles / Tags */}
           {principles.length > 0 && (

@@ -1,6 +1,7 @@
 import React from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { preprocessLatexText } from '../lib/mathFormatter'
 
 interface Props {
   children: string
@@ -13,12 +14,14 @@ interface Props {
  * - $$...$$ or \[...\] — display (block) math
  * - $...$ or \(...\) — inline math
  * - \begin{env}...\end{env} — LaTeX block environments
+ * - [latex]...[/latex] or [$]...[/$] — Anki math tags
  */
 export default function LatexText({ children, className, forceInline = false }: Props): React.JSX.Element {
   if (!children || typeof children !== 'string') {
     return <span className={className}>{children || ''}</span>
   }
-  const parts = splitLatex(children)
+  const processed = preprocessLatexText(children)
+  const parts = splitLatex(processed)
 
   return (
     <span className={className}>
@@ -48,12 +51,12 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
 
   if (error) {
     const raw = displayMode ? `$$${latex}$$` : `$${latex}$`
-    return <code className="text-red-500 text-xs bg-red-50 dark:bg-red-900/20 px-1 rounded">{raw}</code>
+    return <code className="text-red-500 text-xs bg-red-50 dark:bg-red-900/20 px-1 rounded break-words">{raw}</code>
   }
 
   return (
     <span
-      className={displayMode ? 'block my-2 overflow-x-auto text-center' : 'inline-block align-middle'}
+      className={displayMode ? 'block my-2 overflow-x-auto max-w-full text-center' : 'inline-block align-middle max-w-full break-words'}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
@@ -72,6 +75,23 @@ interface TextPart {
 // Group 4: \begin{env}...\end{env} → display math
 // Group 6: $...$ → inline math (no newlines, no nested $ to avoid false positives)
 const LATEX_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\4\}|\$([^$\n]+?)\$/g
+
+function isValidInlineMath(content: string): boolean {
+  const s = content.trim()
+  if (!s) return false
+
+  // Pure numbers or currency values e.g. "835" or "835.50" or "835,000" are not LaTeX math
+  if (/^\d+([.,]\d+)?$/.test(s)) return false
+
+  // Check if it contains math operators/symbols or LaTeX commands
+  const hasMathSymbols = /[\\^_=+/><{}]|\b(sin|cos|tan|log|lim|sqrt|sum|int|alpha|beta|gamma|theta|pi|frac|cdot|pm|times)\b/i.test(s)
+  if (!hasMathSymbols) {
+    // If it contains spaces and regular words (e.g. currency match like "$835 in food benefits ... up to $835"), treat as plain text
+    if (s.includes(' ')) return false
+  }
+
+  return true
+}
 
 function splitLatex(text: string): TextPart[] {
   const parts: TextPart[] = []
@@ -98,8 +118,12 @@ function splitLatex(text: string): TextPart[] {
       // \begin{env}...\end{env} → display math
       parts.push({ type: 'math', content: match[0].trim(), display: true })
     } else if (match[6] !== undefined) {
-      // $...$ → inline math
-      parts.push({ type: 'math', content: match[6].trim(), display: false })
+      // $...$ → inline math (if valid)
+      if (isValidInlineMath(match[6])) {
+        parts.push({ type: 'math', content: match[6].trim(), display: false })
+      } else {
+        parts.push({ type: 'text', content: `$${match[6]}$`, display: false })
+      }
     }
 
     lastIndex = LATEX_REGEX.lastIndex

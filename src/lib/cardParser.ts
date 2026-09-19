@@ -72,6 +72,77 @@ export function cleanCardBrackets(text: string): string {
   return cleaned.trim()
 }
 
+/**
+ * Extract leading domain context tag (e.g., "[Cardiology: Anatomy]" -> "Cardiology: Anatomy")
+ */
+export function extractContextTag(text: string): { tag?: string; textWithoutTag: string } {
+  const match = text.match(/^\s*\[([A-Za-z0-9\s:,\-_/]+)\]\s*(.*)$/)
+  if (match) {
+    return {
+      tag: match[1].trim(),
+      textWithoutTag: match[2].trim()
+    }
+  }
+  return { textWithoutTag: text }
+}
+
+/**
+ * Parse raw unadorned Tab-Separated Values (TSV) flashcards
+ * Expected 4-field schema: ContextTag \t Question \t Answer \t Explanation
+ * or 3-field: Question \t Answer \t Explanation
+ * or 2-field: Front \t Back
+ */
+export function parseTSVFlashcards(tsvText: string): ParsedCard[] {
+  const lines = tsvText.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+  const cards: ParsedCard[] = []
+
+  for (const line of lines) {
+    // Skip comment lines or markdown fences
+    if (line.startsWith('#') || line.startsWith('```')) continue
+
+    const fields = line.split('\t').map(f => f.trim())
+    if (fields.length >= 4) {
+      const tag = fields[0]
+      const question = fields[1]
+      const answer = fields[2]
+      const explanation = fields[3]
+      const front = tag ? `[${tag}] ${cleanCardFront(question)}` : cleanCardFront(question)
+      const back = explanation ? `${cleanCardBack(answer)}\n\n_Note: ${explanation}_` : cleanCardBack(answer)
+      const isRecall = /^(What|How|Why|Explain|Describe|Define|Compare|Contrast|List|Which)/i.test(question) || question.endsWith('?')
+      cards.push({
+        type: isRecall ? 'active_recall' : 'flashcard',
+        front,
+        back
+      })
+    } else if (fields.length === 3) {
+      const question = fields[0]
+      const answer = fields[1]
+      const explanation = fields[2]
+      const front = cleanCardFront(question)
+      const back = explanation ? `${cleanCardBack(answer)}\n\n_Note: ${explanation}_` : cleanCardBack(answer)
+      const isRecall = /^(What|How|Why|Explain|Describe|Define|Compare|Contrast|List|Which)/i.test(question) || question.endsWith('?')
+      cards.push({
+        type: isRecall ? 'active_recall' : 'flashcard',
+        front,
+        back
+      })
+    } else if (fields.length === 2) {
+      const front = cleanCardFront(fields[0])
+      const back = cleanCardBack(fields[1])
+      if (front && back) {
+        const isRecall = /^(What|How|Why|Explain|Describe|Define|Compare|Contrast|List|Which)/i.test(front) || front.endsWith('?')
+        cards.push({
+          type: isRecall ? 'active_recall' : 'flashcard',
+          front,
+          back
+        })
+      }
+    }
+  }
+
+  return cards
+}
+
 function cleanCardFront(rawFront: string): string {
   let cleaned = rawFront.trim()
   // Strip outer bold/italic if entire string is wrapped in **...** or *...*

@@ -74,7 +74,10 @@ async function callAI(
 
     // OpenAI-compatible API (DeepSeek, OpenAI, Ollama, etc.)
     const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
-    const model = config.model || DEFAULT_MODEL
+    let model = config.model || DEFAULT_MODEL
+    if (baseUrl.includes('deepseek.com') && (model === 'deepseek-flash' || !model)) {
+      model = 'deepseek-chat'
+    }
     const url = `${baseUrl}/v1/chat/completions`
     const isLocal = isLocalEndpoint(baseUrl)
     const authKey = config.apiKey || (isLocal ? 'ollama' : '')
@@ -391,7 +394,10 @@ export async function* streamAI(
 
   // OpenAI-compatible format
   const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
-  const model = config.model || DEFAULT_MODEL
+  let model = config.model || DEFAULT_MODEL
+  if (baseUrl.includes('deepseek.com') && (model === 'deepseek-flash' || !model)) {
+    model = 'deepseek-chat'
+  }
   const url = `${baseUrl}/v1/chat/completions`
   const isLocal = isLocalEndpoint(baseUrl)
   const authKey = config.apiKey || (isLocal ? 'ollama' : '')
@@ -509,12 +515,34 @@ export async function callAIMessages(
     if (config.provider === 'gemini') {
       const baseUrl = config.baseUrl || 'https://generativelanguage.googleapis.com'
       const model = config.model || 'gemini-2.0-flash'
-      const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`
+      const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(config.apiKey)}`
 
-      const contents = messages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }))
+      // Extract system instructions if present
+      const systemMessages = messages.filter(m => m.role === 'system')
+      const chatMessages = messages.filter(m => m.role !== 'system')
+
+      // Consolidate consecutive turns with the same role for Gemini alternating turns requirement
+      const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = []
+      for (const m of chatMessages) {
+        const geminiRole = m.role === 'assistant' ? 'model' : 'user'
+        const lastContent = contents[contents.length - 1]
+        if (lastContent && lastContent.role === geminiRole) {
+          lastContent.parts[0].text += `\n\n${m.content}`
+        } else {
+          contents.push({
+            role: geminiRole,
+            parts: [{ text: m.content }]
+          })
+        }
+      }
+
+      // If all messages were system messages, create at least one user turn
+      if (contents.length === 0 && systemMessages.length > 0) {
+        contents.push({
+          role: 'user',
+          parts: [{ text: systemMessages.map(m => m.content).join('\n\n') }]
+        })
+      }
 
       const body: Record<string, unknown> = {
         contents,
@@ -523,6 +551,13 @@ export async function callAIMessages(
           maxOutputTokens: 8192
         }
       }
+
+      if (systemMessages.length > 0 && contents.length > 0 && contents[0].parts[0].text !== systemMessages.map(m => m.content).join('\n\n')) {
+        body.systemInstruction = {
+          parts: [{ text: systemMessages.map(m => m.content).join('\n\n') }]
+        }
+      }
+
       if (responseFormat?.type === 'json_object') {
         (body.generationConfig as Record<string, unknown>).responseMimeType = 'application/json'
       }
@@ -543,15 +578,29 @@ export async function callAIMessages(
       }
 
       const data = await response.json()
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+      const candidate = data.candidates?.[0]
+      if (!candidate) {
+        if (data.promptFeedback?.blockReason) {
+          throw new Error(`Gemini blocked the prompt: ${data.promptFeedback.blockReason}`)
+        }
+        throw new Error('Gemini API returned no candidates')
+      }
+
+      const text = candidate.content?.parts?.[0]?.text
       if (typeof text !== 'string') {
+        if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+          throw new Error(`Gemini generation ended with status: ${candidate.finishReason}`)
+        }
         throw new Error('Gemini API returned unexpected response structure')
       }
       return text
     }
 
     const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
-    const model = config.model || DEFAULT_MODEL
+    let model = config.model || DEFAULT_MODEL
+    if (baseUrl.includes('deepseek.com') && (model === 'deepseek-flash' || !model)) {
+      model = 'deepseek-chat'
+    }
     const url = `${baseUrl}/v1/chat/completions`
     const isLocal = isLocalEndpoint(baseUrl)
     const authKey = config.apiKey || (isLocal ? 'ollama' : '')

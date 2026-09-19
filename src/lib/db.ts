@@ -510,6 +510,17 @@ export const DB_SCHEMA = `
     principles_json TEXT DEFAULT '[]',
     is_ai_generated INTEGER DEFAULT 0,
     parent_problem_id INTEGER,
+    stimulus TEXT,
+    stem_lead_in TEXT,
+    options_json TEXT,
+    correct_key TEXT,
+    blooms_revised TEXT,
+    webbs_dok TEXT,
+    discipline_paradigm TEXT,
+    subgoals_json TEXT,
+    item_validation_json TEXT,
+    quality_score REAL,
+    cover_test_passed INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
     FOREIGN KEY (module_id) REFERENCES syllabus_modules(id) ON DELETE SET NULL,
@@ -875,7 +886,19 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE tutor_sessions ADD COLUMN title TEXT",
   "ALTER TABLE tutor_sessions ADD COLUMN last_message_at INTEGER",
   "ALTER TABLE tutor_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0",
-  "CREATE INDEX IF NOT EXISTS idx_tutor_sessions_subject ON tutor_sessions(subject_id, last_message_at DESC)"
+  "CREATE INDEX IF NOT EXISTS idx_tutor_sessions_subject ON tutor_sessions(subject_id, last_message_at DESC)",
+  // V5.4: Practice Problem Psychometrics & Cognitive Demands
+  "ALTER TABLE practice_problems ADD COLUMN stimulus TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN stem_lead_in TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN options_json TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN correct_key TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN blooms_revised TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN webbs_dok TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN discipline_paradigm TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN subgoals_json TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN item_validation_json TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN quality_score REAL",
+  "ALTER TABLE practice_problems ADD COLUMN cover_test_passed INTEGER"
 ]
 
 export const MASTERED_INTERVAL = 21

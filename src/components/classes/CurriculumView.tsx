@@ -1,10 +1,11 @@
 import React, { useState } from 'react'
-import type { SyllabusModule, ModuleTopic, ModuleCardGenOptions } from '../../types'
+import type { SyllabusModule, ModuleTopic, ModuleCardGenOptions, ModuleTutorStats } from '../../types'
 import GenerateCardsModal from './GenerateCardsModal'
 
 interface CurriculumViewProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
   subjectName?: string
+  moduleTutorStats?: Record<number, ModuleTutorStats>
   onStartTutor: (moduleId: number, selectedTopics?: string[]) => void
   onStartSpacedReview?: (moduleId?: number, selectedTopics?: string[]) => void
   onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
@@ -12,9 +13,49 @@ interface CurriculumViewProps {
   loadingCards?: Record<number, boolean>
 }
 
+const DEPTH_NAMES: Record<number, string> = {
+  1: 'Beginner',
+  2: 'Foundational',
+  3: 'Intermediate',
+  4: 'Advanced',
+  5: 'Mastery'
+}
+
+function formatDepthLevel(depth: number): string {
+  const rounded = Math.round(depth)
+  return DEPTH_NAMES[rounded] || `Level ${rounded}`
+}
+
+function formatMinutes(minutes: number): string {
+  if (minutes < 1) return '< 1m'
+  if (minutes < 60) return `${Math.round(minutes)}m`
+  const hours = Math.floor(minutes / 60)
+  const rem = Math.round(minutes % 60)
+  return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`
+}
+
+function formatRelativeTime(dateStr: string | null): string {
+  if (!dateStr) return ''
+  try {
+    const d = new Date(dateStr)
+    const now = new Date()
+    const diffMs = now.getTime() - d.getTime()
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    if (diffHours < 1) return 'Just now'
+    if (diffHours < 24) return `${diffHours}h ago`
+    const diffDays = Math.floor(diffHours / 24)
+    if (diffDays === 1) return 'Yesterday'
+    if (diffDays < 7) return `${diffDays}d ago`
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  } catch {
+    return ''
+  }
+}
+
 export default function CurriculumView({
   modules,
   subjectName,
+  moduleTutorStats,
   onStartTutor,
   onStartSpacedReview,
   onGenerateCards,
@@ -76,6 +117,7 @@ export default function CurriculumView({
         const selectedSet = selectedTopicsByModule[mod.id] || new Set<number>()
         const selectedCount = selectedSet.size
         const completedCount = modTopics.filter(t => Boolean(t.completed || (t as ModuleTopic & { studied?: boolean }).studied)).length
+        const stats = moduleTutorStats?.[mod.id]
 
         return (
           <div
@@ -122,6 +164,33 @@ export default function CurriculumView({
                 {mod.description && (
                   <p className="text-xs text-slate-400 mt-0.5 truncate">{mod.description}</p>
                 )}
+
+                {/* Module-level Tutor Stats Quick Summary */}
+                {stats && stats.sessionCount > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                    <span
+                      title={`Tutor used ${stats.sessionCount} time${stats.sessionCount > 1 ? 's' : ''} on this module`}
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-100/80 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/60"
+                    >
+                      <span>🎓</span>
+                      <span>{stats.sessionCount} {stats.sessionCount === 1 ? 'session' : 'sessions'}</span>
+                    </span>
+                    <span
+                      title={`Total time spent with Tutor on this module: ${formatMinutes(stats.totalMinutes)}`}
+                      className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-sky-100/80 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200/80 dark:border-sky-800/60"
+                    >
+                      <span>⏱️</span>
+                      <span>{formatMinutes(stats.totalMinutes)}</span>
+                    </span>
+                    <span
+                      title={`Average Tutor Difficulty / Depth: ${formatDepthLevel(stats.avgDepthLevel)}`}
+                      className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-purple-100/80 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200/80 dark:border-purple-800/60"
+                    >
+                      <span>📊</span>
+                      <span>{formatDepthLevel(stats.avgDepthLevel)}</span>
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Status badge */}
@@ -145,6 +214,42 @@ export default function CurriculumView({
             {/* Expanded content */}
             {isExpanded && (
               <div className="border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
+                {/* Module-level Tutor Stats Detailed Activity Card */}
+                {stats && stats.sessionCount > 0 && (
+                  <div className="mx-4 mt-3 mb-1 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-sm font-bold shadow-xs">
+                        🎓
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <span>AI Tutor Study History</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {stats.lastStudiedAt ? `Last active ${formatRelativeTime(stats.lastStudiedAt)}` : 'Studied with AI Tutor'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-xs">
+                      <div className="text-center px-2">
+                        <span className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Sessions</span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 text-xs">{stats.sessionCount}</span>
+                      </div>
+                      <div className="h-6 w-px bg-slate-200 dark:bg-slate-700" />
+                      <div className="text-center px-2">
+                        <span className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Time Spent</span>
+                        <span className="font-bold text-emerald-600 dark:text-emerald-400 text-xs">{formatMinutes(stats.totalMinutes)}</span>
+                      </div>
+                      <div className="h-6 w-px bg-slate-200 dark:bg-slate-700" />
+                      <div className="text-center px-2">
+                        <span className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Difficulty</span>
+                        <span className="font-bold text-purple-600 dark:text-purple-400 text-xs">{formatDepthLevel(stats.avgDepthLevel)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Topics */}
                 {modTopics.length > 0 && (
                   <div className="px-4 py-3 space-y-2">
@@ -260,17 +365,27 @@ export default function CurriculumView({
                                   </button>
                                 </div>
                               ) : (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onToggleTopic(topic.id, true)
-                                  }}
-                                  title="Mark as completed"
-                                  className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-0.5 rounded-full transition-colors"
-                                >
-                                  Mark complete
-                                </button>
+                                <div className="flex items-center gap-1.5">
+                                  {Boolean((topic as any).last_studied_at || (topic as any).studied || topic.retrievability !== undefined) && (
+                                    <span
+                                      title="You have completed tutor work on this topic"
+                                      className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 flex items-center gap-1"
+                                    >
+                                      <span>⚡</span> Studied in Tutor
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      onToggleTopic(topic.id, true)
+                                    }}
+                                    title="Mark as completed"
+                                    className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-0.5 rounded-full transition-colors"
+                                  >
+                                    Mark complete
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </div>

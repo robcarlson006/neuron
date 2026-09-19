@@ -51,6 +51,7 @@ export default function AutoGeneratePracticeModal({
   const [isAutoCount, setIsAutoCount] = useState<boolean>(true)
   const [problemCount, setProblemCount] = useState<number>(4)
   const [focusMode, setFocusMode] = useState<FocusMode>('adaptive')
+  const [customInstructions, setCustomInstructions] = useState<string>("")
   const [isGenerating, setIsGenerating] = useState<boolean>(false)
   const [generationStep, setGenerationStep] = useState<string>("")
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -83,7 +84,8 @@ export default function AutoGeneratePracticeModal({
         topicId: selectedTopicId || null,
         count: isAutoCount ? 4 : problemCount,
         autoCount: isAutoCount,
-        difficultyFocus: focusMode
+        difficultyFocus: focusMode,
+        customInstructions: customInstructions.trim() || undefined
       })
 
       clearTimeout(timer1)
@@ -315,6 +317,25 @@ export default function AutoGeneratePracticeModal({
                 )
               })}
             </div>
+          </div>
+
+          {/* 4. Natural Language Custom Focus (Optional) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                <span className="text-violet-500">💬</span>
+                <span>4. Custom Focus & Prompt (Optional)</span>
+              </label>
+              <span className="text-[11px] text-slate-400">Natural language</span>
+            </div>
+            <textarea
+              value={customInstructions}
+              onChange={(e) => setCustomInstructions(e.target.value)}
+              disabled={isGenerating}
+              placeholder="E.g., Focus on multi-step IS-LM shifts with unexpected tax cuts, test boundary conditions in derivatives, or emphasize clinical diagnostic dilemmas..."
+              rows={2}
+              className="w-full text-xs px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none font-medium leading-relaxed"
+            />
           </div>
 
           {/* Loading Indicator */}

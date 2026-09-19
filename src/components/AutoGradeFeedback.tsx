@@ -1,6 +1,7 @@
 import React from 'react'
-import type { AutoGradeResult } from '../lib/semanticEvaluator'
+import LoadingProgressBar from './common/LoadingProgressBar'
 import LatexText from './LatexText'
+import type { AutoGradeResult } from '../lib/semanticEvaluator'
 
 interface AutoGradeFeedbackProps {
   result: AutoGradeResult | null
@@ -21,16 +22,9 @@ export default function AutoGradeFeedback({
     return (
       <div
         data-testid="autograde-loading"
-        className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 flex items-center gap-3 animate-pulse"
+        className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-xs"
       >
-        <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 flex items-center justify-center text-xs">
-          ✨
-        </div>
-        <div className="flex-1 space-y-1.5">
-          <div className="h-3.5 bg-slate-200 dark:bg-slate-700 rounded w-1/3" />
-          <div className="h-2.5 bg-slate-100 dark:bg-slate-700/50 rounded w-2/3" />
-        </div>
-        <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">Grading...</span>
+        <LoadingProgressBar label="Auto-Grader Evaluating..." sublabel="Comparing your response with model answer..." size="md" />
       </div>
     )
   }
@@ -96,7 +90,7 @@ export default function AutoGradeFeedback({
       {/* Concept tags */}
       {!compact && (result.matchedConcepts.length > 0 || result.missingConcepts.length > 0) && (
         <div className="pt-2 border-t border-slate-100 dark:border-slate-700/60 flex flex-wrap gap-1.5 text-xs">
-          {result.matchedConcepts.slice(0, 4).map((c, i) => (
+          {result.matchedConcepts.slice(0, 4).map((c: string, i: number) => (
             <span
               key={`matched-${i}`}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60"
@@ -105,7 +99,7 @@ export default function AutoGradeFeedback({
               <span>{c}</span>
             </span>
           ))}
-          {result.missingConcepts.slice(0, 3).map((c, i) => (
+          {result.missingConcepts.slice(0, 3).map((c: string, i: number) => (
             <span
               key={`missing-${i}`}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 dark:bg-slate-700/40 text-slate-500 dark:text-slate-400 border border-slate-200/60 dark:border-slate-700/60"

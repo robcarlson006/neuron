@@ -373,6 +373,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getSubjectRetentionSummary', userId, subjectId),
   tutorGetTopDueMaintenanceTopics: (userId: number, limit?: number): Promise<import('../src/lib/memory/topicSrsEngine').TopicRetentionMetrics[]> =>
     ipcRenderer.invoke('tutor:getTopDueMaintenanceTopics', userId, limit),
+  tutorGetSubjectModuleStats: (subjectId: number, userId?: number): Promise<Record<number, import('../src/types').ModuleTutorStats>> =>
+    ipcRenderer.invoke('tutor:getSubjectModuleStats', subjectId, userId),
   onTutorChunk: (cb: (chunk: { conversationId: number; content: string; type: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; content: string; type: string }): void => cb(data)
     ipcRenderer.on('tutor:chunk', handler)
@@ -637,10 +639,10 @@ const electronAPI = {
     ipcRenderer.invoke('practice:createProblem', problem),
   practiceDeleteProblem: (problemId: number): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('practice:deleteProblem', problemId),
-  practiceExtractFromMaterial: (subjectId: number, materialId: number, moduleId?: number, topicId?: number): Promise<{ success: boolean; count: number; problems?: PracticeProblem[]; error?: string }> =>
-    ipcRenderer.invoke('practice:extractFromMaterial', subjectId, materialId, moduleId, topicId),
-  practiceExtractFromText: (subjectId: number, text: string, moduleId?: number, topicId?: number): Promise<{ success: boolean; count: number; problems?: PracticeProblem[]; error?: string }> =>
-    ipcRenderer.invoke('practice:extractFromText', subjectId, text, moduleId, topicId),
+  practiceExtractFromMaterial: (subjectId: number, materialId: number, moduleId?: number, topicId?: number, engineOverride?: string): Promise<{ success: boolean; count: number; problems?: PracticeProblem[]; error?: string }> =>
+    ipcRenderer.invoke('practice:extractFromMaterial', subjectId, materialId, moduleId, topicId, engineOverride),
+  practiceExtractFromText: (subjectId: number, text: string, moduleId?: number, topicId?: number, engineOverride?: string): Promise<{ success: boolean; count: number; problems?: PracticeProblem[]; error?: string }> =>
+    ipcRenderer.invoke('practice:extractFromText', subjectId, text, moduleId, topicId, engineOverride),
   practiceGenerateVariant: (problemId: number, userStruggles?: string): Promise<{ success: boolean; variant?: PracticeProblem; error?: string }> =>
     ipcRenderer.invoke('practice:generateVariant', problemId, userStruggles),
   practiceCreateSession: (config: PracticeSessionConfig): Promise<{ session: PracticeSession; problems: PracticeProblem[] }> =>

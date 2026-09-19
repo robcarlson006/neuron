@@ -2,19 +2,67 @@ import { ipcMain } from 'electron'
 import Database from 'better-sqlite3'
 import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
-import { buildAutoCardGenerationPrompt, buildFlashcardOnlyPrompt, buildActiveRecallOnlyPrompt, buildMultiSourceCardGenerationPrompt } from '../../src/lib/promptBuilders'
+import {
+  buildAutoCardGenerationPrompt,
+  buildFlashcardOnlyPrompt,
+  buildActiveRecallOnlyPrompt,
+  buildMultiSourceCardGenerationPrompt,
+  buildSlideDeckCardGenerationPrompt,
+  buildTextbookCardGenerationPrompt,
+  buildTranscriptCardGenerationPrompt
+} from '../../src/lib/promptBuilders'
 import { parseDocumentTopology } from '../../src/lib/coverage/documentTopologyParser'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
 import { safeParseAICards, type ParsedAICardsPayload } from '../../src/lib/jsonRepair'
 import { cleanCardBrackets } from '../../src/lib/cardParser'
+import { validateCardQuality } from '../../src/lib/cardValidator'
 import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
-import type { Card } from '../../src/types'
+import type { Card, SourceModality } from '../../src/types'
 
 let db: Database.Database
 
 export function setCardGenerationDatabase(database: Database.Database): void {
   db = database
+}
+
+/**
+ * Detect the pedagogical source modality from filename and text content.
+ */
+export function detectModality(filename?: string, content?: string): SourceModality {
+  const lowerName = (filename || '').toLowerCase()
+  const lowerContent = (content || '').slice(0, 2000).toLowerCase()
+  if (
+    lowerName.includes('transcript') ||
+    lowerName.includes('recording') ||
+    lowerName.includes('lecture -') ||
+    lowerName.includes('audio') ||
+    /\[\d{1,2}:\d{2}\]/.test(content || '') ||
+    lowerContent.includes('speaker:') ||
+    lowerContent.includes('transcript')
+  ) {
+    return 'transcript'
+  }
+  if (
+    lowerName.includes('slide') ||
+    lowerName.includes('ppt') ||
+    lowerName.includes('presentation') ||
+    lowerName.includes('deck') ||
+    lowerName.endsWith('.pptx') ||
+    /slide\s+\d+/i.test(lowerContent)
+  ) {
+    return 'slides'
+  }
+  if (
+    lowerName.includes('chapter') ||
+    lowerName.includes('textbook') ||
+    lowerName.includes('reading') ||
+    lowerName.includes('book') ||
+    lowerName.endsWith('.pdf')
+  ) {
+    return 'textbook'
+  }
+  return 'general'
 }
 
 /**
@@ -149,6 +197,8 @@ export function registerCardGenerationHandlers(): void {
         'SELECT front, back FROM cards WHERE subject_id = ? AND material_id IS NOT NULL'
       ).all(subjectId) as { front: string; back: string }[]
 
+      const modality = detectModality(material.filename, cleanContent)
+
       const chunks: { text: string; title?: string }[] = []
       if (cleanContent.length > 8000) {
         const topology = parseDocumentTopology(cleanContent, material.filename, 1000)
@@ -172,15 +222,26 @@ export function registerCardGenerationHandlers(): void {
       const arPerChunk = Math.max(1, Math.ceil(targetTotalAr / chunks.length))
 
       for (const chunk of chunks) {
-        const prompt = buildAutoCardGenerationPrompt(
-          chunk.text,
-          subject.name,
-          chunk.title ? `${moduleTitle ? `${moduleTitle} - ` : ''}${chunk.title}` : moduleTitle,
-          undefined,
-          existingCards,
-          fcPerChunk,
-          arPerChunk
-        )
+        let prompt: string
+        const effectiveTitle = chunk.title ? `${moduleTitle ? `${moduleTitle} - ` : ''}${chunk.title}` : moduleTitle
+
+        if (modality === 'slides') {
+          prompt = buildSlideDeckCardGenerationPrompt(chunk.text, subject.name, effectiveTitle, fcPerChunk + arPerChunk)
+        } else if (modality === 'transcript') {
+          prompt = buildTranscriptCardGenerationPrompt(chunk.text, subject.name, effectiveTitle, fcPerChunk + arPerChunk)
+        } else if (modality === 'textbook') {
+          prompt = buildTextbookCardGenerationPrompt(chunk.text, subject.name, effectiveTitle, fcPerChunk + arPerChunk)
+        } else {
+          prompt = buildAutoCardGenerationPrompt(
+            chunk.text,
+            subject.name,
+            effectiveTitle,
+            undefined,
+            existingCards,
+            fcPerChunk,
+            arPerChunk
+          )
+        }
 
         try {
           const responseText = await callAIMessages(
@@ -1274,72 +1335,6 @@ ${materialText}`
   })
 }
 
-/**
- * Validate a generated card against quality criteria.
- */
-function validateCardQuality(card: Partial<Card> & { front: string; back: string }): {
-  valid: boolean
-  cards: (Partial<Card> & { front: string; back: string; quality_score?: number })[]
-  quality_score: number
-} {
-  const cleanedFront = cleanCardBrackets(card.front || '').trim()
-  const cleanedBack = cleanCardBrackets(card.back || '').trim()
-
-  if (!cleanedFront || !cleanedBack) {
-    return { valid: false, cards: [], quality_score: 0 }
-  }
-
-  let qualityScore = 1.0
-
-  // Vague reference penalties
-  const vaguePatterns = [/\bas discussed\b/i, /\bin this context\b/i, /\bas we learned\b/i, /\babove\b/i, /\bas mentioned\b/i]
-  for (const pattern of vaguePatterns) {
-    if (pattern.test(cleanedFront) || pattern.test(cleanedBack)) {
-      qualityScore -= 0.15
-    }
-  }
-
-  // Detect compound cards (lists in back)
-  const listIndicators = cleanedBack.match(/(?:\d+\.\s|\*\s|-\s).{5,}/g)
-  if (listIndicators && listIndicators.length >= 3) {
-    const parts = cleanedBack.split('\n').map(p => p.trim()).filter(p => p.match(/^(?:\d+\.\s|\*\s|-\s)/))
-    if (parts.length >= 2) {
-      const basePrompt = cleanedFront.replace(/[?:.!]+$/, '')
-      const splitCards = parts.map((part, idx) => {
-        const rawItem = cleanCardBrackets(part.replace(/^(?:\d+\.\s|\*\s|-\s)/, '').trim())
-        const colonIdx = rawItem.indexOf(':')
-        const dashMatch = rawItem.match(/\s+[—–-]\s+/)
-        const splitIdx = colonIdx > 0 ? colonIdx : (dashMatch?.index !== undefined ? dashMatch.index : -1)
-
-        if (splitIdx > 0 && splitIdx < rawItem.length - 1) {
-          const term = rawItem.slice(0, splitIdx).trim()
-          const desc = rawItem.slice(splitIdx + (colonIdx > 0 ? 1 : (dashMatch?.[0].length || 1))).trim()
-          return {
-            ...card,
-            front: cleanCardBrackets(`${basePrompt} — which element is: "${desc}"?`),
-            back: term,
-            quality_score: 0.9
-          }
-        }
-
-        return {
-          ...card,
-          front: cleanCardBrackets(`${basePrompt} (Part ${idx + 1} of ${parts.length})?`),
-          back: rawItem,
-          quality_score: 0.9
-        }
-      })
-      return { valid: true, cards: splitCards, quality_score: 0.9 }
-    }
-  }
-
-  return {
-    valid: cleanedFront.length > 0 && cleanedBack.length > 0,
-    cards: [{ ...card, front: cleanedFront, back: cleanedBack, quality_score: Math.max(0.5, qualityScore) }],
-    quality_score: Math.max(0.5, qualityScore)
-  }
-}
-
 // ── Shared auto-generate logic ─────────────────────────────────────────────
 
 async function handleAutoGenerate(subjectId: number, materialId: number): Promise<{
@@ -1372,9 +1367,19 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
     'SELECT front, back FROM cards WHERE subject_id = ? AND material_id IS NOT NULL'
   ).all(subjectId) as { front: string; back: string }[]
 
-  const prompt = buildAutoCardGenerationPrompt(
-    cleanContent, subject.name, moduleTitle, undefined, existingCards, 10, 4
-  )
+  const modality = detectModality(material.filename, cleanContent)
+  let prompt: string
+  if (modality === 'slides') {
+    prompt = buildSlideDeckCardGenerationPrompt(cleanContent, subject.name, moduleTitle, 14)
+  } else if (modality === 'transcript') {
+    prompt = buildTranscriptCardGenerationPrompt(cleanContent, subject.name, moduleTitle, 14)
+  } else if (modality === 'textbook') {
+    prompt = buildTextbookCardGenerationPrompt(cleanContent, subject.name, moduleTitle, 14)
+  } else {
+    prompt = buildAutoCardGenerationPrompt(
+      cleanContent, subject.name, moduleTitle, undefined, existingCards, 10, 4
+    )
+  }
 
   const config = getAIConfig()
   const apiKey = getApiKey()

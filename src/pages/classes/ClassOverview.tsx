@@ -4,7 +4,7 @@ import { useAppStore } from '../../store/appStore'
 import CurriculumView from '../../components/classes/CurriculumView'
 import SessionConfigModal from '../../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../../components/classes/CurriculumProgressBar'
-import type { SyllabusModule, ModuleTopic, Subject, Material } from '../../types'
+import type { SyllabusModule, ModuleTopic, Subject, Material, ModuleTutorStats } from '../../types'
 
 type PageState = 'loading' | 'ready' | 'error'
 
@@ -17,6 +17,7 @@ export default function ClassOverview(): React.JSX.Element {
   const [pageState, setPageState] = useState<PageState>('loading')
   const [subject, setSubject] = useState<Subject | null>(null)
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
+  const [moduleTutorStats, setModuleTutorStats] = useState<Record<number, ModuleTutorStats>>({})
   const [materials, setMaterials] = useState<Material[]>([])
   const [loadingCards, setLoadingCards] = useState<Record<number, boolean>>({})
   const [showConfigModal, setShowConfigModal] = useState<{
@@ -52,6 +53,14 @@ export default function ClassOverview(): React.JSX.Element {
         modsWithTopics.push({ ...mod, topics })
       }
       setModules(modsWithTopics)
+
+      // Load module tutor stats
+      if (window.electronAPI.tutorGetSubjectModuleStats) {
+        try {
+          const stats = await window.electronAPI.tutorGetSubjectModuleStats(subjectId, user?.id)
+          setModuleTutorStats(stats || {})
+        } catch { /* ignore */ }
+      }
 
       // Load materials
       const mats = await window.electronAPI.getMaterials(subjectId) as Material[]
@@ -244,6 +253,7 @@ export default function ClassOverview(): React.JSX.Element {
         <CurriculumView
           modules={modules}
           subjectName={subject.name}
+          moduleTutorStats={moduleTutorStats}
           onStartTutor={handleStartTutor}
           onStartSpacedReview={handleStartSpacedReview}
           onGenerateCards={handleGenerateCards}
