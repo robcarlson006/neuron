@@ -94,32 +94,48 @@ function buildTimeContext(params: {
 
   const elapsed = Math.floor((params.timeElapsedSeconds ?? 0) / 60)
   const remaining = Math.max(0, Math.floor((params.timeRemainingSeconds ?? params.durationMinutes * 60) / 60))
+  const remainingSecs = params.timeRemainingSeconds !== undefined ? params.timeRemainingSeconds : params.durationMinutes * 60
   const total = params.durationMinutes
   const status = params.pacingStatus ?? 'ON_TRACK'
   const depthNames: Record<number, string> = { 1: 'Beginner', 2: 'Intermediate', 3: 'Proficient', 4: 'Expert', 5: 'Professor' }
   const diffLabel = depthNames[params.depthLevel ?? 3] || 'Proficient'
 
-  return [
+  const lines = [
     '',
-    'SESSION TIME CONTEXT:',
-    `- Total session duration: ${total} minutes`,
+    'SESSION TIME & DURATION CONTEXT:',
+    `- Total planned session: ${total} minutes`,
     `- Difficulty: ${diffLabel}`,
     `- Time elapsed: ~${elapsed} minutes`,
-    `- Time remaining: ~${remaining} minutes`,
+    `- Time remaining: ~${remaining} minutes (${Math.max(0, Math.round(remainingSecs))} seconds)`,
     `- Pacing status: ${status}`,
-    '',
-    'PACING RULES:',
-    `- ADAPT ACTIVELY TO REMAINING TIME (~${remaining} min remaining of ${total} min):`,
-    `- If remaining time is generous (> 5 min): Explore topics thoroughly with multi-angle questions, practical scenarios, and follow-ups.`,
-    `- If remaining time is medium (3-5 min): Focus on core takeaways, testing critical understanding, and reinforcing key concepts.`,
-    `- If remaining time is low (< 3 min): Begin wrapping up. Ask a synthesis question or summarize progress. Do NOT introduce new heavy concepts.`,
-    `- When time runs out, finish your current thought and include [SESSION_END] in your response.`,
-    `- If AHEAD OF PACE: Use extra time to revisit covered topics from new angles. Ask harder follow-ups.`,
-    `- If BEHIND: Focus on core topics. Keep explanations tight but do NOT wrap up early.`,
-    `- If ON_TRACK: Alternate between new topics and deeper dives on current topics.`,
-    '- CRITICAL: Keep generating questions and challenges as long as time remains. Do not let the session go silent.',
     ''
-  ].join('\n')
+  ]
+
+  if (remainingSecs > 60) {
+    lines.push(
+      'STRICT DURATION & CONTINUOUS ENGAGEMENT MANDATE:',
+      `- MANDATORY ACTIVE LEARNING: You have ~${remaining} minutes remaining out of ${total} minutes.`,
+      `- NEVER END EARLY: You are STRICTLY FORBIDDEN from ending the session early, saying farewell ("Great work today"), summarizing as if done, or emitting [SESSION_END] while time remains.`,
+      `- CONTINUOUS QUESTIONING MANDATE: Every single response MUST end with a concrete, thought-provoking question, problem, Socratic scenario, or active recall challenge for the student to solve.`,
+      `- WHEN A TOPIC/CONCEPT IS MASTERED: Do NOT stop! Seamlessly advance to:`,
+      `  1) A harder application or subtle counterfactual edge case testing boundary conditions`,
+      `  2) An integrative question connecting this topic to previous concepts or the next syllabus topic`,
+      `  3) A Socratic "Why/How" deep dive into underlying causal mechanisms`,
+      `- KEEP THE MOMENTUM ACTIVE: Keep challenging and teaching the student continuously until the clock fully expires.`
+    )
+  } else if (remainingSecs > 0) {
+    lines.push(
+      'FINAL MINUTE PACING (< 1 min remaining):',
+      `- You have under 1 minute remaining. Ask one concise final synthesis question or test a core takeaway. Do NOT emit [SESSION_END] until time is fully 0.`
+    )
+  } else {
+    lines.push(
+      'TIME IS UP (0 minutes remaining):',
+      `- The scheduled session duration has expired. Provide a concise closing summary of key takeaways and include [SESSION_END] at the very end.`
+    )
+  }
+
+  return lines.join('\n')
 }
 
 // ── Depth / beginner instruction builder ────────────────────────────────
@@ -146,16 +162,15 @@ function buildDepthInstruction(
     block += [
       '',
       `TIME × DIFFICULTY STRATEGY (${durationMinutes} min at ${diffLabel} level):`,
-      `- Phase 1 (first ~25%, ~${Math.round(durationMinutes * 0.25)} min): Establish baseline understanding of core topics.`,
-      `- Phase 2 (middle ~50%, ~${Math.round(durationMinutes * 0.5)} min): Iterate through approaches — explain, question, apply, connect, challenge.`,
+      `- Phase 1 (first ~25%, ~${Math.round(durationMinutes * 0.25)} min): Establish baseline understanding of core topics through active recall and explanation.`,
+      `- Phase 2 (middle ~50%, ~${Math.round(durationMinutes * 0.5)} min): Iterate through approaches — question, apply, connect, challenge with edge cases.`,
       depthLevel >= 4
-        ? '  After each correct answer, pivot to a NEW ANGLE on the same topic. Keep approaching from different perspectives.'
+        ? '  After each correct answer, pivot to a NEW ANGLE on the topic. Challenge assumptions and probe edge cases.'
         : depthLevel <= 2
-          ? '  After each correct answer, introduce a new topic or subtopic. Keep the breadth covering.'
-          : '  After each correct answer, either go deeper OR introduce a related subtopic. Keep the momentum.',
-      `- Phase 3 (final ~25%, ~${Math.round(durationMinutes * 0.25)} min): Synthesize. Ask integrative questions across topics covered.`,
-      '- CRITICAL: Never let the session go silent. Keep generating questions, scenarios, and challenges until [SESSION_END].',
-      '- When time is running low (under 3 min), begin wrapping up and include [SESSION_END] in your final response.',
+          ? '  After each correct answer, introduce a new related topic or subtopic. Keep breadth expanding.'
+          : '  After each correct answer, either go deeper with application or introduce a related subtopic.',
+      `- Phase 3 (final ~25%, ~${Math.round(durationMinutes * 0.25)} min): Synthesize across covered concepts. Ask integrative questions.`,
+      '- CRITICAL: Never let the session go silent or conclude early. Keep generating questions and challenges continuously throughout the entire scheduled time block.',
       ''
     ].join('\n')
   }
@@ -172,7 +187,7 @@ function buildDepthInstruction(
       '   b) CHECK: Ask ONE basic comprehension question about what you just explained.',
       '   c) VERIFY: Evaluate their answer. If wrong, explain DIFFERENTLY (don\'t repeat yourself).',
       '   d) DEEPEN: Add one layer of complexity, then ask a slightly harder question.',
-      '   e) LOOP: Repeat until the user demonstrates solid understanding (3+ correct answers on this topic).',
+      '   e) ADVANCE: When the student demonstrates solid understanding, DO NOT STOP — immediately transition to the next subtopic or elevate to application scenarios. Keep the dialogue moving forward.',
       '3. Never introduce more than ONE new concept per interaction cycle.',
       '4. If they answer incorrectly: use a different analogy or approach — never just repeat the same explanation.',
       '5. Mark topics as covered by including [TOPIC: Topic Name] in your response.',
@@ -1552,9 +1567,9 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
    - Layer 4 (Explicit Model with Mirror Test): If still stuck after 2 failed attempts, demonstrate the method on a parallel ISOMORPHIC problem (never giving away the target problem directly), then immediately give them a mirror test to solve.
    - Layer 5 (Post-Reflection): Once correct, prompt them with: "Why did that step work?" or "What would happen if parameter X changed?" to cement deep transfer.
 4. Give crisp, specific corrective feedback (what was right, what was missed) grounded in the source materials.
-5. Suggest the Socratic deep dive phase when the student has demonstrated solid mastery across 3+ concepts.
+5. CONTINUOUS ADVANCEMENT: When the student has mastered a concept, smoothly elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or advance to the next syllabus subtopic. Never end early.
 6. Keep responses conversational, rigorous, and supportive. Use LaTeX for math ($...$ inline, $$...$$ standalone).
-7. When time is up, include [SESSION_END] in your final response.${syllabusContext}`,
+7. STRICT SESSION COMPLETION RULE: Do NOT end the session, say goodbye, or output [SESSION_END] while time remains. Always conclude your message with a question or scenario.${syllabusContext}`,
 
       socratic: `You are now in the SOCRATIC DEEP DIVE phase for "${className}".
 
@@ -1568,7 +1583,7 @@ PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 5. Ask them to connect concepts across different sections of the uploaded material.
 6. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
 7. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
-8. When instructed that time is up, include [SESSION_END] in your final response.
+8. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
 9. When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$.
 
 Your goal: push beyond surface memorization of the material into deep conceptual transfer.${syllabusContext}`,

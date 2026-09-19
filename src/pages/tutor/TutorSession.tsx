@@ -669,11 +669,17 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
         const activeSessionId = chunk.conversationId || sessionIdRef.current
         if (finalContent && activeSessionId) {
+          // If session is timed and still has time remaining, strip premature [SESSION_END] tag
+          const hasTimeRemaining = runtime.config.duration_minutes !== null && runtime.time_remaining_seconds > 30 && !runtime.is_time_up
+          const displayContent = hasTimeRemaining
+            ? finalContent.replace(/\[SESSION_END\]/g, '').trim()
+            : finalContent
+
           // Save assistant message
           window.electronAPI.tutorSaveMessage({
             session_id: activeSessionId,
             role: 'assistant',
-            content: finalContent,
+            content: displayContent,
             content_type: 'text'
           }).catch(console.error)
 
@@ -681,7 +687,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             id: Date.now().toString(),
             conversation_id: activeSessionId,
             role: 'assistant',
-            content: finalContent,
+            content: displayContent,
             content_type: 'text',
             created_at: new Date().toISOString()
           }])
@@ -690,12 +696,12 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           const topicRegex = /\[TOPIC:\s*([^\]]+)\]/g
           let match
           const newTopics: string[] = []
-          while ((match = topicRegex.exec(finalContent)) !== null) {
+          while ((match = topicRegex.exec(displayContent)) !== null) {
             newTopics.push(match[1].trim())
           }
 
           // Extract questions from the AI's response
-          const sentences = finalContent.split(/[.?!\n]+/)
+          const sentences = displayContent.split(/[.?!\n]+/)
           const newQuestions = sentences
             .filter(s => s.trim().endsWith('?') && s.trim().length > 10)
             .map(s => s.trim())
@@ -712,7 +718,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           const assistantCount = messages.filter(m => m.role === 'assistant').length
 
           // Check if AI suggested phase transition (require 2+ assistant messages to avoid first-message false triggers)
-          const lower = finalContent.toLowerCase()
+          const lower = displayContent.toLowerCase()
           const suggestsDeepDive = assistantCount >= 2 && lower.includes('deep dive')
           const suggestsSummary = assistantCount >= 2 && (lower.includes('session summary') || lower.includes('wrap up'))
 
@@ -722,7 +728,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             runtime.is_time_up
 
           const curPhase = sessionPhaseRef.current
-          if (curPhase === 'structured_qa' && suggestsDeepDive) {
+          if (curPhase === 'structured_qa' && suggestsDeepDive && isNearTimeUp) {
             setPageState('phase_transition')
             return
           }
@@ -1556,7 +1562,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       )}
 
       {/* Input bar */}
-      {pageState !== 'phase_transition' && !showTimeUp && (
+      {!showTimeUp && (
         <div className="flex-shrink-0">
           <ChatInput
             onSend={handleSend}
