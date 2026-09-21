@@ -10,6 +10,7 @@
  */
 
 import type { ParsedCard } from '../types'
+import { parseUniversalTable, generateCardsFromTable } from './tableEngine'
 
 /**
  * Strips unnecessary square brackets around terms, concepts, questions, or answers
@@ -167,6 +168,47 @@ function cleanCardBack(rawBack: string): string {
 
 export function parseCardsFromText(text: string): ParsedCard[] {
   const cards: ParsedCard[] = []
+
+  // Check if the entire text (or major block) is a Markdown pipe table or Universal table
+  if (text.includes('|') && text.includes('\n')) {
+    const table = parseUniversalTable(text)
+    if (table && table.headers.length >= 2 && table.rows.length >= 1) {
+      // Check if table columns correspond to Question / Front and Answer / Back
+      const h0 = table.headers[0].toLowerCase()
+      const h1 = table.headers[1].toLowerCase()
+      const isQAHeader = (h0.includes('question') || h0.includes('front') || h0.includes('term') || h0.includes('concept')) &&
+                         (h1.includes('answer') || h1.includes('back') || h1.includes('definition') || h1.includes('explanation') || h1.includes('mechanism'))
+
+      if (isQAHeader || table.headers.length === 2) {
+        for (const row of table.rows) {
+          const front = cleanCardFront(row[0] || '')
+          const back = cleanCardBack(row[1] || '')
+          if (front && back) {
+            const isRecall = /^(What|How|Why|Explain|Describe|Define|Compare|Contrast|List|Which)/i.test(front) || front.endsWith('?')
+            cards.push({
+              type: isRecall ? 'active_recall' : 'flashcard',
+              front,
+              back
+            })
+          }
+        }
+        if (cards.length > 0) return cards
+      } else {
+        // Multi-column table: use generateCardsFromTable
+        const genCards = generateCardsFromTable(table)
+        if (genCards.length > 0) {
+          for (const gc of genCards) {
+            cards.push({
+              type: 'flashcard',
+              front: gc.front,
+              back: gc.back
+            })
+          }
+          return cards
+        }
+      }
+    }
+  }
 
   // Split into logical segments
   const segments = splitSegments(text)

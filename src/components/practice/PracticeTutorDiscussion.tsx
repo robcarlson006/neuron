@@ -1,6 +1,7 @@
 import React, { useState } from "react"
 import { CheckCircle2, ArrowRight, Sparkles, MessageSquare, Send, RotateCw, BookOpen, Lightbulb } from "../icons"
 import LatexText from "../LatexText"
+import MarkdownRenderer from "../MarkdownRenderer"
 import type { PracticeProblem, PracticeEvaluationResult, PracticeProblemAttempt } from "../../types"
 
 interface PracticeTutorDiscussionProps {
@@ -134,7 +135,7 @@ export default function PracticeTutorDiscussion({
             </div>
 
             <div className="text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-sans">
-              <LatexText>{evaluation.feedback}</LatexText>
+              <MarkdownRenderer content={evaluation.feedback} />
             </div>
 
             {/* Socratic Pedagogical Remedy Coaching Hint */}
@@ -142,7 +143,7 @@ export default function PracticeTutorDiscussion({
               <div className="mt-3 p-3 rounded-xl bg-amber-100/70 dark:bg-amber-900/30 border border-amber-300/80 dark:border-amber-700 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
                 <span className="font-bold text-amber-600 dark:text-amber-400 shrink-0">💡 Socratic Clue:</span>
                 <div className="leading-relaxed">
-                  <LatexText>{evaluation.pedagogical_remedy}</LatexText>
+                  <MarkdownRenderer content={evaluation.pedagogical_remedy} />
                 </div>
               </div>
             )}
@@ -159,7 +160,7 @@ export default function PracticeTutorDiscussion({
                   {evaluation.step_analysis.map((st, i) => (
                     <li key={i} className="flex items-start gap-1.5">
                       <span className="text-violet-500 font-bold">•</span>
-                      <span><LatexText>{st}</LatexText></span>
+                      <div className="flex-1"><MarkdownRenderer content={st} /></div>
                     </li>
                   ))}
                 </ul>
@@ -173,7 +174,7 @@ export default function PracticeTutorDiscussion({
                   {evaluation.identified_errors.map((err, i) => (
                     <li key={i} className="flex items-start gap-1.5">
                       <span className="font-bold">⚠️</span>
-                      <span><LatexText>{err}</LatexText></span>
+                      <div className="flex-1"><MarkdownRenderer content={err} /></div>
                     </li>
                   ))}
                 </ul>
@@ -195,14 +196,14 @@ export default function PracticeTutorDiscussion({
           </summary>
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3 text-sm text-slate-800 dark:text-slate-200">
             {problem.solution_steps && (
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 font-mono text-xs leading-relaxed">
-                <LatexText>{problem.solution_steps}</LatexText>
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 leading-relaxed">
+                <MarkdownRenderer content={problem.solution_steps} />
               </div>
             )}
             {problem.final_answer && (
               <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 px-3.5 py-2 rounded-xl">
                 <span>Final Answer:</span>
-                <LatexText>{problem.final_answer}</LatexText>
+                <MarkdownRenderer content={problem.final_answer} />
               </div>
             )}
           </div>
@@ -238,7 +239,11 @@ export default function PracticeTutorDiscussion({
                   : "mr-auto bg-violet-50/80 dark:bg-violet-950/30 border border-violet-100 dark:border-violet-900 text-slate-800 dark:text-slate-200"
               }`}
             >
-              <LatexText>{m.text}</LatexText>
+              {m.role === "user" ? (
+                <LatexText>{m.text}</LatexText>
+              ) : (
+                <MarkdownRenderer content={m.text} />
+              )}
             </div>
           ))}
 

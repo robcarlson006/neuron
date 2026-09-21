@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react"
 import { Send, Calculator as CalcIcon, Sparkles, Star, Tag } from "../icons"
 import LatexText from "../LatexText"
+import MarkdownRenderer from "../MarkdownRenderer"
 import MathKeyboard from "./MathKeyboard"
 import CalculatorWidget from "../calculator/CalculatorWidget"
 import type { PracticeProblem, CalculatorSkin } from "../../types"
@@ -134,12 +135,12 @@ export default function PracticeProblemSolver({
           {problem.stimulus && (
             <div className="mb-3 p-3.5 rounded-xl bg-violet-50/60 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-900/40 text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-serif">
               <span className="text-[10px] uppercase font-bold tracking-wider text-violet-600 dark:text-violet-400 block mb-1">Scenario / Context:</span>
-              <LatexText>{problem.stimulus}</LatexText>
+              <MarkdownRenderer content={problem.stimulus} />
             </div>
           )}
 
           <div className="text-base text-slate-800 dark:text-slate-200 leading-relaxed font-sans bg-slate-50/80 dark:bg-slate-800/30 p-4 rounded-xl border border-slate-100 dark:border-slate-800/60">
-            <LatexText>{problem.stem_lead_in || problem.problem_text}</LatexText>
+            <MarkdownRenderer content={problem.stem_lead_in || problem.problem_text} />
           </div>
 
           {/* Diagnostic Options (if present) */}
@@ -181,7 +182,7 @@ export default function PracticeProblemSolver({
                           {key}
                         </span>
                         <div className="flex-1">
-                          <LatexText>{text}</LatexText>
+                          <MarkdownRenderer content={text} />
                         </div>
                       </button>
                     )

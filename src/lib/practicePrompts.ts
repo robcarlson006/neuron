@@ -99,7 +99,18 @@ export const UNIVERSAL_ITEM_WRITING_CONSTRAINTS = `
    - Stems must be positively phrased. Avoid double negatives and unprompted negative phrasing ("NOT", "EXCEPT") unless measuring a specific safety-critical contraindication.
 
 5. **LaTeX Mathematical & Scientific Notation**:
-   - Wrap all mathematical equations, variables, exponents, coordinates, and scientific formulas in standard LaTeX delimiters ($...$ for inline, $$...$$ for block display).`
+   - Wrap all mathematical equations, variables, exponents, coordinates, and scientific formulas in standard LaTeX delimiters ($...$ for inline, $$...$$ for block display).
+
+6. **Interactive Visualizations & Models (Vega-Lite)**:
+   - When a STEM or Economics scenario requires interpreting curves, equilibrium shifts (e.g. Supply/Demand, IS-LM), or multi-variable dynamics, you may include an interactive \`\`\`vega-lite JSON specification in the stimulus or solution steps.
+   - Frequency Guardrail: Do NOT overuse charts. Only include graphs when spatial, equilibrium, or multi-variable modeling is essential for solving the problem.
+
+7. **Zero-Defect Tabular Systems & Neurosymbolic Verification**:
+   - When presenting data tables, payoff matrices, econometric regression models, accounting schedules, or truth tables in problem stems, vignettes, or solution steps:
+     * Enforce Vertical Footing: Column detail items must sum exactly to stated totals (\\sum_{i=1}^{n-1} \\text{Cell}(i, j) = \\text{Cell}(n, j)).
+     * Enforce Horizontal Cross-Footing: Row adjustments must reconcile across columns.
+     * Econometric Regressions: Report point estimates with clustered standard errors in parentheses directly below each coefficient (e.g. $0.344^{***}$ with $(0.104)$ below), observation count ($N$), $R^2$, and academic significance markers ($^*p < 0.10, ^{**}p < 0.05, ^{***}p < 0.01$).
+     * Format all tabular data cleanly with standard Markdown pipe tables or LaTeX booktabs.`
 
 /**
  * Build prompt for extracting practice problems from a section of source material.

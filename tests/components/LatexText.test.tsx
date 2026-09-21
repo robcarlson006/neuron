@@ -73,5 +73,27 @@ describe('LatexText', () => {
       expect(container.textContent).toContain('stays at $5')
       expect(container.querySelectorAll('.katex').length).toBe(2)
     })
+
+    it('renders coordinates, tuples, and equations via KaTeX', () => {
+      const { container } = render(
+        <LatexText>
+          {'Check point $(1, 2)$ and $(0, 3)$ against constraint $1 \\cdot x_1 + 10 \\cdot x_2 = 30$ and slope $-0.1$.'}
+        </LatexText>
+      )
+      const katexElements = container.querySelectorAll('.katex')
+      expect(katexElements.length).toBe(4)
+    })
+
+    it('renders prime variables and indifference curves with KaTeX', () => {
+      const { container } = render(
+        <LatexText>
+          {"Take a reference bundle $x'$. The set of all bundles equally preferred to $x'$ is the indifference curve containing $x'$; the set of all bundles $y \\sim x'$."}
+        </LatexText>
+      )
+      const katexElements = container.querySelectorAll('.katex')
+      // Should have 4 KaTeX elements: 3 for $x'$ and 1 for $y \sim x'$
+      expect(katexElements.length).toBe(4)
+      expect(container.textContent).not.toContain("$x'")
+    })
   })
 })

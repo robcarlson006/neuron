@@ -13,6 +13,7 @@ import { useLectureRecordingStore } from '../store/lectureRecordingStore'
 import LectureAudioPlayer from '../components/classes/LectureAudioPlayer'
 import LectureNotesModal from '../components/classes/LectureNotesModal'
 import AudioDeviceSelector from '../components/classes/AudioDeviceSelector'
+import LoadingProgressBar from '../components/common/LoadingProgressBar'
 import PracticeHub from './PracticeHub'
 import PracticeSessionPage from './PracticeSessionPage'
 
@@ -85,6 +86,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
    * the one-click "Update curriculum?" offer until acted on or dismissed. */
   const [pendingUpdateMaterial, setPendingUpdateMaterial] = useState<string | null>(null)
   const [updatingSyllabus, setUpdatingSyllabus] = useState(false)
+  const [isRegeneratingSyllabus, setIsRegeneratingSyllabus] = useState(false)
   const [syncingFolder, setSyncingFolder] = useState(false)
 
   // ── Lectures state ──
@@ -478,6 +480,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       'All topic completions and study history will be preserved, and any newly identified topics will be highlighted.\n\nContinue?'
     )
     if (!ok) return
+    setIsRegeneratingSyllabus(true)
     try {
       const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
       if (result?.length) {
@@ -486,6 +489,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       }
     } catch {
       addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
+    } finally {
+      setIsRegeneratingSyllabus(false)
     }
   }
 
@@ -1164,6 +1169,28 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             )}
           </div>
 
+          {/* Syllabus Regeneration Loading Bar */}
+          {isRegeneratingSyllabus && (
+            <div className="mb-4 p-4 rounded-xl bg-violet-50/80 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 animate-in fade-in">
+              <LoadingProgressBar
+                label="Structuring & Reconciling Curriculum..."
+                sublabel="Analyzing uploaded course materials, mapping topics, and sequencing modules..."
+                size="md"
+              />
+            </div>
+          )}
+
+          {/* Curriculum Update Loading Bar */}
+          {updatingSyllabus && (
+            <div className="mb-4 p-4 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 animate-in fade-in">
+              <LoadingProgressBar
+                label="Updating Curriculum with New Materials..."
+                sublabel="Reconciling learning gaps and expanding module topics while preserving completed progress..."
+                size="md"
+              />
+            </div>
+          )}
+
           {modules.length > 0 ? (
             <CurriculumView
               modules={modules}
@@ -1186,6 +1213,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               {materials.length > 0 ? (
                 <button
                   onClick={async () => {
+                    setIsRegeneratingSyllabus(true)
                     try {
                       const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
                       if (result?.length) {
@@ -1194,11 +1222,17 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                       }
                     } catch {
                       addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
+                    } finally {
+                      setIsRegeneratingSyllabus(false)
                     }
                   }}
-                  className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium rounded-lg transition-colors inline-block"
+                  disabled={isRegeneratingSyllabus}
+                  className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-2"
                 >
-                  Generate Syllabus from Materials
+                  {isRegeneratingSyllabus && (
+                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  )}
+                  {isRegeneratingSyllabus ? 'Generating Syllabus...' : 'Generate Syllabus from Materials'}
                 </button>
               ) : (
                 <button
@@ -1211,7 +1245,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             </div>
           )}
 
-          {pendingUpdateMaterial && modules.length > 0 && (
+          {pendingUpdateMaterial && modules.length > 0 && !updatingSyllabus && (
             <div className="mb-4 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 flex items-start gap-3">
               <span className="text-lg">✨</span>
               <div className="flex-1">
@@ -1247,9 +1281,13 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             <div className="mt-4 text-center">
               <button
                 onClick={handleRegenerateSyllabus}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg transition-colors"
+                disabled={isRegeneratingSyllabus}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-50 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg transition-colors inline-flex items-center gap-2"
               >
-                Regenerate syllabus from materials
+                {isRegeneratingSyllabus && (
+                  <span className="w-3 h-3 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                )}
+                {isRegeneratingSyllabus ? 'Regenerating syllabus...' : 'Regenerate syllabus from materials'}
               </button>
             </div>
           )}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import LatexText from './LatexText'
+import MarkdownRenderer from './MarkdownRenderer'
 
 interface MCCard {
   id: number
@@ -140,9 +140,9 @@ export default function MultipleChoiceCard({
         <span className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 block mb-3">
           Question
         </span>
-        <p className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
-          <LatexText>{card.front}</LatexText>
-        </p>
+        <div className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
+          <MarkdownRenderer content={card.front} />
+        </div>
       </div>
 
       {/* Choices */}
@@ -161,9 +161,9 @@ export default function MultipleChoiceCard({
                   ? '✗'
                   : LETTERS[idx]}
             </span>
-            <span className={textClass(idx)}>
-              <LatexText>{choice.text}</LatexText>
-            </span>
+            <div className={textClass(idx)}>
+              <MarkdownRenderer content={choice.text} />
+            </div>
           </button>
         ))}
       </div>

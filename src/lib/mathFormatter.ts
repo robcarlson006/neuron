@@ -4,28 +4,67 @@
  * Anki tags ([latex], [$]), and un-delimited LaTeX commands into clean KaTeX delimiters ($...$ or $$...$$).
  */
 
+const MATH_WORDS = new Set([
+  'sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'arcsin', 'arccos', 'arctan',
+  'sinh', 'cosh', 'tanh', 'log', 'ln', 'exp', 'lim', 'sqrt', 'sum', 'int',
+  'prod', 'det', 'dim', 'ker', 'gcd', 'lcm', 'min', 'max', 'sup', 'inf',
+  'deg', 'arg', 'mod', 'rank', 'tr', 'var', 'cov', 'std', 'diag',
+  'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta',
+  'iota', 'kappa', 'lambda', 'mu', 'nu', 'xi', 'pi', 'rho', 'sigma',
+  'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega',
+  'frac', 'dfrac', 'tfrac', 'cdot', 'pm', 'times', 'approx', 'equiv',
+  'le', 'ge', 'neq', 'infty', 'partial', 'nabla',
+  'sim', 'succ', 'prec', 'succeq', 'preceq', 'cong', 'simeq', 'propto', 'perp',
+  'parallel', 'notin', 'subset', 'supset', 'subseteq', 'supseteq',
+  'cap', 'cup', 'setminus', 'forall', 'exists', 'implies', 'iff',
+  'hat', 'tilde', 'bar', 'dot', 'ddot', 'vec', 'mathbf', 'boldsymbol', 'mathrm',
+  'mathbb', 'mathcal', 'prime', 'mrs', 'mrt', 'mu', 'mc', 'mr', 'atc', 'avc',
+  'afc', 'tc', 'tr', 'gdp', 'cpi'
+])
+
 /**
- * Checks if a string contains valid math content (operators, variables, symbols)
+ * Checks if a string contains valid math content (operators, variables, symbols, tuples, primes)
  * versus plain text / currency phrases (e.g. "4 to 8" or "835 in benefits").
  */
 export function isValidMathString(content: string): boolean {
   const s = content.trim()
   if (!s) return false
 
-  // Check if it contains math operators/symbols, Greek letters, or LaTeX commands
-  const hasMathSymbols = /[\\^_=+/><{}]|\b(sin|cos|tan|log|lim|sqrt|sum|int|prod|alpha|beta|gamma|delta|epsilon|theta|pi|sigma|omega|Delta|Sigma|frac|dfrac|tfrac|cdot|pm|times|approx|equiv|le|ge|neq)\b/i.test(s)
-
-  if (hasMathSymbols) {
+  // If it starts with backslash or has explicit LaTeX commands, it is math
+  if (/\\[a-zA-Z]+/.test(s)) {
     return true
   }
 
-  // Without math operators/symbols:
-  // Allowed: single variable/symbol or number without spaces (e.g. "x", "p_1", "m", "12", "x1", "4")
-  if (/^[a-zA-Z0-9_\-\+\*\/\(\)\.,]+$/.test(s) && !/\s/.test(s)) {
+  // If it contains explicit math operators, relations, primes, or superscripts/subscripts
+  if (/[\\^_=+/><{}~|'’′*]|\b(sin|cos|tan|log|lim|sqrt|sum|int|prod|alpha|beta|gamma|delta|epsilon|theta|pi|sigma|omega|Delta|Sigma|frac|dfrac|tfrac|cdot|pm|times|approx|equiv|le|ge|neq|sim|succ|prec|succeq|preceq)\b/i.test(s)) {
+    // Check that it's not contaminated with non-math English prose words (unless in \text{})
+    const words = s.replace(/\\text\{[^}]*\}/g, '').match(/[a-zA-Z]{2,}/g) || []
+    const hasInvalidProseWords = words.some(w => !MATH_WORDS.has(w.toLowerCase()) && !/^[a-zA-Z]\d+$/.test(w))
+    if (!hasInvalidProseWords) {
+      return true
+    }
+  }
+
+  // Check for coordinates, points, tuples, intervals, vectors, comma-separated math:
+  // e.g. "(1, 2)", "(0, 3)", "(x, y)", "(-1, 2.5)", "[0, 1]", "x, y", "1, 2, 3", "(2, 2)", "(5, 1)", "(x', y')", "(x^*, y^*)"
+  const isTupleOrCoord = /^[\(\[\{]?\s*[\+\-]?[a-zA-Z0-9_\.\'’′\*]+(\s*,\s*[\+\-]?[a-zA-Z0-9_\.\'’′\*]+)*\s*[\)\]\}]?$/.test(s)
+  if (isTupleOrCoord) {
     return true
   }
 
-  // Any string with spaces or plain words without math operators is plain text (e.g. "4 to 8", "doubles to 12")
+  // Single variable, symbol, prime, asterisk, or signed number (e.g. "x", "x'", "x''", "x^*", "p_1", "m", "12", "-0.1", "3.14", "x1")
+  if (/^[\+\-]?[a-zA-Z0-9_\.\(\)\'’′\*]+$/.test(s) && !/\s/.test(s)) {
+    return true
+  }
+
+  // Expressions with variables, numbers, basic operators, primes, and parentheses without plain English words
+  if (/^[a-zA-Z0-9_\-\+\*\/\(\)\.,\s\'’′\^~=<>|]+$/.test(s)) {
+    const words = s.match(/[a-zA-Z]{2,}/g) || []
+    if (words.length === 0 || words.every(w => MATH_WORDS.has(w.toLowerCase()) || /^[a-zA-Z]\d+$/.test(w))) {
+      return true
+    }
+  }
+
   return false
 }
 
@@ -55,7 +94,9 @@ export function preprocessLatexText(text: string): string {
   const maskedMath: string[] = []
   const mask = (match: string) => {
     const placeholder = `@@NEURON_MATH_MASK_${maskedMath.length}@@`
-    maskedMath.push(match)
+    // Normalize unicode primes / curly apostrophes inside math blocks for KaTeX compatibility
+    const normalized = match.replace(/[’′]/g, "'").replace(/[″]/g, "''")
+    maskedMath.push(normalized)
     return placeholder
   }
 
@@ -76,8 +117,8 @@ export function preprocessLatexText(text: string): string {
     return match
   })
 
-  // In the remaining unmasked text, detect standalone LaTeX expressions (e.g. -\frac{2}{3}, \sqrt{x^2+1}, \alpha, etc.)
-  const rawLatexRegex = /(?:-?\s*\\(?:frac|dfrac|tfrac)\{[^}]*\}\{[^}]*\}|-?\s*\\(?:sqrt|vec|mathbf|boldsymbol|mathrm|text)\{[^}]*\}|\\(?:int|sum|prod|lim)(?:_[^{\s]+|\{[^}]*\})?(?:\^[^{\s]+|\{[^}]*\})?|\\(?:alpha|beta|gamma|delta|epsilon|theta|pi|sigma|omega|Delta|Sigma|partial|nabla|infty|pm|times|cdot|approx|equiv|le|ge|neq|in|notin|subset|supset|forall|exists|rightarrow|leftarrow|leftrightarrow|Rightarrow|Leftarrow|Leftrightarrow)\b)/g
+  // In the remaining unmasked text, detect standalone LaTeX expressions (e.g. -\frac{2}{3}, \sqrt{x^2+1}, \alpha, \sim, etc.)
+  const rawLatexRegex = /(?:-?\s*\\(?:frac|dfrac|tfrac)\{[^}]*\}\{[^}]*\}|-?\s*\\(?:sqrt|vec|mathbf|boldsymbol|mathrm|text)\{[^}]*\}|\\(?:int|sum|prod|lim)(?:_[^{\s]+|\{[^}]*\})?(?:\^[^{\s]+|\{[^}]*\})?|\\(?:alpha|beta|gamma|delta|epsilon|theta|pi|sigma|omega|Delta|Sigma|partial|nabla|infty|pm|times|cdot|approx|equiv|le|ge|neq|sim|succ|prec|succeq|preceq|cong|simeq|propto|perp|parallel|in|notin|subset|supset|forall|exists|rightarrow|leftarrow|leftrightarrow|Rightarrow|Leftarrow|Leftrightarrow)\b)/g
 
   s = s.replace(rawLatexRegex, match => {
     const trimmed = match.trim()
@@ -131,15 +172,15 @@ export function autoFormatMathLocal(text: string): string {
       return `\\frac{${num}}{${den}}`
     })
 
-    // Detect mathematical equations / expressions containing =, <, >, <=, >=, \frac, \sqrt, ^, or Greek letters
-    const hasMathSymbols = /\^|\\sqrt|\\frac|=|<=|>=|\b(sin|cos|tan|log)\b/i.test(s)
+    // Detect mathematical equations / expressions containing =, <, >, <=, >=, \frac, \sqrt, ^, Greek letters, or relations
+    const hasMathSymbols = /\^|\\sqrt|\\frac|=|<=|>=|~|\\sim|\b(sin|cos|tan|log)\b/i.test(s)
 
     if (hasMathSymbols) {
       const parts = s.split(/(\.{3}|;|\t)/)
       const formattedParts = parts.map(part => {
         const trimmed = part.trim()
         if (!trimmed || part === '...' || part === ';' || part === '\t') return part
-        if (/\^|\\sqrt|\\frac|=|<=|>=/.test(trimmed) && !trimmed.startsWith('$')) {
+        if (/\^|\\sqrt|\\frac|=|<=|>=|~|\\sim/.test(trimmed) && !trimmed.startsWith('$')) {
           if (/^[a-zA-Z\s,]+$/.test(trimmed) && !/\b(sin|cos|tan)\b/.test(trimmed)) {
             return part
           }

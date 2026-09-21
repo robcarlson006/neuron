@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Card } from '../types'
 import LatexText from './LatexText'
+import MarkdownRenderer from './MarkdownRenderer'
 import AutoGradeFeedback from './AutoGradeFeedback'
 import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEvaluator'
 import { Sigma } from './icons'
@@ -168,14 +169,14 @@ export default function FlashCard({
         <div className={`card-inner ${flipped ? 'flipped' : ''}`}>
           {/* Front */}
           <div className="card-front">
-            <div className="w-full h-full bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col items-center justify-center p-10 text-center">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-5">
+            <div className="w-full h-full bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col items-center justify-center p-8 text-center overflow-y-auto">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-3 shrink-0">
                 Question
               </span>
-              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50 text-balance leading-snug">
-                <LatexText>{card.front}</LatexText>
-              </p>
-              <p className="text-xs text-slate-300 dark:text-slate-600 mt-8 flex items-center gap-2">
+              <div className="text-xl font-semibold text-slate-900 dark:text-slate-50 text-balance leading-snug w-full">
+                <MarkdownRenderer content={card.front} />
+              </div>
+              <p className="text-xs text-slate-300 dark:text-slate-600 mt-6 flex items-center gap-2 shrink-0">
                 <span>Click to reveal</span>
                 <span className="text-slate-200 dark:text-slate-700">·</span>
                 <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-mono text-xs">Space</kbd>
@@ -185,13 +186,13 @@ export default function FlashCard({
 
           {/* Back */}
           <div className="card-back">
-            <div className="w-full h-full bg-violet-50 dark:bg-violet-900/20 rounded-2xl border border-violet-200 dark:border-violet-800 shadow-sm flex flex-col items-center justify-center p-10 text-center overflow-auto">
-              <span className="text-xs font-medium uppercase tracking-wide text-violet-500 dark:text-violet-400 mb-5">
+            <div className="w-full h-full bg-violet-50 dark:bg-violet-900/20 rounded-2xl border border-violet-200 dark:border-violet-800 shadow-sm flex flex-col items-center justify-center p-8 text-center overflow-y-auto">
+              <span className="text-xs font-medium uppercase tracking-wide text-violet-500 dark:text-violet-400 mb-3 shrink-0">
                 Answer
               </span>
-              <p className="text-xl text-slate-800 dark:text-slate-100 text-balance leading-relaxed">
-                <LatexText>{card.back}</LatexText>
-              </p>
+              <div className="text-lg text-slate-800 dark:text-slate-100 text-balance leading-relaxed w-full">
+                <MarkdownRenderer content={card.back} />
+              </div>
             </div>
           </div>
         </div>

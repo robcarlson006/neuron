@@ -832,21 +832,21 @@ Return STRICT JSON ONLY, no extra text, in this format:
 function cleanupAIResponse(text: string): string {
   let cleaned = text
   // 1. Remove duplicate consecutive words ("WelcomeWelcome!" → "Welcome!")
-  cleaned = cleaned.replace(/\b(\w+)\s+\1\b/gi, '$1')
-  // 2. Fix missing space after punctuation marks before a capital letter
+  cleaned = cleaned.replace(/\b([A-Za-z]{3,})\s+\1\b/gi, '$1')
+  // 2. Fix missing space after punctuation marks before a capital letter (not inside code/tables)
   cleaned = cleaned.replace(/([.!?])([A-Z])/g, '$1 $2')
-  // 3. Normalize multiple spaces to single space
-  cleaned = cleaned.replace(/\s{2,}/g, ' ')
-  // 4. Fix whitespace around punctuation (remove space before period/comma)
-  cleaned = cleaned.replace(/\s+([.,!?:;])/g, '$1')
-  // 5. Fix asterisk in middle of words ("word*word" → "word *word")
-  cleaned = cleaned.replace(/(\w)\*(\w)/g, '$1 *$2')
+  // 3. Normalize multiple horizontal spaces to single space without destroying newlines/paragraphs/tables
+  cleaned = cleaned.replace(/[^\S\r\n]{2,}/g, ' ')
+  // 4. Normalize excessive newlines to at most double newlines (paragraphs)
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+  // 5. Fix whitespace before punctuation (remove space before period/comma, not colons used in tables :---)
+  cleaned = cleaned.replace(/[^\S\r\n]+([.,!?])/g, '$1')
   // 6. Trim leading/trailing whitespace
   cleaned = cleaned.trim()
 
   // Quality gate: log warning if response still looks bad
   if (cleaned) {
-    const duplicateCount = (cleaned.match(/\b(\w+)\s+\1\b/gi) || []).length
+    const duplicateCount = (cleaned.match(/\b([A-Za-z]{3,})\s+\1\b/gi) || []).length
     const words = cleaned.split(/\s+/)
     const avgWordLen = words.reduce((sum, w) => sum + w.length, 0) / words.length
     if (duplicateCount > 2 || avgWordLen > 12) {
@@ -1568,7 +1568,12 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
    - Layer 5 (Post-Reflection): Once correct, prompt them with: "Why did that step work?" or "What would happen if parameter X changed?" to cement deep transfer.
 4. Give crisp, specific corrective feedback (what was right, what was missed) grounded in the source materials.
 5. CONTINUOUS ADVANCEMENT: When the student has mastered a concept, smoothly elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or advance to the next syllabus subtopic. Never end early.
-6. Keep responses conversational, rigorous, and supportive. Use LaTeX for math ($...$ inline, $$...$$ standalone).
+6. FORMATTING:
+   - Use LaTeX for math ($...$ inline, $$...$$ standalone). Always wrap variables, numbers, points/tuples (e.g. $(1, 2)$), and formulas in LaTeX.
+   - ZERO-DEFECT TABLES: When presenting payoff matrices, comparison matrices, econometric regressions, financial schedules, or summary data, format them as clean Markdown tables (| Col 1 | Col 2 |) with each row on a new line. For numerical schedules, verify that vertical column sums match totals. For econometric tables, format clustered standard errors in parentheses directly below each coefficient and report significance markers ($^*p < 0.10, ^{**}p < 0.05, ^{***}p < 0.01$).
+   - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):
+     * USAGE FREQUENCY GUARDRAIL: Do NOT overuse charts. Only synthesize an interactive graph when explaining multi-variable models, equilibrium shifts (e.g., Supply/Demand, IS-LM, cost curves), phase diagrams, or dynamical systems, or when the student explicitly asks to visualize something. Never generate charts for simple definitions or single-variable facts.
+     * When appropriate, output a valid Vega-Lite v5 JSON specification inside a vega-lite fenced code block with "width": "container".
 7. STRICT SESSION COMPLETION RULE: Do NOT end the session, say goodbye, or output [SESSION_END] while time remains. Always conclude your message with a question or scenario.${syllabusContext}`,
 
       socratic: `You are now in the SOCRATIC DEEP DIVE phase for "${className}".
@@ -1584,7 +1589,11 @@ PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 6. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
 7. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
 8. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
-9. When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$.
+9. FORMATTING:
+   - When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, coordinates $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$.
+   - When presenting payoff matrices, comparisons, econometric models, or tabular data, use clean Markdown tables with standard markdown table syntax (| Col 1 | Col 2 |) with each row on a new line and verified footing calculations.
+   - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):
+     * Use graphs judiciously (do not overuse). Only generate a vega-lite JSON specification when visualizing complex models, equilibrium shifts, curves, or counterfactual comparative statics.
 
 Your goal: push beyond surface memorization of the material into deep conceptual transfer.${syllabusContext}`,
 
@@ -1603,11 +1612,11 @@ PEDAGOGICAL METHOD — Session Summary Phase:
    - Mix contrast-pair discrimination cards AND 2-step application questions across Bloom's Taxonomy.
 6. Cover BOTH mastered concepts (for retention) and identified weak areas.
 7. End with a clear, actionable recommendation for what module or problem archetype to tackle next.${syllabusContext}
-8. When showing formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$) and standalone equations in $$...$$. Never use ^ for exponents.`
+8. When showing formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents. You can also use Markdown tables for comparison summaries.`
     }
 
     const systemInstruction = phaseInstructions[params.phase] ||
-      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics.${syllabusContext}`
+      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics. Wrap math in LaTeX ($...$) and format tabular data in Markdown tables. If visualizing complex economic or scientific models, you may provide a vega-lite specification, but do not overuse graphs.${syllabusContext}`
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemInstruction }

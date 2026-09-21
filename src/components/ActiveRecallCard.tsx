@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Card } from '../types'
 import LatexText from './LatexText'
+import MarkdownRenderer from './MarkdownRenderer'
 import AutoGradeFeedback from './AutoGradeFeedback'
 import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEvaluator'
 import { Sigma } from './icons'
@@ -145,9 +146,9 @@ export default function ActiveRecallCard({
         <span className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 block mb-3">
           Active Recall
         </span>
-        <p className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
-          <LatexText>{card.front}</LatexText>
-        </p>
+        <div className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
+          <MarkdownRenderer content={card.front} />
+        </div>
       </div>
 
       {phase === 'question' && (
@@ -268,9 +269,9 @@ export default function ActiveRecallCard({
             <span className="text-xs font-medium uppercase tracking-wide text-violet-500 dark:text-violet-400 block mb-2">
               Model Answer
             </span>
-            <p className="text-sm text-slate-800 dark:text-slate-100 leading-relaxed">
-              <LatexText>{card.back}</LatexText>
-            </p>
+            <div className="text-sm text-slate-800 dark:text-slate-100 leading-relaxed">
+              <MarkdownRenderer content={card.back} />
+            </div>
           </div>
 
           {/* Self-rating */}

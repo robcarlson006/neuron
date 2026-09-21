@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/appStore'
 import CurriculumView from '../../components/classes/CurriculumView'
 import SessionConfigModal from '../../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../../components/classes/CurriculumProgressBar'
+import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import type { SyllabusModule, ModuleTopic, Subject, Material, ModuleTutorStats } from '../../types'
 
 type PageState = 'loading' | 'ready' | 'error'
@@ -20,6 +21,7 @@ export default function ClassOverview(): React.JSX.Element {
   const [moduleTutorStats, setModuleTutorStats] = useState<Record<number, ModuleTutorStats>>({})
   const [materials, setMaterials] = useState<Material[]>([])
   const [loadingCards, setLoadingCards] = useState<Record<number, boolean>>({})
+  const [isRegeneratingSyllabus, setIsRegeneratingSyllabus] = useState(false)
   const [showConfigModal, setShowConfigModal] = useState<{
     subjectId: number
     subjectName: string
@@ -263,6 +265,17 @@ export default function ClassOverview(): React.JSX.Element {
 
 
 
+        {/* Syllabus Regeneration Loading Bar */}
+        {isRegeneratingSyllabus && (
+          <div className="mb-4 p-4 rounded-xl bg-violet-50/80 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 animate-in fade-in">
+            <LoadingProgressBar
+              label="Structuring & Reconciling Curriculum..."
+              sublabel="Analyzing uploaded course materials, mapping topics, and sequencing modules..."
+              size="md"
+            />
+          </div>
+        )}
+
         {subject.syllabus_generated === 1 && (
           <div className="mt-4 text-center">
             <button
@@ -273,6 +286,7 @@ export default function ClassOverview(): React.JSX.Element {
                   'All topic completions and study history will be preserved, and any newly identified topics will be highlighted.\n\nContinue?'
                 )
                 if (!ok) return
+                setIsRegeneratingSyllabus(true)
                 try {
                   const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
                   if (result?.length) {
@@ -281,11 +295,17 @@ export default function ClassOverview(): React.JSX.Element {
                   }
                 } catch {
                   addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
+                } finally {
+                  setIsRegeneratingSyllabus(false)
                 }
               }}
-              className="px-3 py-1.5 text-xs text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg transition-colors"
+              disabled={isRegeneratingSyllabus}
+              className="px-3 py-1.5 text-xs text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 disabled:opacity-50 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg transition-colors inline-flex items-center gap-2"
             >
-              Regenerate syllabus from materials
+              {isRegeneratingSyllabus && (
+                <span className="w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+              )}
+              {isRegeneratingSyllabus ? 'Regenerating syllabus...' : 'Regenerate syllabus from materials'}
             </button>
           </div>
         )}

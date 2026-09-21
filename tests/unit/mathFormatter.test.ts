@@ -10,6 +10,32 @@ describe('mathFormatter', () => {
       expect(isValidMathString('x^2 + y^2')).toBe(true)
     })
 
+    it('recognizes coordinate pairs, tuples, intervals, and vectors as valid math', () => {
+      expect(isValidMathString('(1, 2)')).toBe(true)
+      expect(isValidMathString('(0, 3)')).toBe(true)
+      expect(isValidMathString('(2, 2)')).toBe(true)
+      expect(isValidMathString('(5, 1)')).toBe(true)
+      expect(isValidMathString('(x, y)')).toBe(true)
+      expect(isValidMathString('(x_1, x_2)')).toBe(true)
+      expect(isValidMathString('[0, 1]')).toBe(true)
+      expect(isValidMathString('[-1, 5]')).toBe(true)
+      expect(isValidMathString('-0.1')).toBe(true)
+      expect(isValidMathString('1 \\cdot x_1 + 10 \\cdot x_2 = 30')).toBe(true)
+    })
+
+    it('recognizes prime notation, asterisks, and preference relations as valid math', () => {
+      expect(isValidMathString("x'")).toBe(true)
+      expect(isValidMathString("x''")).toBe(true)
+      expect(isValidMathString("x^*")).toBe(true)
+      expect(isValidMathString("y'")).toBe(true)
+      expect(isValidMathString("f'(x)")).toBe(true)
+      expect(isValidMathString("(x', y')")).toBe(true)
+      expect(isValidMathString("y \\sim x'")).toBe(true)
+      expect(isValidMathString("x \\succ y")).toBe(true)
+      expect(isValidMathString("x \\succeq y")).toBe(true)
+      expect(isValidMathString("y ~ x'")).toBe(true)
+    })
+
     it('rejects multi-word plain English phrases with spaces and no math', () => {
       expect(isValidMathString('4 to 8')).toBe(false)
       expect(isValidMathString('835 in food benefits per month')).toBe(false)

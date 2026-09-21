@@ -117,7 +117,11 @@ ${extractedText}
 6. **MATHEMATICAL & SCIENTIFIC FORMATTING (LaTeX)**:
    - Wrap all mathematical expressions, formulas, variables, and scientific notation in standard LaTeX ($...$ for inline, $$...$$ for block formulas, e.g. $x^3$, $a^2 + b^2 = c^2$, $\\text{H}_2\\text{O}$).
 
-7. **STRICT SOURCE GROUNDING (ZERO HALLUCINATIONS)**:
+7. **INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite)**:
+   - For complex multi-variable models (e.g., equilibrium shifts in economics, phase portraits in physics), you may include an interactive \`\`\`vega-lite JSON block.
+   - Frequency Guardrail: Do NOT overuse charts. Only synthesize a graph when spatial or multi-curve modeling is essential.
+
+8. **STRICT SOURCE GROUNDING (ZERO HALLUCINATIONS)**:
    - All items MUST be extracted strictly and exclusively from the <source_material>. Do NOT introduce outside facts or assumed concepts.
 
 Generate exactly ${minCards} flashcards and exactly ${minQuestions} active recall questions.
@@ -265,9 +269,19 @@ ${extractedText}
 7. **MATHEMATICAL & SCIENTIFIC NOTATION (LaTeX)**:
    - Wrap all mathematical equations, variables, exponents, and chemical/scientific notation in standard LaTeX delimiters ($...$ for inline or $$...$$ for block formulas, e.g. $x^3$, $a^2 + b^2 = c^2$, $\\text{H}_2\\text{O}$).
 
-8. **STRICT SOURCE GROUNDING (NOTEBOOKLM MODE - ZERO HALLUCINATIONS)**:
-   - Every single flashcard and active recall question MUST be strictly and exclusively grounded in the <source_material>.
-   - Absolutely NO hallucinations, external facts, or assumed knowledge not present in the text.
+8. **INTERACTIVE GRAPHS (Vega-Lite)**:
+   - In active recall explanations or visual conceptual items (e.g. market equilibrium shifts, IS-LM, phase transitions), you may embed an interactive \`\`\`vega-lite block. Use sparingly and only when necessary for multi-variable models.
+
+9. **ZERO-DEFECT TABULAR STRUCTURES & NEUROSYMBOLIC VERIFICATION**:
+   - When extracting from tables, schedules, balance sheets, or multi-column data:
+     - Preserve complete grid coordinates and Cartesian path tuples (e.g. ["Segment", "Year", "Metric"]).
+     - Enforce vertical footing sums (\\sum \\text{detail rows} = \\text{total}) and horizontal cross-footing without hallucinated math.
+     - For econometric tables, point estimates must be accompanied by clustered standard errors in parentheses directly below coefficients and academic significance markers ($^*p < 0.10, ^{**}p < 0.05, ^{***}p < 0.01$).
+     - You may format tabular summaries using clean Markdown pipe tables.
+
+10. **STRICT SOURCE GROUNDING (NOTEBOOKLM MODE - ZERO HALLUCINATIONS)**:
+    - Every single flashcard and active recall question MUST be strictly and exclusively grounded in the <source_material>.
+    - Absolutely NO hallucinations, external facts, or assumed knowledge not present in the text.
 ${FEW_SHOT_CONTRAST_EXEMPLARS}
 ## RESPONSE FORMAT
 
