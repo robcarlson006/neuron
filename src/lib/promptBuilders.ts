@@ -118,8 +118,10 @@ ${extractedText}
    - Wrap all mathematical expressions, formulas, variables, and scientific notation in standard LaTeX ($...$ for inline, $$...$$ for block formulas, e.g. $x^3$, $a^2 + b^2 = c^2$, $\\text{H}_2\\text{O}$).
 
 7. **INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite)**:
-   - For complex multi-variable models (e.g., equilibrium shifts in economics, phase portraits in physics), you may include an interactive \`\`\`vega-lite JSON block.
-   - Frequency Guardrail: Do NOT overuse charts. Only synthesize a graph when spatial or multi-curve modeling is essential.
+   - For complex multi-variable models (e.g., equilibrium shifts in economics, phase portraits in physics, compounding growth), you may include an interactive \`\`\`vega-lite JSON block.
+   - **Interactive Parameter Curves**: When using interactive sliders (\`params\` with \`bind: { input: "range", min: ..., max: ..., step: ... }\`), NEVER use hardcoded static points. You MUST generate a domain sequence via \`data: { sequence: { start: 0, stop: N, step: S, as: "x" } }\` and compute curves dynamically via \`transform: [{ calculate: "...", as: "y" }]\`.
+   - **Vega Expression Syntax**: Use \`pow(base, exp)\` instead of \`^\` (e.g. \`C0 * pow(1 + r, datum.t)\`).
+   - **Frequency Guardrail**: Do NOT overuse charts. Only synthesize a graph when spatial, comparative, or multi-curve modeling is essential.
 
 8. **STRICT SOURCE GROUNDING (ZERO HALLUCINATIONS)**:
    - All items MUST be extracted strictly and exclusively from the <source_material>. Do NOT introduce outside facts or assumed concepts.

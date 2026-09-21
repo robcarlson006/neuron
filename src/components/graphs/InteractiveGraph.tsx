@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
+import { sanitizeVegaSpecMath } from './latexGraphUtils'
 
 export interface InteractiveGraphProps {
   spec: Record<string, any>
@@ -8,15 +9,16 @@ export interface InteractiveGraphProps {
 }
 
 /**
- * Sandboxed Vega-Lite renderer component.
- * Implements strict iframe isolation with allow-scripts (NO allow-same-origin)
- * and secure postMessage verification nonces.
+ * Sandboxed High-Definition Vega-Lite renderer component.
+ * Implements strict iframe isolation with allow-scripts (NO allow-same-origin),
+ * secure postMessage verification nonces, LaTeX-to-Unicode typography formatting,
+ * and responsive expansive sizing.
  */
 export default function InteractiveGraph({
   spec,
   theme = 'light',
   className = '',
-  minHeight = 320
+  minHeight = 360
 }: InteractiveGraphProps): React.JSX.Element {
   const [iframeHeight, setIframeHeight] = useState<number>(minHeight)
   const [hasError, setHasError] = useState<string | null>(null)
@@ -30,58 +32,79 @@ export default function InteractiveGraph({
 
   const isDark = theme === 'dark'
 
-  // Prepare normalized Vega-Lite spec with responsive properties and theme styling
+  // Prepare normalized Vega-Lite spec with responsive properties, LaTeX cleanup, and theme styling
   const normalizedSpec = React.useMemo(() => {
     try {
-      const cloned = JSON.parse(JSON.stringify(spec))
-      
-      // Ensure schema is present
+      // 1. First sanitize mathematical expressions across titles, axes, legends, and parameters
+      const sanitized = sanitizeVegaSpecMath(spec)
+      const cloned = JSON.parse(JSON.stringify(sanitized))
+
+      // 2. Ensure schema is present
       if (!cloned.$schema) {
         cloned.$schema = 'https://vega.github.io/schema/vega-lite/v5.json'
       }
 
-      // Responsive sizing defaults
+      // 3. Generous responsive sizing defaults
       if (!cloned.width) cloned.width = 'container'
-      if (!cloned.height && !cloned.vconcat && !cloned.hconcat) cloned.height = 240
+      if (!cloned.height && !cloned.vconcat && !cloned.hconcat) cloned.height = 320
 
       cloned.autosize = {
         type: 'fit',
         contains: 'padding'
       }
 
-      // Background styling
+      // 4. Background styling
       cloned.background = isDark ? '#0f172a' : '#ffffff'
 
-      // Default theme configurations if not explicitly overridden
+      // 5. Default theme configurations for high-definition rendering
       cloned.config = {
         ...cloned.config,
         background: isDark ? '#0f172a' : '#ffffff',
+        padding: { top: 12, left: 14, right: 14, bottom: 12 },
         title: {
           color: isDark ? '#f8fafc' : '#0f172a',
-          fontSize: 14,
+          fontSize: 15,
           fontWeight: 600,
           anchor: 'start',
+          offset: 12,
+          subtitleColor: isDark ? '#94a3b8' : '#64748b',
+          subtitleFontSize: 12,
           ...(cloned.config?.title || {})
         },
         axis: {
           domainColor: isDark ? '#334155' : '#cbd5e1',
+          domainWidth: 1.5,
           gridColor: isDark ? '#1e293b' : '#f1f5f9',
+          gridWidth: 1,
+          gridOpacity: isDark ? 0.6 : 0.8,
           tickColor: isDark ? '#475569' : '#cbd5e1',
+          tickSize: 5,
           labelColor: isDark ? '#94a3b8' : '#64748b',
-          titleColor: isDark ? '#cbd5e1' : '#334155',
           labelFontSize: 11,
-          titleFontSize: 12,
+          labelFontWeight: '500',
+          labelPadding: 6,
+          titleColor: isDark ? '#cbd5e1' : '#334155',
+          titleFontSize: 13,
+          titleFontWeight: '600',
+          titlePadding: 10,
           ...(cloned.config?.axis || {})
         },
         legend: {
           labelColor: isDark ? '#94a3b8' : '#64748b',
-          titleColor: isDark ? '#cbd5e1' : '#334155',
           labelFontSize: 11,
+          labelFontWeight: '500',
+          titleColor: isDark ? '#cbd5e1' : '#334155',
           titleFontSize: 12,
+          titleFontWeight: '600',
+          symbolSize: 100,
+          symbolStrokeWidth: 2,
+          padding: 10,
           ...(cloned.config?.legend || {})
         },
         view: {
           stroke: 'transparent',
+          continuousWidth: 600,
+          continuousHeight: 320,
           ...(cloned.config?.view || {})
         }
       }
@@ -111,7 +134,8 @@ export default function InteractiveGraph({
   <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    html, body {
+      width: 100%;
       background-color: ${bgColor};
       color: ${textColor};
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -124,29 +148,61 @@ export default function InteractiveGraph({
       display: flex;
       justify-content: center;
     }
+    .vega-embed {
+      width: 100% !important;
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: center !important;
+    }
+    .vega-embed > svg, .vega-embed > canvas {
+      max-width: 100% !important;
+      height: auto !important;
+    }
     .vega-bindings {
-      margin-top: 14px;
-      padding: 10px 14px;
+      width: 100% !important;
+      margin-top: 16px;
+      padding: 14px 18px;
       background: ${isDark ? '#1e293b' : '#f8fafc'};
       border: 1px solid ${isDark ? '#334155' : '#e2e8f0'};
-      border-radius: 8px;
+      border-radius: 10px;
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
       gap: 12px;
       font-size: 12px;
     }
     .vega-bind {
-      display: inline-flex;
+      display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
+      gap: 14px;
+      width: 100%;
     }
     .vega-bind-name {
-      font-weight: 500;
-      color: ${isDark ? '#cbd5e1' : '#475569'};
+      font-weight: 600;
+      font-size: 12px;
+      color: ${isDark ? '#e2e8f0' : '#334155'};
+      min-width: 130px;
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .vega-bind input[type=range] {
+      flex: 1;
+      height: 6px;
+      border-radius: 9999px;
+      background: ${isDark ? '#334155' : '#cbd5e1'};
+      outline: none;
       accent-color: #8b5cf6;
       cursor: pointer;
+    }
+    .vega-bind span {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      color: #8b5cf6;
+      min-width: 45px;
+      text-align: right;
     }
     .error-box {
       color: #ef4444;
@@ -158,7 +214,6 @@ export default function InteractiveGraph({
       font-family: monospace;
       white-space: pre-wrap;
     }
-    /* Hide vega action menu for cleaner educational display */
     .vega-actions {
       display: none !important;
     }
@@ -177,7 +232,7 @@ export default function InteractiveGraph({
     }
 
     function sendHeight() {
-      const height = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, 280);
+      const height = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, 340);
       post("RESIZE", { height: height });
     }
 
@@ -190,7 +245,6 @@ export default function InteractiveGraph({
       }).then(function(result) {
         post("LOADED", {});
         sendHeight();
-        // Observe mutations / resizes
         const resizeObserver = new ResizeObserver(() => sendHeight());
         resizeObserver.observe(document.body);
       }).catch(function(err) {
@@ -213,7 +267,6 @@ export default function InteractiveGraph({
   // Handle postMessage communication from iframe
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // Validate nonce to prevent message spoofing from other frames
       if (!event.data || event.data.nonce !== nonceRef.current) return
 
       const { type, payload } = event.data

@@ -60,6 +60,24 @@ describe('InteractiveGraph and GraphContainer Components', () => {
       })
       expect(iframe).toHaveStyle({ height: '300px' })
     })
+
+    it('converts LaTeX in axis titles and titles to clean Unicode in iframe srcdoc', () => {
+      const mathSpec = {
+        title: 'Indifference Curves ($U = x_1 \\cdot x_2$)',
+        encoding: {
+          x: { field: 'x1', title: 'Good 1 ($x_1$)' },
+          y: { field: 'x2', title: 'Good 2 ($x_2$)' }
+        }
+      }
+
+      const { container } = render(<InteractiveGraph spec={mathSpec} />)
+      const iframe = container.querySelector('iframe')
+      const srcdoc = iframe?.getAttribute('srcdoc') || ''
+
+      expect(srcdoc).toContain('Indifference Curves (U = x₁ · x₂)')
+      expect(srcdoc).toContain('Good 1 (x₁)')
+      expect(srcdoc).toContain('Good 2 (x₂)')
+    })
   })
 
   describe('GraphContainer Controls', () => {

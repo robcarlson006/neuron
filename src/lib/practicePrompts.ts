@@ -103,6 +103,7 @@ export const UNIVERSAL_ITEM_WRITING_CONSTRAINTS = `
 
 6. **Interactive Visualizations & Models (Vega-Lite)**:
    - When a STEM or Economics scenario requires interpreting curves, equilibrium shifts (e.g. Supply/Demand, IS-LM), or multi-variable dynamics, you may include an interactive \`\`\`vega-lite JSON specification in the stimulus or solution steps.
+   - **Interactive Parameterization**: When using sliders (\`params\` with \`bind: { input: "range" }\`), generate dynamic coordinate points via \`data: { sequence: { start: 0, stop: N, step: S, as: "x" } }\` and compute curves dynamically via \`transform: [{ calculate: "...", as: "y" }]\` using \`pow(base, exp)\` rather than static points.
    - Frequency Guardrail: Do NOT overuse charts. Only include graphs when spatial, equilibrium, or multi-variable modeling is essential for solving the problem.
 
 7. **Zero-Defect Tabular Systems & Neurosymbolic Verification**:
