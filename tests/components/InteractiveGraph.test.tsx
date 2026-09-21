@@ -42,7 +42,7 @@ describe('InteractiveGraph and GraphContainer Components', () => {
       const srcdoc = iframe?.getAttribute('srcdoc') || ''
       expect(srcdoc).toContain("http-equiv=\"Content-Security-Policy\"")
       expect(srcdoc).toContain("default-src 'none'")
-      expect(srcdoc).toContain("script-src 'unsafe-inline' https://cdn.jsdelivr.net")
+      expect(srcdoc).toContain("script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net")
     })
 
     it('handles resize events only when accompanied by matching nonce', () => {
