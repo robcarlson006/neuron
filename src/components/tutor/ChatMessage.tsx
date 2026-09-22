@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { parseCardsFromText } from '../../lib/cardParser'
 import MarkdownRenderer from '../MarkdownRenderer'
+import LatexText from '../LatexText'
 
 // Re-export SimpleMarkdown for backward compatibility
 export const SimpleMarkdown = MarkdownRenderer
@@ -57,7 +58,9 @@ export default function ChatMessage({
             : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-md shadow-sm'
         }`}>
           {isUser ? (
-            <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
+            <div className="text-sm leading-relaxed whitespace-pre-wrap">
+              <LatexText>{content}</LatexText>
+            </div>
           ) : (
             <div className={`${isStreaming ? 'animate-fade-in' : ''}`}>
               <SimpleMarkdown content={content} />

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import LatexText from '../LatexText'
 import MathKeyboard from '../practice/MathKeyboard'
+import { hasMathInput } from '../../lib/mathFormatter'
 import { Sigma, Calculator as CalcIcon } from '../icons'
 
 interface ChatInputProps {
@@ -116,7 +117,7 @@ export default function ChatInput({
       )}
 
       {/* Live Math Preview */}
-      {(input.includes('$') || input.includes('\\') || input.includes('^') || input.includes('_')) && (
+      {hasMathInput(input) && (
         <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-left animate-in fade-in">
           <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block mb-1">
             Live Math Preview:

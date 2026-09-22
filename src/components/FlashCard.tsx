@@ -4,6 +4,7 @@ import LatexText from './LatexText'
 import MarkdownRenderer from './MarkdownRenderer'
 import AutoGradeFeedback from './AutoGradeFeedback'
 import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEvaluator'
+import { hasMathInput } from '../lib/mathFormatter'
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
 
@@ -240,7 +241,7 @@ export default function FlashCard({
           </div>
 
           {/* Live LaTeX Preview if user used math symbols */}
-          {(answer.includes("$") || answer.includes("\\") || answer.includes("^") || answer.includes("_")) && (
+          {hasMathInput(answer) && (
             <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-left">
               <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block mb-1">
                 Live Math Preview:

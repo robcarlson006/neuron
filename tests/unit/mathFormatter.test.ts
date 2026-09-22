@@ -1,4 +1,11 @@
-import { preprocessLatexText, autoFormatMathLocal, isValidMathString } from '../../src/lib/mathFormatter'
+import {
+  preprocessLatexText,
+  autoFormatMathLocal,
+  isValidMathString,
+  convertAsciiMathToLatex,
+  normalizeUnicodeMath,
+  repairMathSyntax
+} from '../../src/lib/mathFormatter'
 
 describe('mathFormatter', () => {
   describe('isValidMathString', () => {
@@ -44,6 +51,48 @@ describe('mathFormatter', () => {
     })
   })
 
+  describe('convertAsciiMathToLatex', () => {
+    it('converts slash fractions into LaTeX \\frac', () => {
+      expect(convertAsciiMathToLatex('(x + 1)/(y - 2)')).toBe('\\frac{x + 1}{y - 2}')
+      expect(convertAsciiMathToLatex('1/2')).toBe('\\frac{1}{2}')
+      expect(convertAsciiMathToLatex('dy/dx')).toBe('\\frac{dy}{dx}')
+    })
+
+    it('converts sqrt into \\sqrt', () => {
+      expect(convertAsciiMathToLatex('sqrt(2x + 1)')).toBe('\\sqrt{2x + 1}')
+    })
+
+    it('converts Greek words and relational operators', () => {
+      expect(convertAsciiMathToLatex('alpha + beta != 0')).toBe('\\alpha + \\beta \\neq 0')
+      expect(convertAsciiMathToLatex('x <= 10 and y >= 5')).toBe('x \\le 10 and y \\ge 5')
+      expect(convertAsciiMathToLatex('a +- b')).toBe('a \\pm b')
+      expect(convertAsciiMathToLatex('theta ~= pi')).toBe('\\theta \\approx \\pi')
+      expect(convertAsciiMathToLatex('x -> infinity')).toBe('x \\to \\infty')
+    })
+  })
+
+  describe('normalizeUnicodeMath', () => {
+    it('normalizes superscripts and common unicode math symbols', () => {
+      expect(normalizeUnicodeMath('x² + y² = z²')).toBe('x^2 + y^2 = z^2')
+      expect(normalizeUnicodeMath('√x ± 2')).toContain('\\sqrt{x}')
+      expect(normalizeUnicodeMath('√x ± 2')).toContain('\\pm')
+      expect(normalizeUnicodeMath('α + β = π')).toBe('\\alpha + \\beta = \\pi')
+      expect(normalizeUnicodeMath('a ≠ b and c ≤ d and e ≥ f')).toBe('a \\neq b and c \\le d and e \\ge f')
+    })
+  })
+
+  describe('repairMathSyntax', () => {
+    it('auto-closes unclosed curly braces and brackets', () => {
+      expect(repairMathSyntax('\\frac{1}{2')).toBe('\\frac{1}{2}')
+      expect(repairMathSyntax('\\sqrt{x^2 + 1')).toBe('\\sqrt{x^2 + 1}')
+      expect(repairMathSyntax('[0, 1')).toBe('[0, 1]')
+    })
+
+    it('balances \\left without \\right', () => {
+      expect(repairMathSyntax('\\left( x + y')).toBe('\\left( x + y \\right.')
+    })
+  })
+
   describe('preprocessLatexText', () => {
     it('converts Anki [latex]...[/latex] tags to $$...$$', () => {
       const input = 'Equation: [latex]\\frac{a}{b}[/latex]'
@@ -68,6 +117,12 @@ describe('mathFormatter', () => {
       const result = preprocessLatexText(input)
       expect(result).toContain('$-\\frac{2}{3}$')
       expect(result).toContain('$-\\frac{4}{3}$')
+    })
+
+    it('converts backtick math containing equations into $...$', () => {
+      const input = 'Use `x^2 + y^2 = 25` to find radius'
+      const result = preprocessLatexText(input)
+      expect(result).toContain('$x^{2} + y^{2} = 25$')
     })
 
     it('preserves standalone currency symbols without corrupting them', () => {

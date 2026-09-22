@@ -8,6 +8,12 @@ describe('ChatMessage Component', () => {
     expect(screen.getByText('Hello tutor, what is the slope?')).toBeInTheDocument()
   })
 
+  it('renders user message containing typed math equations with KaTeX', () => {
+    const { container } = render(<ChatMessage role="user" content="Is the equation $x^2 + y^2 = 25$ or \\frac{1}{2}?" />)
+    const katexElements = container.querySelectorAll('.katex')
+    expect(katexElements.length).toBe(2)
+  })
+
   it('renders assistant message with mixed math and currency without raw stray dollar signs', () => {
     const content = `Great question! Here is the breakdown:
 

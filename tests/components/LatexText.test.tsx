@@ -95,5 +95,36 @@ describe('LatexText', () => {
       expect(katexElements.length).toBe(4)
       expect(container.textContent).not.toContain("$x'")
     })
+
+    it('renders AsciiMath formulas inside delimiters with KaTeX', () => {
+      const { container } = render(
+        <LatexText>
+          {'Solve $(x + 1)/(y - 2)$ and $sqrt(2x + 1)$ with $alpha != beta$'}
+        </LatexText>
+      )
+      const katexElements = container.querySelectorAll('.katex')
+      expect(katexElements.length).toBe(3)
+    })
+
+    it('auto-repairs unclosed braces in LaTeX without error boxes', () => {
+      const { container } = render(
+        <LatexText>
+          {'Calculated $\\frac{1}{2$ and $\\sqrt{x^2 + 1$'}
+        </LatexText>
+      )
+      const katexElements = container.querySelectorAll('.katex')
+      expect(katexElements.length).toBe(2)
+      expect(container.textContent).not.toContain('katex-error')
+    })
+
+    it('renders raw exponents and roots typed without delimiters (e.g. x^2, sqrt(x))', () => {
+      const { container } = render(
+        <LatexText>
+          {'The equation is x^2 + y^2 = 25 and sqrt(2x + 1)'}
+        </LatexText>
+      )
+      const katexElements = container.querySelectorAll('.katex')
+      expect(katexElements.length).toBeGreaterThanOrEqual(2)
+    })
   })
 })

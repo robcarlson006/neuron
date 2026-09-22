@@ -3,6 +3,7 @@ import { Send, Calculator as CalcIcon, Sparkles, Star, Tag } from "../icons"
 import LatexText from "../LatexText"
 import MarkdownRenderer from "../MarkdownRenderer"
 import MathKeyboard from "./MathKeyboard"
+import { hasMathInput } from "../../lib/mathFormatter"
 import CalculatorWidget from "../calculator/CalculatorWidget"
 import type { PracticeProblem, CalculatorSkin } from "../../types"
 
@@ -235,7 +236,7 @@ export default function PracticeProblemSolver({
           </div>
 
           {/* Live LaTeX Preview if user used math symbols */}
-          {userAnswer.includes("$") && (
+          {hasMathInput(userAnswer) && (
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700">
               <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Live Math Preview:</span>
               <div className="text-sm text-slate-800 dark:text-slate-200">

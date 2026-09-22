@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import LatexText from './LatexText'
 import { evaluateSemantically } from '../lib/semanticEvaluator'
+import { hasMathInput } from '../lib/mathFormatter'
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
 
@@ -590,7 +591,7 @@ export default function LearnModeSession({
             />
 
             {/* Live LaTeX Preview if user used math symbols */}
-            {(writtenInput.includes("$") || writtenInput.includes("\\") || writtenInput.includes("^") || writtenInput.includes("_")) && (
+            {hasMathInput(writtenInput) && (
               <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-left">
                 <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block mb-1">
                   Live Math Preview:

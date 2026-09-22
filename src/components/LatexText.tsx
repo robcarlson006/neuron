@@ -1,7 +1,7 @@
 import React from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { preprocessLatexText, isValidMathString } from '../lib/mathFormatter'
+import { preprocessLatexText, isValidMathString, convertAsciiMathToLatex, repairMathSyntax } from '../lib/mathFormatter'
 
 interface Props {
   children: string
@@ -10,11 +10,13 @@ interface Props {
 }
 
 /**
- * Renders text that may contain LaTeX in multiple formats:
+ * Renders text that may contain math in multiple formats:
  * - $$...$$ or \[...\] — display (block) math
  * - $...$ or \(...\) — inline math
  * - \begin{env}...\end{env} — LaTeX block environments
  * - [latex]...[/latex] or [$]...[/$] — Anki math tags
+ * - AsciiMath e.g. sqrt(x), (a+b)/(c+d), alpha != beta
+ * - Unicode math e.g. x², √x, ±, ≠, ≤, ≥, π, ∑, ∫
  */
 export default function LatexText({ children, className, forceInline = false }: Props): React.JSX.Element {
   if (!children || typeof children !== 'string') {
@@ -37,21 +39,58 @@ export default function LatexText({ children, className, forceInline = false }: 
 }
 
 function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean }): React.JSX.Element {
+  let cleanLatex = latex
+  // Convert any remaining un-escaped AsciiMath tokens inside delimiters
+  if (!/^\\[a-zA-Z]+/.test(cleanLatex)) {
+    cleanLatex = convertAsciiMathToLatex(cleanLatex)
+  }
+
   let html = ''
   let error = false
   try {
-    html = katex.renderToString(latex, {
+    html = katex.renderToString(cleanLatex, {
       throwOnError: false,
       displayMode,
       output: 'html'
     })
+    // Check if KaTeX returned an error element
+    if (html.includes('katex-error')) {
+      error = true
+    }
   } catch {
     error = true
   }
 
+  // Attempt auto-repair if KaTeX threw or returned an error
+  if (error) {
+    const repaired = repairMathSyntax(cleanLatex)
+    try {
+      html = katex.renderToString(repaired, {
+        throwOnError: false,
+        displayMode,
+        output: 'html'
+      })
+      if (!html.includes('katex-error')) {
+        error = false
+      }
+    } catch {
+      error = true
+    }
+  }
+
   if (error || !html) {
-    const raw = displayMode ? `$$${latex}$$` : `$${latex}$`
-    return <code className="text-red-500 text-xs bg-red-50 dark:bg-red-900/20 px-1 rounded break-words">{raw}</code>
+    // Graceful fallback: render clean styled math text rather than a broken red error box
+    return (
+      <span
+        className={
+          displayMode
+            ? 'block my-2 text-center font-mono text-xs px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
+            : 'inline-block font-mono text-xs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700/60 mx-0.5 align-baseline'
+        }
+      >
+        {latex}
+      </span>
+    )
   }
 
   return (

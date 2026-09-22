@@ -99,4 +99,92 @@ describe('CurriculumView', () => {
 
     expect(screen.getByText(/No modules yet/i)).toBeInTheDocument()
   })
+
+  it('renders new content banner, interactive badges, and module action buttons when topics have new content', () => {
+    const modulesWithNewContent: (SyllabusModule & { topics: ModuleTopic[] })[] = [
+      {
+        id: 1,
+        subject_id: 10,
+        title: 'Module 1: Cellular Respiration',
+        chapter_number: 1,
+        description: 'Understanding glycolysis and Krebs cycle',
+        hours_estimated: 4,
+        status: 'in_progress',
+        sort_order: 1,
+        created_at: new Date().toISOString(),
+        topics: [
+          {
+            id: 101,
+            module_id: 1,
+            title: 'Glycolysis pathway',
+            mastery_target: 80,
+            has_new_material: true,
+            sort_order: 1,
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 102,
+            module_id: 1,
+            title: 'Fermentation alternative',
+            mastery_target: 80,
+            is_gap: true,
+            sort_order: 2,
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 103,
+            module_id: 1,
+            title: 'Krebs cycle basics',
+            mastery_target: 80,
+            sort_order: 3,
+            created_at: new Date().toISOString()
+          }
+        ]
+      }
+    ]
+
+    render(
+      <CurriculumView
+        modules={modulesWithNewContent}
+        subjectName="Biology 101"
+        onStartTutor={mockOnStartTutor}
+        onGenerateCards={mockOnGenerateCards}
+        onToggleTopic={mockOnToggleTopic}
+      />
+    )
+
+    // 1. Check top banner appears
+    expect(screen.getByText('New Content Added')).toBeInTheDocument()
+    expect(screen.getByText(/2 new topics to review/i)).toBeInTheDocument()
+
+    // 2. Click top banner "Study New Content" button
+    const bannerStudyBtn = screen.getByRole('button', { name: /^🎓\s*study new content$/i })
+    fireEvent.click(bannerStudyBtn)
+    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Glycolysis pathway', 'Fermentation alternative'])
+
+    // 3. Click individual topic badge
+    mockOnStartTutor.mockClear()
+    const newContentBadge = screen.getByRole('button', { name: /⚠️ New Content/i })
+    fireEvent.click(newContentBadge)
+    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Glycolysis pathway'])
+
+    // 4. Click gap badge
+    mockOnStartTutor.mockClear()
+    const gapBadge = screen.getByRole('button', { name: /✨ new/i })
+    fireEvent.click(gapBadge)
+    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Fermentation alternative'])
+
+    // 5. Click module-level "Study New Content (2)" action button
+    mockOnStartTutor.mockClear()
+    const moduleStudyBtn = screen.getByRole('button', { name: /study new content \(2\)/i })
+    fireEvent.click(moduleStudyBtn)
+    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Glycolysis pathway', 'Fermentation alternative'])
+
+    // 6. Test "Select new content" quick action
+    const selectNewBtn = screen.getByRole('button', { name: /select new content/i })
+    fireEvent.click(selectNewBtn)
+
+    // The main Start Tutor button should now indicate 2 selected topics
+    expect(screen.getByRole('button', { name: /start tutor \(2 topics\)/i })).toBeInTheDocument()
+  })
 })

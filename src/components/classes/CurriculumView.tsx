@@ -91,6 +91,16 @@ export default function CurriculumView({
     }))
   }
 
+  function selectNewTopics(moduleId: number, topics: ModuleTopic[]): void {
+    const newTopicIds = topics
+      .filter(t => Boolean(t.has_new_material || t.is_gap))
+      .map(t => t.id)
+    setSelectedTopicsByModule(prev => ({
+      ...prev,
+      [moduleId]: new Set(newTopicIds)
+    }))
+  }
+
   function clearTopicSelection(moduleId: number): void {
     setSelectedTopicsByModule(prev => ({
       ...prev,
@@ -106,8 +116,55 @@ export default function CurriculumView({
     )
   }
 
+  // Find all uncompleted or active new/gap topics across all modules
+  const allNewTopics = modules.flatMap(mod =>
+    (mod.topics || [])
+      .filter(t => Boolean(t.has_new_material || t.is_gap))
+      .map(t => ({ moduleId: mod.id, moduleTitle: mod.title, topic: t }))
+  )
+
   return (
     <div className="space-y-2">
+      {/* Top Banner: New Content Available */}
+      {allNewTopics.length > 0 && (
+        <div className="p-3.5 sm:p-4 rounded-xl bg-gradient-to-r from-amber-50 via-amber-100/40 to-purple-50 dark:from-amber-950/40 dark:via-amber-900/20 dark:to-purple-950/30 border border-amber-300/80 dark:border-amber-700/60 shadow-xs flex items-center justify-between gap-3 flex-wrap transition-all mb-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-amber-200/80 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 flex items-center justify-center text-base font-bold shadow-xs shrink-0">
+              ✨
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100">
+                  New Content Added
+                </h3>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200">
+                  {allNewTopics.length} new topic{allNewTopics.length > 1 ? 's' : ''} to review
+                </span>
+              </div>
+              <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-400 mt-0.5 truncate">
+                Recently added study materials introduced new topics and concepts to your curriculum.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const firstModId = allNewTopics[0].moduleId
+                const modNewTopicTitles = allNewTopics
+                  .filter(item => item.moduleId === firstModId)
+                  .map(item => item.topic.title)
+                setExpandedModule(firstModId)
+                onStartTutor(firstModId, modNewTopicTitles)
+              }}
+              className="px-3.5 py-1.5 sm:py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <span>🎓</span>
+              <span>Study New Content</span>
+            </button>
+          </div>
+        </div>
+      )}
       {modules.map((mod, index) => {
         const isExpanded = expandedModule === mod.id
         const isInProgress = mod.status === 'in_progress'
@@ -259,6 +316,18 @@ export default function CurriculumView({
                       </p>
                       {modTopics.length > 1 && (
                         <div className="flex items-center gap-2 text-[11px]">
+                          {modTopics.some(t => Boolean(t.has_new_material || t.is_gap)) && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => selectNewTopics(mod.id, modTopics)}
+                                className="text-amber-600 dark:text-amber-400 hover:underline font-medium"
+                              >
+                                Select new content
+                              </button>
+                              <span className="text-slate-300 dark:text-slate-600">·</span>
+                            </>
+                          )}
                           <button
                             type="button"
                             onClick={() => selectAllTopics(mod.id, modTopics)}
@@ -307,20 +376,34 @@ export default function CurriculumView({
                                 {topic.title}
                               </span>
                               {Boolean(topic.is_gap) && !topicCompleted && (
-                                <span
-                                  title="Newly added learning gap from recent materials"
-                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 flex-shrink-0"
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    onStartTutor(mod.id, [topic.title])
+                                  }}
+                                  title="Newly added learning gap. Click to study with AI Tutor."
+                                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 flex items-center gap-1 hover:bg-purple-200 dark:hover:bg-purple-900 transition-colors cursor-pointer flex-shrink-0"
                                 >
-                                  ✨ New
-                                </span>
+                                  <span>✨ New</span>
+                                  <span className="text-[9px] opacity-75 font-normal">· Study</span>
+                                </button>
                               )}
                               {Boolean(topic.has_new_material) && (
-                                <span
-                                  title="New materials have added new concepts to this topic"
-                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 flex-shrink-0"
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    onStartTutor(mod.id, [topic.title])
+                                  }}
+                                  title="New materials have added new concepts. Click to study with AI Tutor."
+                                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 flex items-center gap-1 hover:bg-amber-200 dark:hover:bg-amber-900 transition-colors cursor-pointer flex-shrink-0"
                                 >
-                                  ⚠️ New Content
-                                </span>
+                                  <span>⚠️ New Content</span>
+                                  <span className="text-[9px] opacity-75 font-normal">· Study</span>
+                                </button>
                               )}
                             </label>
 
@@ -396,7 +479,7 @@ export default function CurriculumView({
                 )}
 
                 {/* Action buttons */}
-                <div className="px-4 py-3 flex items-center gap-2 border-t border-slate-100 dark:border-slate-700">
+                <div className="px-4 py-3 flex items-center gap-2 border-t border-slate-100 dark:border-slate-700 flex-wrap">
                   <button
                     onClick={() => {
                       const chosenTopicTitles = modTopics.length > 0
@@ -406,10 +489,28 @@ export default function CurriculumView({
                         : []
                       onStartTutor(mod.id, chosenTopicTitles)
                     }}
-                    className="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm"
+                    className="flex-1 min-w-[120px] px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm"
                   >
                     🎓 {selectedCount > 0 ? `Start Tutor (${selectedCount} topic${selectedCount > 1 ? 's' : ''})` : 'Start Tutor'}
                   </button>
+
+                  {/* Study New Content Button if module has new or gap topics */}
+                  {modTopics.some(t => Boolean(t.has_new_material || t.is_gap)) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newTitles = modTopics
+                          .filter(t => Boolean(t.has_new_material || t.is_gap))
+                          .map(t => t.title)
+                        onStartTutor(mod.id, newTitles)
+                      }}
+                      title="Launch AI Tutor focusing on all new and updated topics in this module"
+                      className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                    >
+                      <span>✨</span>
+                      <span>Study New Content ({modTopics.filter(t => Boolean(t.has_new_material || t.is_gap)).length})</span>
+                    </button>
+                  )}
 
                   {/* Spaced Review Button if module has due or fading topics */}
                   {modTopics.some(t => t.retention_status === 'overdue' || t.retention_status === 'fading') && onStartSpacedReview && (
@@ -421,7 +522,7 @@ export default function CurriculumView({
                         onStartSpacedReview(mod.id, dueTitles)
                       }}
                       title="Launch a focused spaced repetition drill on decaying topics in this module"
-                      className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                      className="px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
                     >
                       <span>⚡</span> Spaced Review
                     </button>
@@ -430,7 +531,7 @@ export default function CurriculumView({
                   <button
                     onClick={() => setModalModule(mod)}
                     disabled={loadingCards?.[mod.id]}
-                    className="flex-1 px-3 py-2 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors cursor-pointer"
+                    className="flex-1 min-w-[120px] px-3 py-2 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors cursor-pointer"
                   >
                     {loadingCards?.[mod.id] ? '⏳ Generating...' : '🃏 Generate Cards'}
                   </button>
