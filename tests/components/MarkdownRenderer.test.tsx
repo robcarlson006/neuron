@@ -93,5 +93,27 @@ End of explanation.`
       expect(iframe).toBeInTheDocument()
       expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
     })
+
+    it('cleans up stray dangling asterisks and fixes split bold delimiters across table cells/phrases', () => {
+      const content = `when own price falls, quantity demanded rises, so we move down and to the right* along the curve.`
+      const { container } = render(<MarkdownRenderer content={content} />)
+
+      // Should not contain stray trailing asterisk
+      expect(container.textContent).not.toContain('right*')
+      expect(container.textContent).toContain('down and to the right along the curve')
+    })
+
+    it('renders unclosed or split bold headers cleanly without raw asterisks', () => {
+      const content = `| **Question 3: Income rises | coffee is a normal good.** |
+| :--- | :--- |
+| A | B |`
+      const { container } = render(<MarkdownRenderer content={content} />)
+
+      // Both headers should render cleanly without raw **
+      expect(container.textContent).not.toContain('**Question')
+      expect(container.textContent).not.toContain('good.**')
+      expect(container.textContent).toContain('Question 3: Income rises')
+      expect(container.textContent).toContain('coffee is a normal good.')
+    })
   })
 })

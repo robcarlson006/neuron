@@ -25,8 +25,58 @@ export function parseMarkdownTable(text: string): CanonicalTable | null {
 }
 
 /**
+ * Sanitizes and repairs common AI markdown delimiter glitches and stray asterisks:
+ * - Fixes split bold tokens across cells (e.g. `**Question 3: Income rises` or `coffee is a normal good.**`)
+ * - Fixes mismatched 3-to-2 or 2-to-1 asterisks (e.g. `***text**` -> `***text***`, `**text*` -> `**text**`, `*text**` -> `**text**`)
+ * - Converts underscore markdown `__bold__` and `_italic_` to asterisks
+ * - Strips unclosed/dangling lone asterisks (e.g. `down and to the right* along the curve`)
+ */
+export function sanitizeMarkdownDelimiters(text: string): string {
+  if (!text || typeof text !== 'string') return ''
+
+  let s = text
+
+  // 1. Repair triple asterisks ***bold italic***
+  s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '***$1***')
+
+  // 2. Repair mismatched 3-to-2 or 2-to-3 asterisks
+  s = s.replace(/\*\*\*([^*]+)\*\*/g, '***$1***')
+  s = s.replace(/\*\*([^*]+)\*\*\*/g, '***$1***')
+
+  // 3. Repair mismatched 2-to-1 or 1-to-2 asterisks on text phrases
+  s = s.replace(/\*\*([a-zA-Z0-9_\s,.:;!?'"()/-]+)\*(?!\*)/g, '**$1**')
+  s = s.replace(/(?<!\*)\*([a-zA-Z0-9_\s,.:;!?'"()/-]+)\*\*/g, '**$1**')
+
+  // 4. Repair unclosed bold at start or end of cells / phrases
+  // e.g. "**Question 3: Income rises" -> "**Question 3: Income rises**"
+  // e.g. "coffee is a normal good.**" -> "**coffee is a normal good.**"
+  if (/^\s*\*\*[^*]+$/.test(s)) {
+    s = s.trim() + '**'
+  } else if (/^[^*]+\*\*\s*$/.test(s)) {
+    s = '**' + s.trim()
+  }
+
+  // 5. Convert underscore markdown __bold__ and _italic_
+  s = s.replace(/(?<!\w)__([^_]+)__(?!\w)/g, '**$1**')
+  s = s.replace(/(?<!\w)_([^_]+)_(?!\w)/g, '*$1*')
+
+  // 6. Strip stray dangling trailing/leading asterisks on words (e.g. "down and to the right* along the curve")
+  const asteriskCount = (s.match(/\*/g) || []).length
+  if (asteriskCount % 2 !== 0) {
+    s = s.replace(/(\b[a-zA-Z]+)\*(?!\*|\w)/g, '$1')
+    s = s.replace(/(?<!\*|\w)\*(\b[a-zA-Z]+)/g, '$1')
+    if ((s.match(/\*/g) || []).length % 2 !== 0) {
+      s = s.replace(/(?<![a-zA-Z0-9_\\^])\*(?![a-zA-Z0-9_\\^])/g, '')
+    }
+  }
+
+  return s
+}
+
+/**
  * Renders inline formatting:
  * - `inline code`
+ * - ***bold italic***
  * - **bold** text (including bold math/symbols)
  * - *italic* text
  * - [links](url)
@@ -35,8 +85,10 @@ export function parseMarkdownTable(text: string): CanonicalTable | null {
 export function renderInlineFormatting(text: string): React.ReactNode {
   if (!text) return null
 
-  // Split tokens for `code`, **bold**, *italic*, [link](url)
-  const tokens = text.split(/(`[^`\n]+`|\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*(?!\*))+\*|\[[^\]]+\]\([^)]+\))/g)
+  const cleanText = sanitizeMarkdownDelimiters(text)
+
+  // Split tokens for `code`, ***bold italic***, **bold**, *italic*, [link](url)
+  const tokens = cleanText.split(/(`[^`\n]+`|\*\*\*(?:[^*]|\*(?!\*\*))+\*\*\*|\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*(?!\*))+\*|\[[^\]]+\]\([^)]+\))/g)
 
   return (
     <>
@@ -52,6 +104,18 @@ export function renderInlineFormatting(text: string): React.ReactNode {
             >
               {token.slice(1, -1)}
             </code>
+          )
+        }
+
+        // Bold & Italic: ***bold italic***
+        const boldItalicMatch = token.match(/^\*\*\*(.+)\*\*\*$/s)
+        if (boldItalicMatch) {
+          return (
+            <strong key={i} className="font-semibold text-slate-900 dark:text-slate-100">
+              <em className="italic text-slate-800 dark:text-slate-200">
+                <LatexText>{boldItalicMatch[1]}</LatexText>
+              </em>
+            </strong>
           )
         }
 
