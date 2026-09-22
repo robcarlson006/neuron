@@ -766,6 +766,7 @@ export interface TutorSessionRuntime {
   time_elapsed_seconds: number
   time_remaining_seconds: number
   is_time_up: boolean
+  is_paused?: boolean
   topics_covered: string[]
   questions_asked: string[]
   topics_mastered: string[]

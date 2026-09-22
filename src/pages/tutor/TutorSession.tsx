@@ -59,6 +59,8 @@ export default function TutorSession(): React.JSX.Element {
     topics_mastered: [],
     weak_topics: [],
   })
+  const [isPaused, setIsPaused] = useState(false)
+  const [breakSeconds, setBreakSeconds] = useState(0)
   const [showTimeUp, setShowTimeUp] = useState(false)
   const [showTimerMenu, setShowTimerMenu] = useState(false)
   const timerMenuRef = useRef<HTMLDivElement>(null)
@@ -510,7 +512,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   // ── Wall-clock timer ──
   useEffect(() => {
     if (runtime.config.duration_minutes === null) return
-    if (runtime.is_time_up) return
+    if (runtime.is_time_up || isPaused) return
 
     let lastTick = Date.now()
     const interval = setInterval(() => {
@@ -519,7 +521,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       lastTick = now
 
       setRuntime(prev => {
-        if (prev.config.duration_minutes === null || prev.is_time_up) return prev
+        if (prev.config.duration_minutes === null || prev.is_time_up || isPaused) return prev
         const newElapsed = prev.time_elapsed_seconds + delta
         const totalSecs = prev.config.duration_minutes * 60
         const newRemaining = Math.max(0, totalSecs - newElapsed)
@@ -535,7 +537,36 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [runtime.config.duration_minutes, runtime.is_time_up])
+  }, [runtime.config.duration_minutes, runtime.is_time_up, isPaused])
+
+  // ── Break timer when paused ──
+  useEffect(() => {
+    if (!isPaused) {
+      setBreakSeconds(0)
+      return
+    }
+
+    const interval = setInterval(() => {
+      setBreakSeconds(prev => prev + 1)
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [isPaused])
+
+  function handleTogglePause(): void {
+    setIsPaused(prev => {
+      const next = !prev
+      if (!next) {
+        setFocusKey(f => f + 1)
+      }
+      return next
+    })
+  }
+
+  function handleResume(): void {
+    setIsPaused(false)
+    setFocusKey(f => f + 1)
+  }
 
   // ── Time-up handler ──
   useEffect(() => {
@@ -754,6 +785,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   // ── Send message ──
   async function handleSend(message: string): Promise<void> {
     if (!sessionId || !message.trim() || sending) return
+    if (isPaused) {
+      setIsPaused(false)
+    }
 
     // Save user message
     const userMsg = await window.electronAPI.tutorSaveMessage({
@@ -1254,6 +1288,23 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               ))}
             </div>
 
+            {/* Pause / Resume Button */}
+            {!sessionEnded && (
+              <button
+                type="button"
+                onClick={handleTogglePause}
+                title={isPaused ? "Resume session (timer continues)" : "Pause session (timer freezes, take a break)"}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border transition-all ${
+                  isPaused
+                    ? 'bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900/70 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 shadow-xs'
+                    : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200/80 dark:border-slate-700/80'
+                }`}
+              >
+                <span>{isPaused ? '▶️' : '⏸️'}</span>
+                <span>{isPaused ? 'Resume' : 'Pause'}</span>
+              </button>
+            )}
+
             {/* Timer interactive dropdown */}
             <div className="relative" ref={timerMenuRef}>
               <button
@@ -1261,24 +1312,28 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 onClick={() => setShowTimerMenu(prev => !prev)}
                 title="Click to adjust session duration and pacing"
                 className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-all ${
-                  runtime.config.duration_minutes === null
-                    ? 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200/80 dark:border-slate-700/80'
-                    : runtime.is_time_up || runtime.time_remaining_seconds === 0
-                      ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 font-semibold'
-                      : runtime.time_remaining_seconds < 60
-                        ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 font-semibold'
-                        : runtime.time_remaining_seconds < 300
-                          ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800 font-semibold'
-                          : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200/80 dark:border-slate-700/80'
+                  isPaused
+                    ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 font-semibold'
+                    : runtime.config.duration_minutes === null
+                      ? 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200/80 dark:border-slate-700/80'
+                      : runtime.is_time_up || runtime.time_remaining_seconds === 0
+                        ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 font-semibold'
+                        : runtime.time_remaining_seconds < 60
+                          ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 font-semibold'
+                          : runtime.time_remaining_seconds < 300
+                            ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800 font-semibold'
+                            : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200/80 dark:border-slate-700/80'
                 }`}
               >
                 <span>⏱️</span>
                 <span>
                   {runtime.config.duration_minutes === null
-                    ? 'No limit'
+                    ? isPaused ? 'Paused' : 'No limit'
                     : runtime.is_time_up || runtime.time_remaining_seconds === 0
                       ? '0:00 (Time up)'
-                      : `${Math.floor(runtime.time_remaining_seconds / 60)}:${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}`
+                      : isPaused
+                        ? `Paused (${Math.floor(runtime.time_remaining_seconds / 60)}:${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')})`
+                        : `${Math.floor(runtime.time_remaining_seconds / 60)}:${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}`
                   }
                 </span>
                 <svg className="w-3 h-3 text-slate-400 dark:text-slate-500 ml-0.5" viewBox="0 0 20 20" fill="currentColor">
@@ -1300,8 +1355,26 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                     </div>
                   </div>
 
+                  {/* Pause / Resume inside popover */}
+                  <div className="my-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleTogglePause()
+                        setShowTimerMenu(false)
+                      }}
+                      className={`w-full py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                        isPaused
+                          ? 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600 shadow-sm'
+                          : 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                      }`}
+                    >
+                      <span>{isPaused ? '▶️ Resume Session' : '⏸️ Pause Session (Take Break)'}</span>
+                    </button>
+                  </div>
+
                   {/* Current Status Pill */}
-                  <div className="my-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                  <div className="mb-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
                     <div>
                       <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500 block">Remaining</span>
                       <span className="text-base font-bold text-slate-900 dark:text-slate-100">
@@ -1313,13 +1386,15 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                     </div>
                     {runtime.config.duration_minutes !== null && (
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        runtime.time_remaining_seconds < 120
-                          ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-                          : runtime.time_remaining_seconds < 300
-                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                        isPaused
+                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200'
+                          : runtime.time_remaining_seconds < 120
+                            ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                            : runtime.time_remaining_seconds < 300
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                       }`}>
-                        {runtime.time_remaining_seconds < 120 ? 'Wrapping Up' : runtime.time_remaining_seconds < 300 ? 'Final Questions' : 'Pacing Well'}
+                        {isPaused ? 'Paused' : runtime.time_remaining_seconds < 120 ? 'Wrapping Up' : runtime.time_remaining_seconds < 300 ? 'Final Questions' : 'Pacing Well'}
                       </span>
                     )}
                   </div>
@@ -1517,6 +1592,32 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             </div>
           )}
 
+          {/* Pause Banner */}
+          {isPaused && (
+            <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 dark:from-amber-950/30 dark:via-orange-950/30 dark:to-amber-950/30 rounded-2xl border border-amber-200/80 dark:border-amber-800/60 p-6 text-center shadow-xs animate-in fade-in zoom-in-95 duration-150">
+              <div className="text-3xl mb-2">☕</div>
+              <h3 className="text-base font-bold text-amber-900 dark:text-amber-100 mb-1">
+                Session Paused — Take a Breather!
+              </h3>
+              <p className="text-xs text-amber-700 dark:text-amber-300/90 max-w-md mx-auto mb-3 leading-relaxed">
+                Your session timer and pacing are frozen. The AI tutor will not record idle time or assume you are struggling.
+              </p>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-200/70 dark:bg-amber-900/70 text-amber-900 dark:text-amber-100 text-xs font-semibold mb-4">
+                <span>⏱️</span>
+                <span>Break duration: {Math.floor(breakSeconds / 60)}m {(breakSeconds % 60).toString().padStart(2, '0')}s</span>
+              </div>
+              <div className="flex gap-2 justify-center">
+                <button
+                  type="button"
+                  onClick={handleResume}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <span>▶️</span> Resume Session
+                </button>
+              </div>
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
       </div>
@@ -1564,21 +1665,39 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       {/* Input bar */}
       {!showTimeUp && (
         <div className="flex-shrink-0">
-          <ChatInput
-            onSend={handleSend}
-            onAttachFile={handleAttachFile}
-            onSelectFromLibrary={handleSelectFromLibrary}
-            disabled={sending || sessionEnded}
-            refocusKey={focusKey}
-            attachedFile={attachedFile?.name || null}
-            onClearAttachment={() => setAttachedFile(null)}
-            placeholder={
-              sending ? 'Waiting for tutor...' :
-              sessionPhase === 'structured_qa' ? 'Type your answer...' :
-              sessionPhase === 'socratic' ? 'Share your thoughts...' :
-              'Any final questions?'
-            }
-          />
+          {isPaused ? (
+            <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 py-3">
+              <div className="max-w-3xl mx-auto flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  <span>Session paused (on break for {Math.floor(breakSeconds / 60)}m {(breakSeconds % 60).toString().padStart(2, '0')}s)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleResume}
+                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <span>▶️</span> Resume
+                </button>
+              </div>
+            </div>
+          ) : (
+            <ChatInput
+              onSend={handleSend}
+              onAttachFile={handleAttachFile}
+              onSelectFromLibrary={handleSelectFromLibrary}
+              disabled={sending || sessionEnded}
+              refocusKey={focusKey}
+              attachedFile={attachedFile?.name || null}
+              onClearAttachment={() => setAttachedFile(null)}
+              placeholder={
+                sending ? 'Waiting for tutor...' :
+                sessionPhase === 'structured_qa' ? 'Type your answer...' :
+                sessionPhase === 'socratic' ? 'Share your thoughts...' :
+                'Any final questions?'
+              }
+            />
+          )}
         </div>
       )}
       </div>
