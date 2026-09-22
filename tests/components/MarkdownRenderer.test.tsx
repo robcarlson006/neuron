@@ -115,5 +115,18 @@ End of explanation.`
       expect(container.textContent).toContain('Question 3: Income rises')
       expect(container.textContent).toContain('coffee is a normal good.')
     })
+
+    it('renders [TOPIC: ...] subtitles as bold section banners without raw brackets', () => {
+      const content = `[TOPIC: Market Equilibrium, Surplus, and Shortage]
+
+Let's explore how price adjusts.`
+      const { container } = render(<MarkdownRenderer content={content} />)
+
+      // Should not contain raw bracket syntax
+      expect(container.textContent).not.toContain('[TOPIC:')
+      expect(container.textContent).not.toContain('Shortage]')
+      expect(container.textContent).toContain('Market Equilibrium, Surplus, and Shortage')
+      expect(container.querySelector('h4')).not.toBeNull()
+    })
   })
 })

@@ -249,13 +249,16 @@ export function preprocessLatexText(text: string): string {
   s = s.replace(/\\+\$\s*(\d+(?:\.\d+)?)\s*\$/g, '$$$1')
   s = s.replace(/\\+\$\s*(\d+(?:\.\d+)?)/g, '$$$1')
 
-  // 1. Convert Anki LaTeX tags using function replacers
+  // 1. Convert bracket topic subtitles e.g. [TOPIC: Market Equilibrium] -> **Market Equilibrium**
+  s = s.replace(/\[(?:TOPIC|SUBTOPIC|CONCEPT|MODULE|SECTION):\s*([^\]]+)\]/gi, '**$1**')
+
+  // 2. Convert Anki LaTeX tags using function replacers
   s = s.replace(/\[latex\]([\s\S]*?)\[\/latex\]/gi, (_, inner) => `$$${inner}$$`)
   s = s.replace(/\[\$\$\]([\s\S]*?)\[\/\$\$\]/gi, (_, inner) => `$$${inner}$$`)
   s = s.replace(/\[\$\]([\s\S]*?)\[\/\$\]/gi, (_, inner) => `$${inner}$`)
   s = s.replace(/\[math\]([\s\S]*?)\[\/math\]/gi, (_, inner) => `$${inner}$`)
 
-  // 2. Convert inline backtick math if it contains math operators/equations: `x^2 + y^2 = 25` -> $x^2 + y^2 = 25$
+  // 3. Convert inline backtick math if it contains math operators/equations: `x^2 + y^2 = 25` -> $x^2 + y^2 = 25$
   s = s.replace(/`([^`\n]+)`/g, (match, inner) => {
     if (isValidMathString(inner) && /[\\^_=+/><~*]|\b(sqrt|frac|alpha|beta|theta|pi)\b/i.test(inner)) {
       return `$${convertAsciiMathToLatex(inner)}$`

@@ -36,6 +36,9 @@ export function sanitizeMarkdownDelimiters(text: string): string {
 
   let s = text
 
+  // 0. Convert bracket topic subtitles e.g. [TOPIC: Market Equilibrium] -> **Market Equilibrium**
+  s = s.replace(/\[(?:TOPIC|SUBTOPIC|CONCEPT|MODULE|SECTION):\s*([^\]]+)\]/gi, '**$1**')
+
   // 1. Repair triple asterisks ***bold italic***
   s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '***$1***')
 
@@ -580,6 +583,20 @@ export default function MarkdownRenderer({
               table={universalTable}
               onGenerateCards={onGenerateCardsFromTable}
             />
+          )
+        }
+
+        // 3.5. Dedicated Topic Subtitle Banner e.g. [TOPIC: Market Equilibrium]
+        const topicBlockMatch = trimmed.match(/^\[(?:TOPIC|SUBTOPIC|CONCEPT|MODULE|SECTION):\s*([^\]]+)\]$/i)
+        if (topicBlockMatch) {
+          const topicName = topicBlockMatch[1].trim()
+          return (
+            <div key={pi} className="flex items-center gap-2 pt-2 pb-1 my-1.5 border-b border-slate-100 dark:border-slate-800/80">
+              <div className="w-1.5 h-3.5 rounded-full bg-violet-600 dark:bg-violet-400 shrink-0" />
+              <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                {renderInlineFormatting(topicName)}
+              </h4>
+            </div>
           )
         }
 

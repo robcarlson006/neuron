@@ -143,6 +143,12 @@ describe('mathFormatter', () => {
       expect(preprocessLatexText('price was $\\$100$')).toBe('price was $100')
     })
 
+    it('converts bracket topic subtitles to bold text without brackets', () => {
+      const input = '[TOPIC: Single-Curve Shifts]'
+      const result = preprocessLatexText(input)
+      expect(result).toBe('**Single-Curve Shifts**')
+    })
+
     it('handles mixed currency and math formulas correctly', () => {
       const input = 'income doubles to $60 while $p_2$ doubles to $12 and $p_1$ stays at $5'
       const result = preprocessLatexText(input)
