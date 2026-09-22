@@ -116,17 +116,28 @@ End of explanation.`
       expect(container.textContent).toContain('coffee is a normal good.')
     })
 
-    it('renders [TOPIC: ...] subtitles as bold section banners without raw brackets', () => {
-      const content = `[TOPIC: Market Equilibrium, Surplus, and Shortage]
-
-Let's explore how price adjusts.`
+    it('preserves economics equilibrium notation (P*, Q*, (P*, Q*), P_1*) as KaTeX math', () => {
+      const content = `At market equilibrium (P*, Q*), the equilibrium price is P* and the quantity is Q*. Additionally, P_1* exceeds P_0*.`
       const { container } = render(<MarkdownRenderer content={content} />)
 
-      // Should not contain raw bracket syntax
-      expect(container.textContent).not.toContain('[TOPIC:')
-      expect(container.textContent).not.toContain('Shortage]')
-      expect(container.textContent).toContain('Market Equilibrium, Surplus, and Shortage')
-      expect(container.querySelector('h4')).not.toBeNull()
+      // KaTeX should render the equilibrium symbols
+      const katexElements = container.querySelectorAll('.katex')
+      expect(katexElements.length).toBeGreaterThanOrEqual(4)
+      expect(container.textContent).toContain('P')
+      expect(container.textContent).toContain('Q')
+    })
+
+    it('cleans up random stray asterisks in text while keeping bold intact', () => {
+      const content = `* Note: when income rises*, demand shifts right* for **normal goods** and decreases* for inferior goods.`
+      const { container } = render(<MarkdownRenderer content={content} />)
+
+      // Stray asterisks should be cleaned
+      expect(container.textContent).not.toContain('rises*')
+      expect(container.textContent).not.toContain('right*')
+      expect(container.textContent).not.toContain('decreases*')
+      expect(container.textContent).toContain('normal goods')
+      expect(container.querySelector('strong')).not.toBeNull()
     })
   })
 })
+

@@ -149,6 +149,15 @@ describe('mathFormatter', () => {
       expect(result).toBe('**Single-Curve Shifts**')
     })
 
+    it('converts economics equilibrium notation P*, Q*, and (P*, Q*) into LaTeX $...$', () => {
+      expect(preprocessLatexText('Equilibrium is reached at (P*, Q*) where P* = 10 and Q* = 50')).toBe(
+        'Equilibrium is reached at $(P^*, Q^*)$ where $P^*$ = 10 and $Q^*$ = 50'
+      )
+      expect(preprocessLatexText('New price P_1* exceeds old price P_0*')).toBe(
+        'New price $P_1^*$ exceeds old price $P_0^*$'
+      )
+    })
+
     it('handles mixed currency and math formulas correctly', () => {
       const input = 'income doubles to $60 while $p_2$ doubles to $12 and $p_1$ stays at $5'
       const result = preprocessLatexText(input)

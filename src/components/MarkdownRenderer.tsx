@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import LatexText from './LatexText'
 import GraphContainer from './graphs/GraphContainer'
+import { isValidMathString } from '../lib/mathFormatter'
 import {
   parseUniversalTable,
   parseMarkdownPipeTable,
@@ -26,6 +27,7 @@ export function parseMarkdownTable(text: string): CanonicalTable | null {
 
 /**
  * Sanitizes and repairs common AI markdown delimiter glitches and stray asterisks:
+ * - Protects economics equilibrium notation (P*, Q*, (P*, Q*), P_1*, etc.)
  * - Fixes split bold tokens across cells (e.g. `**Question 3: Income rises` or `coffee is a normal good.**`)
  * - Fixes mismatched 3-to-2 or 2-to-1 asterisks (e.g. `***text**` -> `***text***`, `**text*` -> `**text**`, `*text**` -> `**text**`)
  * - Converts underscore markdown `__bold__` and `_italic_` to asterisks
@@ -39,38 +41,77 @@ export function sanitizeMarkdownDelimiters(text: string): string {
   // 0. Convert bracket topic subtitles e.g. [TOPIC: Market Equilibrium] -> **Market Equilibrium**
   s = s.replace(/\[(?:TOPIC|SUBTOPIC|CONCEPT|MODULE|SECTION):\s*([^\]]+)\]/gi, '**$1**')
 
-  // 1. Repair triple asterisks ***bold italic***
+  // 1. Mask protected blocks: code blocks, existing LaTeX $...$ and $$...$$
+  const masked: string[] = []
+  const mask = (match: string) => {
+    const placeholder = `@@NEURON_DELIM_MASK_${masked.length}@@`
+    masked.push(match)
+    return placeholder
+  }
+
+  // Mask code blocks and inline code
+  s = s.replace(/```[\s\S]*?```|`[^`\n]+`/g, mask)
+
+  // Mask display math $$...$$ and \[...\]
+  s = s.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]/g, mask)
+
+  // Mask existing inline math $...$ or \(...\)
+  s = s.replace(/\\\([\s\S]*?\\\)/g, mask)
+  s = s.replace(/(?<!\\|\$)\$([^\s$](?:[^$\n]*?[^\s$])?)\$(?!\d)/g, (match, content) => {
+    if (isValidMathString(content)) {
+      return mask(match)
+    }
+    return match
+  })
+
+  // 2. Protect and convert economics equilibrium notation e.g. (P*, Q*), P*, Q*, Y*, W*, L*, K*, r*, e*, C*, S*, I*, N*, T*, U*, M*, B*, P_0*, P_1*, Q_0*, Q_1*
+  s = s.replace(/\(\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*,\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*\)/g, (_, p1, p2) => mask(`$(${p1}^*, ${p2}^*)$`))
+  s = s.replace(/\(\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*,\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\s*\)/g, (_, p1, p2) => mask(`$(${p1}^*, ${p2})$`))
+  s = s.replace(/\(\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\s*,\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*\)/g, (_, p1, p2) => mask(`$(${p1}, ${p2}^*)$`))
+  s = s.replace(/(?<![a-zA-Z0-9_\\$])\b([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*(?!\*|\w|\$)/g, (_, p1) => mask(`$${p1}^*$`))
+
+  // 3. Repair triple asterisks ***bold italic***
   s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '***$1***')
 
-  // 2. Repair mismatched 3-to-2 or 2-to-3 asterisks
+  // 4. Repair mismatched 3-to-2 or 2-to-3 asterisks
   s = s.replace(/\*\*\*([^*]+)\*\*/g, '***$1***')
   s = s.replace(/\*\*([^*]+)\*\*\*/g, '***$1***')
 
-  // 3. Repair mismatched 2-to-1 or 1-to-2 asterisks on text phrases
+  // 5. Repair mismatched 2-to-1 or 1-to-2 asterisks on text phrases
   s = s.replace(/\*\*([a-zA-Z0-9_\s,.:;!?'"()/-]+)\*(?!\*)/g, '**$1**')
   s = s.replace(/(?<!\*)\*([a-zA-Z0-9_\s,.:;!?'"()/-]+)\*\*/g, '**$1**')
 
-  // 4. Repair unclosed bold at start or end of cells / phrases
-  // e.g. "**Question 3: Income rises" -> "**Question 3: Income rises**"
-  // e.g. "coffee is a normal good.**" -> "**coffee is a normal good.**"
+  // 6. Repair unclosed bold at start or end of cells / phrases
   if (/^\s*\*\*[^*]+$/.test(s)) {
     s = s.trim() + '**'
   } else if (/^[^*]+\*\*\s*$/.test(s)) {
     s = '**' + s.trim()
   }
 
-  // 5. Convert underscore markdown __bold__ and _italic_
+  // 7. Convert underscore markdown __bold__ and _italic_
   s = s.replace(/(?<!\w)__([^_]+)__(?!\w)/g, '**$1**')
   s = s.replace(/(?<!\w)_([^_]+)_(?!\w)/g, '*$1*')
 
-  // 6. Strip stray dangling trailing/leading asterisks on words (e.g. "down and to the right* along the curve")
-  const asteriskCount = (s.match(/\*/g) || []).length
-  if (asteriskCount % 2 !== 0) {
-    s = s.replace(/(\b[a-zA-Z]+)\*(?!\*|\w)/g, '$1')
-    s = s.replace(/(?<!\*|\w)\*(\b[a-zA-Z]+)/g, '$1')
-    if ((s.match(/\*/g) || []).length % 2 !== 0) {
-      s = s.replace(/(?<![a-zA-Z0-9_\\^])\*(?![a-zA-Z0-9_\\^])/g, '')
-    }
+  // 8. Convert arithmetic multiplication between digits
+  s = s.replace(/(\d+(?:\.\d+)?)\s*\*\s*(\d+(?:\.\d+)?)/g, '$1 \\times $2')
+
+  // 9. Convert inline / leading bullet asterisks to bullets (•) so they don't look like stray asterisks
+  s = s.replace(/(?:^|\n)\s*\*\s+([a-zA-Z0-9$])/g, '\n• $1')
+  s = s.replace(/([:;.,])\s*\*\s+([a-zA-Z0-9$])/g, '$1 • $2')
+
+  // 10. Strip stray trailing/leading asterisks on words (e.g. "down and to the right* along the curve")
+  s = s.replace(/\b([a-zA-Z]{2,})\*(?!\*|\w)/g, '$1')
+  s = s.replace(/(?<!\*|\w)\*([a-zA-Z]{2,})\b(?!\*)/g, '$1')
+
+  // 11. If there is still an odd number of asterisks or unclosed single asterisk, strip lone dangling asterisks
+  const remainingAsterisks = (s.match(/\*/g) || []).length
+  if (remainingAsterisks % 2 !== 0) {
+    s = s.replace(/(?<!\*)\*(?!\*)/g, '')
+  }
+
+  // 12. Restore all masked tokens
+  for (let i = masked.length - 1; i >= 0; i--) {
+    s = s.replace(`@@NEURON_DELIM_MASK_${i}@@`, () => masked[i])
   }
 
   return s
@@ -90,8 +131,11 @@ export function renderInlineFormatting(text: string): React.ReactNode {
 
   const cleanText = sanitizeMarkdownDelimiters(text)
 
-  // Split tokens for `code`, ***bold italic***, **bold**, *italic*, [link](url)
-  const tokens = cleanText.split(/(`[^`\n]+`|\*\*\*(?:[^*]|\*(?!\*\*))+\*\*\*|\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*(?!\*))+\*|\[[^\]]+\]\([^)]+\))/g)
+  // Split tokens prioritizing code, display math, links, ***bold italic***, **bold**, and *italic*
+  // *italic* is restricted to text phrases without dollar signs, backslashes, or newlines so it cannot consume LaTeX math
+  const tokens = cleanText.split(
+    /(`[^`\n]+`|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\[[^\]]+\]\([^)]+\)|\*\*\*(?:[^*]|\*(?!\*\*))+\*\*\*|\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?!\s|\$)[^*$\\\n]+(?<!\s|\$)\*)/g
+  )
 
   return (
     <>

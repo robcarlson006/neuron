@@ -252,6 +252,12 @@ export function preprocessLatexText(text: string): string {
   // 1. Convert bracket topic subtitles e.g. [TOPIC: Market Equilibrium] -> **Market Equilibrium**
   s = s.replace(/\[(?:TOPIC|SUBTOPIC|CONCEPT|MODULE|SECTION):\s*([^\]]+)\]/gi, '**$1**')
 
+  // 1.5. Protect economics equilibrium notation e.g. (P*, Q*), (Q*, P*), P*, Q*, Y*, W*, L*, K*, r*, e*, C*, S*, I*, N*, T*, U*, M*, B*, P_0*, P_1*, Q_0*, Q_1*
+  s = s.replace(/\(\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*,\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*\)/g, '$($1^*, $2^*)$')
+  s = s.replace(/\(\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*,\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\s*\)/g, '$($1^*, $2)$')
+  s = s.replace(/\(\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\s*,\s*([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*\s*\)/g, '$($1, $2^*)$')
+  s = s.replace(/(?<![a-zA-Z0-9_\\$])\b([PQYWLECKSRNTUMBpq](?:_[0-9a-zA-Z]+)?)\*(?!\*|\w|\$)/g, '$$$1^*$$')
+
   // 2. Convert Anki LaTeX tags using function replacers
   s = s.replace(/\[latex\]([\s\S]*?)\[\/latex\]/gi, (_, inner) => `$$${inner}$$`)
   s = s.replace(/\[\$\$\]([\s\S]*?)\[\/\$\$\]/gi, (_, inner) => `$$${inner}$$`)
