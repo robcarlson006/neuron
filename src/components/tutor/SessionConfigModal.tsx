@@ -26,7 +26,7 @@ interface SessionConfigModalProps {
   onClose: () => void
 }
 
-type StudyMode = 'fill_gaps' | 'active_recall' | 'syllabus' | 'material' | 'custom'
+type StudyMode = 'new_content' | 'fill_gaps' | 'active_recall' | 'syllabus' | 'material' | 'custom'
 
 export default function SessionConfigModal({
   subjectId,
@@ -44,7 +44,7 @@ export default function SessionConfigModal({
 
   // ── Mode & Topic State ──
   const [studyMode, setStudyMode] = useState<StudyMode>(
-    propInitialMode || (propMaterialId ? 'material' : propInitialModuleId ? 'syllabus' : initialTopic ? 'custom' : 'fill_gaps')
+    propInitialMode || (propMaterialId ? 'material' : propInitialModuleId ? 'syllabus' : initialTopic ? 'custom' : 'new_content')
   )
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
   const [materialsList, setMaterialsList] = useState<LibraryFile[]>([])
@@ -73,6 +73,13 @@ export default function SessionConfigModal({
   // Beginner mode forces minimum depth 3
   const finalDepth = neverStudied && selectedDepth < 3 ? 3 : selectedDepth
 
+  // All new topics across entire class
+  const allNewTopicsList = modules.flatMap(mod =>
+    (mod.topics || [])
+      .filter(t => Boolean(t.has_new_material || t.is_gap))
+      .map(t => ({ topic: t, module: mod }))
+  )
+
   // ── Load syllabus, materials, and gap analysis ──
   useEffect(() => {
     let isMounted = true
@@ -93,7 +100,22 @@ export default function SessionConfigModal({
         }
         if (isMounted) {
           setModules(modsWithTopics)
-          if (propInitialModuleId) {
+
+          const allNew = modsWithTopics.flatMap(mod =>
+            (mod.topics || [])
+              .filter(t => Boolean(t.has_new_material || t.is_gap))
+              .map(t => t.title)
+          )
+
+          if (propInitialMode === 'new_content' || (!propInitialMode && !propMaterialId && !propInitialModuleId && !initialTopic && allNew.length > 0)) {
+            if (initialTopics && initialTopics.length > 0) {
+              setSelectedTopics(initialTopics)
+              setSelectedTopic(initialTopics.join(', '))
+            } else if (allNew.length > 0) {
+              setSelectedTopics(allNew)
+              setSelectedTopic(allNew.join(', '))
+            }
+          } else if (propInitialModuleId) {
             setSelectedModuleId(propInitialModuleId)
             const targetMod = modsWithTopics.find(m => m.id === propInitialModuleId)
             if (initialTopics && initialTopics.length > 0) {
@@ -108,7 +130,10 @@ export default function SessionConfigModal({
             }
           } else if (modsWithTopics.length > 0 && !selectedModuleId) {
             setSelectedModuleId(modsWithTopics[0].id)
-            if (modsWithTopics[0].topics && modsWithTopics[0].topics.length > 0) {
+            if (initialTopics && initialTopics.length > 0) {
+              setSelectedTopics(initialTopics)
+              setSelectedTopic(initialTopics.join(', '))
+            } else if (modsWithTopics[0].topics && modsWithTopics[0].topics.length > 0) {
               setSelectedTopic(modsWithTopics[0].topics[0].title)
               setSelectedTopics([modsWithTopics[0].topics[0].title])
             } else {
@@ -212,7 +237,20 @@ export default function SessionConfigModal({
 
     let isActiveRecall = false
 
-    if (studyMode === 'fill_gaps') {
+    if (studyMode === 'new_content') {
+      if (selectedTopics.length > 0) {
+        chosenTopics = selectedTopics
+        chosenTopic = selectedTopics.join(', ')
+      } else {
+        const allNew = modules.flatMap(mod =>
+          (mod.topics || [])
+            .filter(t => Boolean(t.has_new_material || t.is_gap))
+            .map(t => t.title)
+        )
+        chosenTopics = allNew.length > 0 ? allNew : [subjectName]
+        chosenTopic = chosenTopics.join(', ')
+      }
+    } else if (studyMode === 'fill_gaps') {
       isFillGaps = true
       gapTopics = gapAnalysis?.recommendedTopics || []
       chosenTopic = gapAnalysis?.recommendedFocus || 'Identified Knowledge Gaps'
@@ -245,7 +283,7 @@ export default function SessionConfigModal({
     const config: TutorSessionConfig = {
       duration_minutes: selectedTime,
       depth_level: finalDepth,
-      never_studied: neverStudied,
+      never_studied: neverStudied || studyMode === 'new_content',
       material_id: chosenMaterialId,
       material_name: chosenMaterialName,
       module_id: chosenModuleId,
@@ -312,7 +350,29 @@ export default function SessionConfigModal({
             </label>
 
             {/* Mode selection buttons */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setStudyMode('new_content')
+                  if (selectedTopics.length === 0 && allNewTopicsList.length > 0) {
+                    setSelectedTopics(allNewTopicsList.map(i => i.topic.title))
+                  }
+                }}
+                className={`p-2.5 rounded-xl text-left border transition-all relative ${
+                  studyMode === 'new_content'
+                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 shadow-sm'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1 text-amber-600 dark:text-amber-400">
+                  <span>✨</span> New Content
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                  {allNewTopicsList.length > 0 ? `${allNewTopicsList.length} new topics` : 'Across class'}
+                </div>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setStudyMode('fill_gaps')}
@@ -398,6 +458,164 @@ export default function SessionConfigModal({
                 </div>
               </button>
             </div>
+
+            {/* ── Mode 0: New Content Box ── */}
+            {studyMode === 'new_content' && (
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-amber-50/80 dark:from-amber-950/40 dark:via-orange-950/20 dark:to-amber-950/30 border border-amber-300/80 dark:border-amber-700/60 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                      <span>✨</span> Study New & Unreviewed Content
+                    </h3>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                      Target new concepts and unreviewed topics across all modules in this class.
+                    </p>
+                  </div>
+                  {allNewTopicsList.length > 0 && (
+                    <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 shrink-0">
+                      {allNewTopicsList.length} new topic{allNewTopicsList.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+
+                {loadingData ? (
+                  <div className="flex items-center gap-2 py-3 text-xs text-slate-400">
+                    <span className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                    Scanning curriculum for new content...
+                  </div>
+                ) : allNewTopicsList.length > 0 ? (
+                  <div className="space-y-3 pt-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        Select Topics to Study ({selectedTopics.length}/{allNewTopicsList.length}):
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTopics(allNewTopicsList.map(item => item.topic.title))
+                          }}
+                          className="text-amber-700 dark:text-amber-400 hover:underline font-semibold"
+                        >
+                          Select all
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-600">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTopics([])}
+                          className="text-slate-500 dark:text-slate-400 hover:underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Grouped by module */}
+                    <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                      {modules
+                        .filter(mod => (mod.topics || []).some(t => Boolean(t.has_new_material || t.is_gap)))
+                        .map(mod => {
+                          const modNewTopics = (mod.topics || []).filter(t => Boolean(t.has_new_material || t.is_gap))
+                          return (
+                            <div key={mod.id} className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-800/80 border border-amber-200/80 dark:border-amber-800/60 space-y-1.5">
+                              <div className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider flex items-center justify-between">
+                                <span>📖 {mod.title}</span>
+                                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">
+                                  {modNewTopics.length} new
+                                </span>
+                              </div>
+                              <div className="space-y-1">
+                                {modNewTopics.map(topic => {
+                                  const isChecked = selectedTopics.includes(topic.title)
+                                  return (
+                                    <label
+                                      key={topic.id}
+                                      className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                                        isChecked
+                                          ? 'border-amber-400 bg-amber-50/90 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100 font-medium'
+                                          : 'border-slate-200 dark:border-slate-700/80 hover:bg-slate-50 dark:hover:bg-slate-700/40 text-slate-700 dark:text-slate-300'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={e => {
+                                            if (e.target.checked) {
+                                              setSelectedTopics(prev => [...prev, topic.title])
+                                            } else {
+                                              setSelectedTopics(prev => prev.filter(t => t !== topic.title))
+                                            }
+                                          }}
+                                          className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                                        />
+                                        <span>{topic.title}</span>
+                                      </div>
+                                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 font-semibold">
+                                        {topic.has_new_material ? '✨ New' : '⚠️ Gap'}
+                                      </span>
+                                    </label>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3 pt-1">
+                    <div className="p-3 rounded-lg bg-amber-100/50 dark:bg-amber-900/20 text-xs text-amber-900 dark:text-amber-200">
+                      No recently tagged new materials found. Showing all unstudied curriculum topics across all modules:
+                    </div>
+                    <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                      {modules.map(mod => {
+                        const unstudiedTopics = (mod.topics || []).filter(t => !t.completed && !(t as any).studied)
+                        if (unstudiedTopics.length === 0) return null
+                        return (
+                          <div key={mod.id} className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-1.5">
+                            <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                              📖 {mod.title}
+                            </div>
+                            <div className="space-y-1">
+                              {unstudiedTopics.map(topic => {
+                                const isChecked = selectedTopics.includes(topic.title)
+                                return (
+                                  <label
+                                    key={topic.id}
+                                    className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                                      isChecked
+                                        ? 'border-amber-400 bg-amber-50/90 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100 font-medium'
+                                        : 'border-slate-200 dark:border-slate-700/80 hover:bg-slate-50 dark:hover:bg-slate-700/40 text-slate-700 dark:text-slate-300'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={e => {
+                                          if (e.target.checked) {
+                                            setSelectedTopics(prev => [...prev, topic.title])
+                                          } else {
+                                            setSelectedTopics(prev => prev.filter(t => t !== topic.title))
+                                          }
+                                        }}
+                                        className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                                      />
+                                      <span>{topic.title}</span>
+                                    </div>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── Mode Active Recall Box ── */}
             {studyMode === 'active_recall' && (
@@ -808,8 +1026,12 @@ export default function SessionConfigModal({
         <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700 mt-2">
           <div className="text-xs text-slate-400 dark:text-slate-500 truncate max-w-[260px]">
             <span className="font-semibold text-violet-600 dark:text-violet-400">
-              {studyMode === 'fill_gaps'
+              {studyMode === 'new_content'
+                ? `✨ New Content (${selectedTopics.length > 0 ? selectedTopics.length + ' topic' + (selectedTopics.length > 1 ? 's' : '') : 'All'})`
+                : studyMode === 'fill_gaps'
                 ? '⚡ Fill Gaps'
+                : studyMode === 'active_recall'
+                ? '🎯 Active Recall'
                 : studyMode === 'syllabus'
                 ? `📖 ${selectedTopic || 'Syllabus'}`
                 : studyMode === 'material'

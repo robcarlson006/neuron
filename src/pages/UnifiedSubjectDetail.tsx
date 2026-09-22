@@ -331,14 +331,14 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   }
 
   // ── Curriculum action handlers ──
-  function handleStartTutor(moduleId: number, selectedTopics?: string[]): void {
+  function handleStartTutor(moduleId?: number, selectedTopics?: string[], mode?: string): void {
     if (subject) {
       setShowConfigModal({
         subjectId,
         subjectName: subject.name,
         moduleId,
         initialTopics: selectedTopics,
-        initialMode: 'syllabus'
+        initialMode: (mode as any) || (moduleId ? 'syllabus' : 'new_content')
       })
     }
   }

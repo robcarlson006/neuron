@@ -6,7 +6,7 @@ interface CurriculumViewProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
   subjectName?: string
   moduleTutorStats?: Record<number, ModuleTutorStats>
-  onStartTutor: (moduleId: number, selectedTopics?: string[]) => void
+  onStartTutor: (moduleId?: number, selectedTopics?: string[], mode?: string) => void
   onStartSpacedReview?: (moduleId?: number, selectedTopics?: string[]) => void
   onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
   onToggleTopic: (topicId: number, studied: boolean) => void
@@ -150,17 +150,13 @@ export default function CurriculumView({
             <button
               type="button"
               onClick={() => {
-                const firstModId = allNewTopics[0].moduleId
-                const modNewTopicTitles = allNewTopics
-                  .filter(item => item.moduleId === firstModId)
-                  .map(item => item.topic.title)
-                setExpandedModule(firstModId)
-                onStartTutor(firstModId, modNewTopicTitles)
+                const allNewTitles = allNewTopics.map(item => item.topic.title)
+                onStartTutor(undefined, allNewTitles, 'new_content')
               }}
               className="px-3.5 py-1.5 sm:py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
             >
               <span>🎓</span>
-              <span>Study New Content</span>
+              <span>Study New Content ({allNewTopics.length})</span>
             </button>
           </div>
         </div>
@@ -381,7 +377,7 @@ export default function CurriculumView({
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    onStartTutor(mod.id, [topic.title])
+                                    onStartTutor(mod.id, [topic.title], 'new_content')
                                   }}
                                   title="Newly added learning gap. Click to study with AI Tutor."
                                   className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 flex items-center gap-1 hover:bg-purple-200 dark:hover:bg-purple-900 transition-colors cursor-pointer flex-shrink-0"
@@ -396,7 +392,7 @@ export default function CurriculumView({
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    onStartTutor(mod.id, [topic.title])
+                                    onStartTutor(mod.id, [topic.title], 'new_content')
                                   }}
                                   title="New materials have added new concepts. Click to study with AI Tutor."
                                   className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 flex items-center gap-1 hover:bg-amber-200 dark:hover:bg-amber-900 transition-colors cursor-pointer flex-shrink-0"
@@ -502,7 +498,7 @@ export default function CurriculumView({
                         const newTitles = modTopics
                           .filter(t => Boolean(t.has_new_material || t.is_gap))
                           .map(t => t.title)
-                        onStartTutor(mod.id, newTitles)
+                        onStartTutor(mod.id, newTitles, 'new_content')
                       }}
                       title="Launch AI Tutor focusing on all new and updated topics in this module"
                       className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
