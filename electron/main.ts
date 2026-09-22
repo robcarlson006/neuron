@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, shell, protocol, net, Menu, MenuItem } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -53,7 +53,60 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      spellcheck: true
+    }
+  })
+
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const menu = new Menu()
+
+    // 1. Spelling suggestions when clicking on a misspelled word
+    if (params.misspelledWord) {
+      if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
+        for (const suggestion of params.dictionarySuggestions) {
+          menu.append(
+            new MenuItem({
+              label: suggestion,
+              click: () => mainWindow?.webContents.replaceMisspelling(suggestion)
+            })
+          )
+        }
+      } else {
+        menu.append(
+          new MenuItem({
+            label: 'No Spelling Suggestions',
+            enabled: false
+          })
+        )
+      }
+
+      menu.append(new MenuItem({ type: 'separator' }))
+      menu.append(
+        new MenuItem({
+          label: `Add "${params.misspelledWord}" to Dictionary`,
+          click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+        })
+      )
+      menu.append(new MenuItem({ type: 'separator' }))
+    }
+
+    // 2. Standard editing options for text inputs / textareas
+    if (params.isEditable) {
+      menu.append(new MenuItem({ role: 'undo' }))
+      menu.append(new MenuItem({ role: 'redo' }))
+      menu.append(new MenuItem({ type: 'separator' }))
+      menu.append(new MenuItem({ role: 'cut' }))
+      menu.append(new MenuItem({ role: 'copy' }))
+      menu.append(new MenuItem({ role: 'paste' }))
+      menu.append(new MenuItem({ role: 'selectAll' }))
+    } else if (params.selectionText && params.selectionText.trim().length > 0) {
+      menu.append(new MenuItem({ role: 'copy' }))
+      menu.append(new MenuItem({ role: 'selectAll' }))
+    }
+
+    if (menu.items.length > 0) {
+      menu.popup()
     }
   })
 

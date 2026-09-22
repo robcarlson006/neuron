@@ -1196,8 +1196,36 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     complete: 'Complete'
   }
 
-  const phaseOrder: SessionPhase[] = ['structured_qa', 'socratic', 'summary', 'complete']
-  const currentPhaseIdx = phaseOrder.indexOf(sessionPhase)
+  // ── Dynamic Aesthetic Progress Progression (4 dots) ──
+  const userMsgCount = messages.filter(m => m.role === 'user').length
+  let aestheticProgressIdx = 0
+  if (sessionPhase === 'complete') {
+    aestheticProgressIdx = 3
+  } else if (sessionPhase === 'summary') {
+    aestheticProgressIdx = 2
+  } else if (sessionPhase === 'socratic') {
+    aestheticProgressIdx = Math.max(1, userMsgCount >= 6 ? 2 : 1)
+  } else {
+    // Dynamic progression across active conversation
+    if (userMsgCount >= 8) aestheticProgressIdx = 3
+    else if (userMsgCount >= 5) aestheticProgressIdx = 2
+    else if (userMsgCount >= 2) aestheticProgressIdx = 1
+    else aestheticProgressIdx = 0
+  }
+
+  // Advance smoothly if session duration timer is active
+  if (runtime.config.duration_minutes && runtime.config.duration_minutes > 0 && sessionPhase !== 'complete') {
+    const totalSecs = runtime.config.duration_minutes * 60
+    const timeProgressStep = Math.min(3, Math.floor((runtime.time_elapsed_seconds / totalSecs) * 4))
+    aestheticProgressIdx = Math.max(aestheticProgressIdx, timeProgressStep)
+  }
+
+  const progressDotLabels = [
+    'Stage 1: Foundation & Core Concepts',
+    'Stage 2: Guided Practice & Exploration',
+    'Stage 3: Deep Dive & Application',
+    'Stage 4: Synthesis & Mastery'
+  ]
 
   return (
     <div className="flex h-full w-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
@@ -1273,19 +1301,25 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Phase progress dots */}
-            <div className="flex items-center gap-1.5">
-              {phaseOrder.map((phase, idx) => (
-                <div
-                  key={phase}
-                  className={`w-2 h-2 rounded-full transition-colors ${
-                    idx < currentPhaseIdx ? 'bg-emerald-400' :
-                    idx === currentPhaseIdx ? 'bg-violet-500' :
-                    'bg-slate-200 dark:bg-slate-700'
-                  }`}
-                  title={phaseLabels[phase]}
-                />
-              ))}
+            {/* Dynamic phase progress dots (aesthetic) */}
+            <div className="flex items-center gap-1.5" title={sessionPhase === 'complete' ? 'Session Complete' : progressDotLabels[aestheticProgressIdx]}>
+              {[0, 1, 2, 3].map((stepIdx) => {
+                const isCompleted = stepIdx < aestheticProgressIdx || sessionPhase === 'complete'
+                const isActive = stepIdx === aestheticProgressIdx && sessionPhase !== 'complete'
+                return (
+                  <div
+                    key={stepIdx}
+                    className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                      isCompleted
+                        ? 'bg-emerald-400 dark:bg-emerald-500 shadow-xs'
+                        : isActive
+                          ? 'bg-violet-500 ring-2 ring-violet-400/40 dark:ring-violet-500/40 scale-110'
+                          : 'bg-slate-200 dark:bg-slate-700'
+                    }`}
+                    title={progressDotLabels[stepIdx]}
+                  />
+                )
+              })}
             </div>
 
             {/* Pause / Resume Button */}
