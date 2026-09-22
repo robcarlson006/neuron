@@ -1569,7 +1569,7 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
 4. Give crisp, specific corrective feedback (what was right, what was missed) grounded in the source materials.
 5. CONTINUOUS ADVANCEMENT: When the student has mastered a concept, smoothly elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or advance to the next syllabus subtopic. Never end early.
 6. FORMATTING:
-   - Use LaTeX for math ($...$ inline, $$...$$ standalone). Always wrap variables, numbers, points/tuples (e.g. $(1, 2)$), and formulas in LaTeX.
+   - Use LaTeX for mathematical formulas, variables, and equations ($...$ inline, $$...$$ standalone, e.g. $P$, $Q$, $E = mc^2$, $(1, 2)$). Do NOT wrap currency amounts like $5 or $3 in LaTeX math — write currency as standard plain text ($5, $3).
    - ZERO-DEFECT TABLES: When presenting payoff matrices, comparison matrices, econometric regressions, financial schedules, or summary data, format them as clean Markdown tables (| Col 1 | Col 2 |) with each row on a new line. For numerical schedules, verify that vertical column sums match totals. For econometric tables, format clustered standard errors in parentheses directly below each coefficient and report significance markers ($^*p < 0.10, ^{**}p < 0.05, ^{***}p < 0.01$).
    - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):
      * USAGE FREQUENCY GUARDRAIL: Do NOT overuse charts. Only synthesize an interactive graph when explaining multi-variable models, equilibrium shifts (e.g., Supply/Demand, IS-LM, cost curves), phase diagrams, or dynamical systems, or when the student explicitly asks to visualize something. Never generate charts for simple definitions or single-variable facts.
@@ -1591,7 +1591,7 @@ PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 7. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
 8. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
 9. FORMATTING:
-   - When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, coordinates $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$.
+   - When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, coordinates $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$. Do not wrap plain currency ($5, $10) in LaTeX.
    - When presenting payoff matrices, comparisons, econometric models, or tabular data, use clean Markdown tables with standard markdown table syntax (| Col 1 | Col 2 |) with each row on a new line and verified footing calculations.
    - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):
      * Use graphs judiciously (do not overuse). Only generate a vega-lite JSON specification when visualizing complex models, equilibrium shifts, curves, or counterfactual comparative statics.
@@ -1614,11 +1614,11 @@ PEDAGOGICAL METHOD — Session Summary Phase:
    - Mix contrast-pair discrimination cards AND 2-step application questions across Bloom's Taxonomy.
 6. Cover BOTH mastered concepts (for retention) and identified weak areas.
 7. End with a clear, actionable recommendation for what module or problem archetype to tackle next.${syllabusContext}
-8. When showing formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents. You can also use Markdown tables for comparison summaries.`
+8. When showing formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents. Do not wrap currency ($5, $10) in LaTeX. You can also use Markdown tables for comparison summaries.`
     }
 
     const systemInstruction = phaseInstructions[params.phase] ||
-      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics. Wrap math in LaTeX ($...$) and format tabular data in Markdown tables. If visualizing complex economic or scientific models, you may provide a vega-lite specification, but do not overuse graphs.${syllabusContext}`
+      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics. Wrap math in LaTeX ($...$) and format tabular data in Markdown tables (do not wrap currency in LaTeX). If visualizing complex economic or scientific models, you may provide a vega-lite specification, but do not overuse graphs.${syllabusContext}`
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemInstruction }

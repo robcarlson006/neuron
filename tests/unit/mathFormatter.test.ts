@@ -131,6 +131,18 @@ describe('mathFormatter', () => {
       expect(result).toBe('vertical intercept rose from $4 to $8')
     })
 
+    it('cleans up AI hallucinations of escaped currency dollars like $\\$5$ and $\\$3$', () => {
+      const input = 'The price of coffee falls from $\\$5$ to $\\$3$.'
+      const result = preprocessLatexText(input)
+      expect(result).toBe('The price of coffee falls from $5 to $3.')
+    })
+
+    it('cleans up double dollar escaped currency e.g. \\$$5$ and \\$5$', () => {
+      expect(preprocessLatexText('cost is \\$$5$ and revenue is \\$10$')).toBe('cost is $5 and revenue is $10')
+      expect(preprocessLatexText('price fell to \\$$5')).toBe('price fell to $5')
+      expect(preprocessLatexText('price was $\\$100$')).toBe('price was $100')
+    })
+
     it('handles mixed currency and math formulas correctly', () => {
       const input = 'income doubles to $60 while $p_2$ doubles to $12 and $p_1$ stays at $5'
       const result = preprocessLatexText(input)

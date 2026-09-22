@@ -214,6 +214,11 @@ export function isValidMathString(content: string): boolean {
     return true
   }
 
+  // Standalone numbers with or without dollar signs or escaped dollar signs e.g. "$5", "\$5", "$10.50", "5"
+  if (/^\\?\$?\s*\d+(?:\.\d+)?\s*\$?$/.test(s)) {
+    return false
+  }
+
   // Single variable, symbol, prime, asterisk, or signed number (e.g. "x", "x'", "x''", "x^*", "p_1", "m", "12", "-0.1", "3.14", "x1")
   if (/^[\+\-]?[a-zA-Z0-9_\.\(\)\'’′\*]+$/.test(s) && !/\s/.test(s)) {
     return true
@@ -237,6 +242,12 @@ export function preprocessLatexText(text: string): string {
   if (!text || typeof text !== 'string') return ''
 
   let s = text
+
+  // 0. Clean up AI hallucinations of escaped currency dollars wrapped in LaTeX:
+  // e.g. $\$5$ -> $5, \$$5$ -> $5, \$$5 -> $5, \$5$ -> $5, \$5 -> $5, $\$10.50$ -> $10.50, $\$3$ -> $3
+  s = s.replace(/(?:\\+\$|\$)\s*(?:\\+\$|\$)\s*(\d+(?:\.\d+)?)\s*(?:\\+\$|\$)?/g, '$$$1')
+  s = s.replace(/\\+\$\s*(\d+(?:\.\d+)?)\s*\$/g, '$$$1')
+  s = s.replace(/\\+\$\s*(\d+(?:\.\d+)?)/g, '$$$1')
 
   // 1. Convert Anki LaTeX tags using function replacers
   s = s.replace(/\[latex\]([\s\S]*?)\[\/latex\]/gi, (_, inner) => `$$${inner}$$`)
