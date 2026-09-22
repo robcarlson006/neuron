@@ -24,7 +24,7 @@ describe('InteractiveGraph and GraphContainer Components', () => {
     }
   }
 
-  describe('InteractiveGraph Sandbox Security', () => {
+  describe('InteractiveGraph Sandbox Security & Features', () => {
     it('renders an iframe with strict allow-scripts sandbox and no allow-same-origin', () => {
       const { container } = render(<InteractiveGraph spec={sampleSpec} />)
       const iframe = container.querySelector('iframe')
@@ -78,16 +78,67 @@ describe('InteractiveGraph and GraphContainer Components', () => {
       expect(srcdoc).toContain('Good 1 (x₁)')
       expect(srcdoc).toContain('Good 2 (x₂)')
     })
+
+    it('includes point grabbing, dragging, and tooltip systems in iframe srcdoc', () => {
+      const { container } = render(<InteractiveGraph spec={sampleSpec} />)
+      const iframe = container.querySelector('iframe')
+      const srcdoc = iframe?.getAttribute('srcdoc') || ''
+
+      expect(srcdoc).toContain('initPointDragging')
+      expect(srcdoc).toContain('drag-tooltip')
+      expect(srcdoc).toContain('cursor: grab')
+      expect(srcdoc).toContain('dragging-point')
+    })
   })
 
-  describe('GraphContainer Controls', () => {
-    it('renders title, description and action buttons', () => {
+  describe('GraphContainer Controls & Scale Adjustments', () => {
+    it('renders title, description, scale controls, and action buttons', () => {
       render(<GraphContainer spec={sampleSpec} />)
 
       expect(screen.getByText('Market Equilibrium')).toBeInTheDocument()
       expect(screen.getByText('Supply and Demand Curve Intersection')).toBeInTheDocument()
-      expect(screen.getByTitle('Reset model parameters')).toBeInTheDocument()
+      expect(screen.getByTitle('Reset model parameters and view')).toBeInTheDocument()
       expect(screen.getByTitle('Expand graph')).toBeInTheDocument()
+      expect(screen.getByTitle('Zoom in (Scale up)')).toBeInTheDocument()
+      expect(screen.getByTitle('Zoom out (Scale down)')).toBeInTheDocument()
+      expect(screen.getByText('100%')).toBeInTheDocument()
+    })
+
+    it('allows zooming in and zooming out scale', () => {
+      render(<GraphContainer spec={sampleSpec} />)
+
+      const zoomInBtn = screen.getByTitle('Zoom in (Scale up)')
+      const zoomOutBtn = screen.getByTitle('Zoom out (Scale down)')
+
+      // Zoom in
+      fireEvent.click(zoomInBtn)
+      expect(screen.getByText('115%')).toBeInTheDocument()
+
+      fireEvent.click(zoomInBtn)
+      expect(screen.getByText('130%')).toBeInTheDocument()
+
+      // Zoom out
+      fireEvent.click(zoomOutBtn)
+      expect(screen.getByText('115%')).toBeInTheDocument()
+
+      // Reset scale by clicking scale indicator
+      const scaleBadge = screen.getByTitle('Click to reset scale to 100%')
+      fireEvent.click(scaleBadge)
+      expect(screen.getByText('100%')).toBeInTheDocument()
+    })
+
+    it('switches height presets between Compact, Standard, and Tall', () => {
+      const { container } = render(<GraphContainer spec={sampleSpec} />)
+
+      const compactBtn = screen.getByTitle('Adjust graph height to compact')
+      const tallBtn = screen.getByTitle('Adjust graph height to tall')
+
+      fireEvent.click(tallBtn)
+      const iframe = container.querySelector('iframe')
+      expect(iframe).toHaveStyle({ minHeight: '480px' })
+
+      fireEvent.click(compactBtn)
+      expect(iframe).toHaveStyle({ minHeight: '280px' })
     })
 
     it('toggles fullscreen state when expand button is clicked', () => {
