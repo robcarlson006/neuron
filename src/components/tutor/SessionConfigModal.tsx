@@ -76,7 +76,7 @@ export default function SessionConfigModal({
   // All new topics across entire class
   const allNewTopicsList = modules.flatMap(mod =>
     (mod.topics || [])
-      .filter(t => Boolean(t.has_new_material || t.is_gap))
+      .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
       .map(t => ({ topic: t, module: mod }))
   )
 
@@ -103,7 +103,7 @@ export default function SessionConfigModal({
 
           const allNew = modsWithTopics.flatMap(mod =>
             (mod.topics || [])
-              .filter(t => Boolean(t.has_new_material || t.is_gap))
+              .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
               .map(t => t.title)
           )
 
@@ -513,9 +513,9 @@ export default function SessionConfigModal({
                     {/* Grouped by module */}
                     <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
                       {modules
-                        .filter(mod => (mod.topics || []).some(t => Boolean(t.has_new_material || t.is_gap)))
+                        .filter(mod => (mod.topics || []).some(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied))
                         .map(mod => {
-                          const modNewTopics = (mod.topics || []).filter(t => Boolean(t.has_new_material || t.is_gap))
+                          const modNewTopics = (mod.topics || []).filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
                           return (
                             <div key={mod.id} className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-800/80 border border-amber-200/80 dark:border-amber-800/60 space-y-1.5">
                               <div className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider flex items-center justify-between">

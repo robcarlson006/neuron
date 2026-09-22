@@ -93,7 +93,7 @@ export default function CurriculumView({
 
   function selectNewTopics(moduleId: number, topics: ModuleTopic[]): void {
     const newTopicIds = topics
-      .filter(t => Boolean(t.has_new_material || t.is_gap))
+      .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
       .map(t => t.id)
     setSelectedTopicsByModule(prev => ({
       ...prev,
@@ -116,10 +116,10 @@ export default function CurriculumView({
     )
   }
 
-  // Find all uncompleted or active new/gap topics across all modules
+  // Find all uncompleted new/gap topics across all modules
   const allNewTopics = modules.flatMap(mod =>
     (mod.topics || [])
-      .filter(t => Boolean(t.has_new_material || t.is_gap))
+      .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
       .map(t => ({ moduleId: mod.id, moduleTitle: mod.title, topic: t }))
   )
 
@@ -312,7 +312,7 @@ export default function CurriculumView({
                       </p>
                       {modTopics.length > 1 && (
                         <div className="flex items-center gap-2 text-[11px]">
-                          {modTopics.some(t => Boolean(t.has_new_material || t.is_gap)) && (
+                          {modTopics.some(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied) && (
                             <>
                               <button
                                 type="button"
@@ -386,7 +386,7 @@ export default function CurriculumView({
                                   <span className="text-[9px] opacity-75 font-normal">· Study</span>
                                 </button>
                               )}
-                              {Boolean(topic.has_new_material) && (
+                              {Boolean(topic.has_new_material) && !topicCompleted && (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -491,12 +491,12 @@ export default function CurriculumView({
                   </button>
 
                   {/* Study New Content Button if module has new or gap topics */}
-                  {modTopics.some(t => Boolean(t.has_new_material || t.is_gap)) && (
+                  {modTopics.some(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied) && (
                     <button
                       type="button"
                       onClick={() => {
                         const newTitles = modTopics
-                          .filter(t => Boolean(t.has_new_material || t.is_gap))
+                          .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
                           .map(t => t.title)
                         onStartTutor(mod.id, newTitles, 'new_content')
                       }}
@@ -504,7 +504,7 @@ export default function CurriculumView({
                       className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
                     >
                       <span>✨</span>
-                      <span>Study New Content ({modTopics.filter(t => Boolean(t.has_new_material || t.is_gap)).length})</span>
+                      <span>Study New Content ({modTopics.filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied).length})</span>
                     </button>
                   )}
 

@@ -187,4 +187,57 @@ describe('CurriculumView', () => {
     // The main Start Tutor button should now indicate 2 selected topics
     expect(screen.getByRole('button', { name: /start tutor \(2 topics\)/i })).toBeInTheDocument()
   })
+
+  it('excludes completed or studied topics from the new content count and hides banner when all are done', () => {
+    const modulesWithDoneContent: (SyllabusModule & { topics: ModuleTopic[] })[] = [
+      {
+        id: 1,
+        subject_id: 10,
+        title: 'Module 1: Cellular Respiration',
+        chapter_number: 1,
+        description: 'Understanding glycolysis',
+        hours_estimated: 4,
+        status: 'in_progress',
+        sort_order: 1,
+        created_at: new Date().toISOString(),
+        topics: [
+          {
+            id: 101,
+            module_id: 1,
+            title: 'Glycolysis pathway',
+            mastery_target: 80,
+            has_new_material: true,
+            completed: true,
+            sort_order: 1,
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 102,
+            module_id: 1,
+            title: 'Fermentation alternative',
+            mastery_target: 80,
+            is_gap: true,
+            studied: true,
+            sort_order: 2,
+            created_at: new Date().toISOString()
+          }
+        ]
+      }
+    ]
+
+    render(
+      <CurriculumView
+        modules={modulesWithDoneContent}
+        subjectName="Biology 101"
+        onStartTutor={mockOnStartTutor}
+        onGenerateCards={mockOnGenerateCards}
+        onToggleTopic={mockOnToggleTopic}
+      />
+    )
+
+    // Top banner should NOT appear because all new topics have been completed/studied
+    expect(screen.queryByText('New Content Added')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /study new content/i })).not.toBeInTheDocument()
+  })
 })
+

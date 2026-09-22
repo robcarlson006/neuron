@@ -606,6 +606,13 @@ Return STRICT JSON ONLY, no extra text, in this format:
         evaluation.topics_covered.push(match[1].trim())
       }
     }
+    if (evaluation.topics_covered.length === 0 && options?.targetTopics && options.targetTopics.length <= 2) {
+      for (const t of options.targetTopics) {
+        if (t && typeof t === 'string' && t.trim() && !evaluation.topics_covered.includes(t.trim())) {
+          evaluation.topics_covered.push(t.trim())
+        }
+      }
+    }
     if (evaluation.topics_covered.length === 0 && session.module_id) {
       const mod = database.prepare('SELECT title FROM syllabus_modules WHERE id = ?').get(session.module_id) as { title: string } | undefined
       if (mod) evaluation.topics_covered.push(mod.title)
@@ -756,48 +763,110 @@ Return STRICT JSON ONLY, no extra text, in this format:
 
   const effectiveModuleId = options?.moduleId || session.module_id
 
-  // Collect topics to log: evaluation covered topics plus any explicitly selected target topics
+  // Collect candidate topics for this subject
+  const subjectTopics = database.prepare(`
+    SELECT mt.id, mt.module_id, mt.title, mt.has_new_material, mt.is_gap
+    FROM module_topics mt
+    JOIN syllabus_modules sm ON sm.id = mt.module_id
+    WHERE sm.subject_id = ?
+  `).all(session.subject_id) as Array<{ id: number; module_id: number; title: string; has_new_material: number; is_gap: number }>
+
+  // Helper to match a topic title string to database module topics
+  function matchTopicToSubject(topicStr: string): { id: number; module_id: number; title: string } | undefined {
+    if (!topicStr || typeof topicStr !== 'string') return undefined
+    const q = topicStr.trim().toLowerCase()
+    const qAlnum = q.replace(/[^a-z0-9]/g, '')
+    if (!qAlnum) return undefined
+
+    // 1. Exact match within effective module or whole subject
+    if (effectiveModuleId) {
+      const modExact = subjectTopics.find(t => t.module_id === effectiveModuleId && t.title.trim().toLowerCase() === q)
+      if (modExact) return modExact
+    }
+    const exact = subjectTopics.find(t => t.title.trim().toLowerCase() === q)
+    if (exact) return exact
+
+    // 2. Alphanumeric match (ignores punctuation/whitespace)
+    if (effectiveModuleId) {
+      const modAlnum = subjectTopics.find(t => t.module_id === effectiveModuleId && t.title.toLowerCase().replace(/[^a-z0-9]/g, '') === qAlnum)
+      if (modAlnum) return modAlnum
+    }
+    const alnum = subjectTopics.find(t => t.title.toLowerCase().replace(/[^a-z0-9]/g, '') === qAlnum)
+    if (alnum) return alnum
+
+    // 3. Substring inclusion
+    if (q.length >= 4) {
+      const subMatch = subjectTopics.find(t => {
+        const tLower = t.title.toLowerCase()
+        return tLower.includes(q) || q.includes(tLower)
+      })
+      if (subMatch) return subMatch
+    }
+
+    // 4. Word-token overlap (matches e.g. "Opportunity Cost" to "Opportunity Cost and Trade-offs")
+    const qWords = q.split(/\s+/).filter(w => w.length > 3)
+    if (qWords.length > 0) {
+      let bestMatch: { id: number; module_id: number; title: string } | undefined
+      let bestScore = 0
+      for (const t of subjectTopics) {
+        const tWords = new Set(t.title.toLowerCase().split(/\s+/).filter(w => w.length > 3))
+        let hits = 0
+        for (const qw of qWords) {
+          if (tWords.has(qw)) hits++
+        }
+        const score = hits / qWords.length
+        if (score >= 0.5 && score > bestScore) {
+          bestScore = score
+          bestMatch = t
+        }
+      }
+      if (bestMatch) return bestMatch
+    }
+
+    return undefined
+  }
+
+  // Determine which topics were covered in this session
   const topicsToLog = new Set<string>()
-  if (options?.targetTopics && Array.isArray(options.targetTopics)) {
+  if (Array.isArray(evaluation.topics_covered) && evaluation.topics_covered.length > 0) {
+    for (const top of evaluation.topics_covered) {
+      if (top && typeof top === 'string' && top.trim()) {
+        topicsToLog.add(top.trim())
+      }
+    }
+  }
+
+  // If user targeted a specific small set of topics (<= 2), ensure they are also included in topicsToLog
+  if (options?.targetTopics && Array.isArray(options.targetTopics) && options.targetTopics.length <= 2) {
     for (const t of options.targetTopics) {
       if (t && typeof t === 'string' && t.trim()) {
         topicsToLog.add(t.trim())
       }
     }
   }
-  for (const top of evaluation.topics_covered) {
-    if (top && typeof top === 'string' && top.trim()) {
-      topicsToLog.add(top.trim())
-    }
-  }
 
-  // Log covered/targeted topics in module_topic_study_log
-  for (const top of topicsToLog) {
+  const touchedModuleIds = new Set<number>()
+  if (effectiveModuleId) touchedModuleIds.add(effectiveModuleId)
+
+  // Log covered topics in module_topic_study_log and clear new_content / gap flags
+  for (const topStr of topicsToLog) {
     try {
-      let modTopic: { id: number; module_id: number } | undefined
-      if (effectiveModuleId) {
-        modTopic = database.prepare(`
-          SELECT mt.id, mt.module_id FROM module_topics mt
-          WHERE mt.module_id = ? AND LOWER(TRIM(mt.title)) = LOWER(TRIM(?))
-        `).get(effectiveModuleId, top) as { id: number; module_id: number } | undefined
-      }
-      if (!modTopic) {
-        modTopic = database.prepare(`
-          SELECT mt.id, mt.module_id FROM module_topics mt
-          JOIN syllabus_modules sm ON sm.id = mt.module_id
-          WHERE sm.subject_id = ? AND LOWER(TRIM(mt.title)) = LOWER(TRIM(?))
-        `).get(session.subject_id, top) as { id: number; module_id: number } | undefined
-      }
+      const modTopic = matchTopicToSubject(topStr)
       if (modTopic) {
+        touchedModuleIds.add(modTopic.module_id)
+
         database.prepare(`
           INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
           VALUES (?, ?, ?)
         `).run(modTopic.id, session.user_id, now)
 
+        database.prepare(`
+          UPDATE module_topics SET has_new_material = 0, is_gap = 0 WHERE id = ?
+        `).run(modTopic.id)
+
         // Topic-SRS: Determine FSRS rating from dialogue evaluation
-        // 1 = Again (struggled), 2 = Hard (mixed), 3 = Good (solid coverage/strength), 4 = Easy (pure strength)
-        const isStruggle = evaluation.struggles.some(s => s.toLowerCase().includes(top.toLowerCase()) || top.toLowerCase().includes(s.toLowerCase()))
-        const isStrength = evaluation.strengths.some(s => s.toLowerCase().includes(top.toLowerCase()) || top.toLowerCase().includes(s.toLowerCase()))
+        const isStruggle = evaluation.struggles.some(s => s.toLowerCase().includes(topStr.toLowerCase()) || topStr.toLowerCase().includes(s.toLowerCase()))
+        const isStrength = evaluation.strengths.some(s => s.toLowerCase().includes(topStr.toLowerCase()) || topStr.toLowerCase().includes(s.toLowerCase()))
 
         let srsRating: 1 | 2 | 3 | 4 = 3
         if (isStruggle && !isStrength) {
@@ -819,9 +888,9 @@ Return STRICT JSON ONLY, no extra text, in this format:
     } catch { /* ignore */ }
   }
 
-  // Recalculate and sync parent module completion status
-  if (effectiveModuleId) {
-    syncModuleCompletionStatus(database, effectiveModuleId, session.user_id)
+  // Recalculate and sync parent module completion statuses
+  for (const modId of touchedModuleIds) {
+    syncModuleCompletionStatus(database, modId, session.user_id)
   }
 
   return evaluation
@@ -2264,12 +2333,13 @@ Rules:
 
     return rows.map(r => {
       const srs = srsMap.get(r.id)
+      const isCompleted = Boolean(r.completed || r.studied)
       return {
         ...r,
-        completed: Boolean(r.completed),
-        studied: Boolean(r.studied),
-        has_new_material: Boolean((r as any).has_new_material),
-        is_gap: Boolean((r as any).is_gap),
+        completed: isCompleted,
+        studied: isCompleted,
+        has_new_material: Boolean((r as any).has_new_material && !isCompleted),
+        is_gap: Boolean((r as any).is_gap && !isCompleted),
         retrievability: srs ? srs.retrievability : undefined,
         retention_status: srs ? srs.retentionStatus : undefined,
         next_review_due: srs ? srs.nextReviewDue : undefined,
