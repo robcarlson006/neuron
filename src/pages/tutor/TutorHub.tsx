@@ -684,14 +684,16 @@ export default function TutorHub(): React.JSX.Element {
                   </div>
 
                   <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-400">
-                      {t.daysOverdue > 0 ? `${t.daysOverdue}d overdue` : `Review due`}
-                    </span>
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                      <span>{t.daysOverdue > 0 ? `${t.daysOverdue}d overdue` : `Review due`}</span>
+                      <span>·</span>
+                      <span className="font-semibold text-amber-700 dark:text-amber-400">⏱️ {t.estimatedMinutes || 15}m</span>
+                    </div>
                     <button
                       onClick={() => {
                         const config: import('../../types').TutorSessionConfig = {
-                          duration_minutes: 15,
-                          depth_level: 3,
+                          duration_minutes: t.estimatedMinutes || 15,
+                          depth_level: 'adaptive',
                           never_studied: false,
                           module_id: t.moduleId,
                           target_topic: t.topicTitle,

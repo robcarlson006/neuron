@@ -143,7 +143,8 @@ function buildTimeContext(params: {
 function buildDepthInstruction(
   depthLevel: 1 | 2 | 3 | 4 | 5,
   neverStudied: boolean,
-  durationMinutes?: number | null
+  durationMinutes?: number | null,
+  isAdaptive?: boolean
 ): string {
   const depthNames: Record<number, string> = { 1: 'Beginner', 2: 'Intermediate', 3: 'Proficient', 4: 'Expert', 5: 'Professor' }
   const instructions: Record<number, string> = {
@@ -155,7 +156,11 @@ function buildDepthInstruction(
   }
 
   const diffLabel = depthNames[depthLevel] || 'Proficient'
-  let block = `\nDIFFICULTY LEVEL: ${depthLevel} (${diffLabel})\n${instructions[depthLevel] ?? instructions[3]}\n`
+  let block = `\nDIFFICULTY LEVEL: ${depthLevel} (${diffLabel})${isAdaptive ? ' [ADAPTIVE CALIBRATION ACTIVE]' : ''}\n${instructions[depthLevel] ?? instructions[3]}\n`
+
+  if (isAdaptive) {
+    block += `- Adaptive Calibration Note: The difficulty was automatically tuned to Level ${depthLevel} (${diffLabel}) based on the student's historical mastery and session memory. If the student answers with effortless accuracy, escalate difficulty dynamically; if they struggle, apply instructional scaffolding without dropping conceptual rigor.\n`
+  }
 
   // Add combined TIME × DIFFICULTY strategy when duration is set
   if (durationMinutes && durationMinutes > 0) {
@@ -196,6 +201,101 @@ function buildDepthInstruction(
   }
 
   return block
+}
+
+// ── Adaptive difficulty calculator ──────────────────────────────────────
+
+export function resolveAdaptiveDepth(
+  database: Database.Database,
+  subjectId: number,
+  userId?: number,
+  targetTopic?: string
+): 1 | 2 | 3 | 4 | 5 {
+  if (!userId) return 3
+
+  try {
+    // 1. If target topic is specified, look for exact or partial topic memory / concept mastery
+    if (targetTopic) {
+      const cleanTopic = targetTopic.trim().toLowerCase()
+
+      const cmRow = database.prepare(`
+        SELECT mastery_prob FROM concept_mastery
+        WHERE subject_id = ? AND user_id = ? AND LOWER(concept) = ?
+        LIMIT 1
+      `).get(subjectId, userId, cleanTopic) as { mastery_prob: number } | undefined
+
+      if (cmRow) {
+        if (cmRow.mastery_prob >= 0.85) return 5
+        if (cmRow.mastery_prob >= 0.70) return 4
+        if (cmRow.mastery_prob >= 0.50) return 3
+        if (cmRow.mastery_prob >= 0.30) return 2
+        return 1
+      }
+
+      const memRow = database.prepare(`
+        SELECT mastery_level FROM tutor_topic_memories
+        WHERE subject_id = ? AND user_id = ? AND LOWER(topic) = ?
+        LIMIT 1
+      `).get(subjectId, userId, cleanTopic) as { mastery_level: string } | undefined
+
+      if (memRow) {
+        if (memRow.mastery_level === 'mastered') return 5
+        if (memRow.mastery_level === 'good') return 4
+        if (memRow.mastery_level === 'developing') return 2
+        if (memRow.mastery_level === 'struggling') return 1
+      }
+    }
+
+    // 2. Aggregate BKT concept mastery for this subject
+    const avgCm = database.prepare(`
+      SELECT AVG(mastery_prob) as avg_p, COUNT(*) as cnt
+      FROM concept_mastery
+      WHERE subject_id = ? AND user_id = ?
+    `).get(subjectId, userId) as { avg_p: number | null; cnt: number } | undefined
+
+    if (avgCm && avgCm.cnt > 0 && avgCm.avg_p !== null) {
+      if (avgCm.avg_p >= 0.85) return 5
+      if (avgCm.avg_p >= 0.70) return 4
+      if (avgCm.avg_p >= 0.50) return 3
+      if (avgCm.avg_p >= 0.30) return 2
+      return 1
+    }
+
+    // 3. Fall back to recent session evaluations
+    const recentEvals = database.prepare(`
+      SELECT strengths_json, struggles_json
+      FROM tutor_session_evaluations
+      WHERE subject_id = ? AND user_id = ?
+      ORDER BY created_at DESC
+      LIMIT 5
+    `).all(subjectId, userId) as Array<{ strengths_json: string; struggles_json: string }>
+
+    if (recentEvals.length > 0) {
+      let totalStrengths = 0
+      let totalStruggles = 0
+      for (const e of recentEvals) {
+        try {
+          const st = JSON.parse(e.strengths_json || '[]')
+          const sg = JSON.parse(e.struggles_json || '[]')
+          totalStrengths += Array.isArray(st) ? st.length : 0
+          totalStruggles += Array.isArray(sg) ? sg.length : 0
+        } catch { /* ignore */ }
+      }
+      const total = totalStrengths + totalStruggles
+      if (total > 0) {
+        const ratio = totalStrengths / total
+        if (ratio >= 0.8) return 5
+        if (ratio >= 0.6) return 4
+        if (ratio >= 0.4) return 3
+        if (ratio >= 0.2) return 2
+        return 1
+      }
+    }
+  } catch (err) {
+    console.warn('Error computing adaptive depth:', err)
+  }
+
+  return 3
 }
 
 // ── Memory block builder (anti-repetition) ──────────────────────────────
@@ -378,7 +478,8 @@ export function computeGapAnalysis(
       type: 'struggled',
       topic: m.topic,
       details: m.struggles || 'Struggled with this concept in a previous session',
-      priority: 1
+      priority: 1,
+      estimatedMinutes: m.mastery_level === 'struggling' ? 25 : 20
     })
   }
   for (const cm of conceptMastery) {
@@ -387,7 +488,8 @@ export function computeGapAnalysis(
         type: 'struggled',
         topic: cm.concept,
         details: `Low mastery level (${Math.round(cm.mastery_prob * 100)}%)`,
-        priority: 1
+        priority: 1,
+        estimatedMinutes: cm.mastery_prob < 0.35 ? 25 : 20
       })
     }
   }
@@ -407,7 +509,8 @@ export function computeGapAnalysis(
         moduleId: t.module_id,
         moduleTitle: mod?.title,
         details: mod ? `From module: ${mod.title}` : undefined,
-        priority: 2
+        priority: 2,
+        estimatedMinutes: 20
       })
     }
   }
@@ -422,37 +525,38 @@ export function computeGapAnalysis(
           moduleId: mod.id,
           moduleTitle: mod.title,
           details: 'Syllabus module not yet covered in tutor',
-          priority: 2
+          priority: 2,
+          estimatedMinutes: 20
         })
       }
     }
   }
 
-  // Determine recommendation
+  // Single-gap sequencing: target ONLY the single highest-priority gap
   const recommendedTopics: string[] = []
   let recommendedFocus = ''
   let recommendedModuleId: number | undefined
   let recommendedMaterialId: number | undefined
+  let recommendedEstimatedMinutes = 20
 
-  if (struggledItems.length > 0 && uncoveredItems.length > 0) {
-    const sTop = struggledItems.slice(0, 2).map(i => i.topic)
-    const uTop = uncoveredItems.slice(0, 1).map(i => i.topic)
-    recommendedTopics.push(...sTop, ...uTop)
-    recommendedModuleId = uncoveredItems[0]?.moduleId
-    recommendedFocus = `Review ${sTop.join(' & ')} (struggled previously) and introduce ${uTop.join(', ')}.`
-  } else if (struggledItems.length > 0) {
-    const sTop = struggledItems.slice(0, 3).map(i => i.topic)
-    recommendedTopics.push(...sTop)
-    recommendedFocus = `Reinforce key struggled areas: ${sTop.join(', ')}.`
-  } else if (uncoveredItems.length > 0) {
-    const uTop = uncoveredItems.slice(0, 3).map(i => i.topic)
-    recommendedTopics.push(...uTop)
-    recommendedModuleId = uncoveredItems[0]?.moduleId
-    recommendedFocus = `Cover upcoming unstudied material: ${uTop.join(', ')}.`
+  const topGap = struggledItems[0] || uncoveredItems[0]
+
+  if (topGap) {
+    recommendedTopics.push(topGap.topic)
+    recommendedModuleId = topGap.moduleId
+    recommendedMaterialId = topGap.materialId
+    recommendedEstimatedMinutes = topGap.estimatedMinutes || (topGap.type === 'struggled' ? 25 : 20)
+
+    if (topGap.type === 'struggled') {
+      recommendedFocus = `Targeted Knowledge Gap: Reinforce struggled topic "${topGap.topic}".`
+    } else {
+      recommendedFocus = `Targeted Knowledge Gap: Master unstudied topic "${topGap.topic}".`
+    }
   } else {
     // Everything covered and strong!
     const subject = database.prepare('SELECT name FROM subjects WHERE id = ?').get(subjectId) as { name: string } | undefined
     recommendedFocus = `Comprehensive review across all covered concepts in ${subject?.name || 'this class'}.`
+    recommendedEstimatedMinutes = 15
     if (modules.length > 0) {
       recommendedTopics.push(modules[0].title)
       recommendedModuleId = modules[0].id
@@ -469,6 +573,7 @@ export function computeGapAnalysis(
     recommendedTopics,
     recommendedModuleId,
     recommendedMaterialId,
+    recommendedEstimatedMinutes,
     totalGapsCount,
     hasHistory
   }
@@ -1384,20 +1489,34 @@ Generate 6-10 cards total. Format each card on its own line using this exact for
     // Detect first turn — skip noisy context blocks that have no useful info yet
     const isFirstTurn = !params.conversationHistory?.length
 
+    // Retrieve userId for historical memory and adaptive depth lookup
+    let userId: number | undefined
+    try {
+      const sessRow = db.prepare('SELECT user_id FROM tutor_sessions WHERE id = ?').get(params.sessionId) as { user_id: number | null } | undefined
+      if (sessRow?.user_id) userId = sessRow.user_id
+    } catch { /* ignore */ }
+
+    // Resolve adaptive difficulty if selected or unset
+    const isAdaptive = params.depthLevel === 'adaptive' || !params.depthLevel
+    const concreteDepth: 1 | 2 | 3 | 4 | 5 = params.depthLevel && params.depthLevel !== 'adaptive'
+      ? params.depthLevel
+      : resolveAdaptiveDepth(db, params.subjectId, userId, params.targetTopic || params.targetTopics?.[0])
+
     // Build time context
     const timeContext = buildTimeContext({
       durationMinutes: params.durationMinutes ?? null,
       timeElapsedSeconds: params.timeElapsedSeconds,
       timeRemainingSeconds: params.timeRemainingSeconds,
       pacingStatus: params.pacingStatus,
-      depthLevel: params.depthLevel
+      depthLevel: concreteDepth
     })
 
     // Build depth/beginner instruction
     const depthBlock = buildDepthInstruction(
-      params.depthLevel ?? 3,
+      concreteDepth,
       params.neverStudied ?? false,
-      params.durationMinutes
+      params.durationMinutes,
+      isAdaptive
     )
 
     // Build anti-repeat memory block (skip on first turn — nothing to repeat yet)
@@ -1407,13 +1526,6 @@ Generate 6-10 cards total. Format each card on its own line using this exact for
       topicsMastered: params.topicsMastered,
       weakTopicsConcerns: params.weakTopicsConcerns
     }) : ''
-
-    // Retrieve userId for historical memory lookup
-    let userId: number | undefined
-    try {
-      const sessRow = db.prepare('SELECT user_id FROM tutor_sessions WHERE id = ?').get(params.sessionId) as { user_id: number | null } | undefined
-      if (sessRow?.user_id) userId = sessRow.user_id
-    } catch { /* ignore */ }
 
     // Build historical cross-session learning memory block
     const historicalMemoryBlock = buildHistoricalMemoryBlock(db, params.subjectId, userId)
@@ -1610,7 +1722,7 @@ Generate 6-10 cards total. Format each card on its own line using this exact for
           WHERE id = ?
         `).run(
           params.durationMinutes ?? null,
-          params.depthLevel ?? null,
+          concreteDepth,
           params.neverStudied ? 1 : 0,
           params.sessionId
         )
@@ -1635,16 +1747,21 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
    - Layer 3 (Faded Scaffold): Provide a partial structure or formula, prompting the student to actively execute the pivotal reasoning step.
    - Layer 4 (Explicit Model with Mirror Test): If still stuck after 2 failed attempts, demonstrate the method on a parallel ISOMORPHIC problem (never giving away the target problem directly), then immediately give them a mirror test to solve.
    - Layer 5 (Post-Reflection): Once correct, prompt them with: "Why did that step work?" or "What would happen if parameter X changed?" to cement deep transfer.
-4. Give crisp, specific corrective feedback (what was right, what was missed) grounded in the source materials.
-5. CONTINUOUS ADVANCEMENT: When the student has mastered a concept, smoothly elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or advance to the next syllabus subtopic. Never end early.
-6. FORMATTING:
+4. FLEXIBLE SEMANTIC EVALUATION (MANDATORY):
+   - Evaluate the student's conceptual grasp and underlying meaning rather than strict literal phrasing or exact keywords.
+   - If the student's answer logically implies the correct conclusion (e.g. stating that "all coordinates changed" implies "the line moved/translated"; or explaining the mathematical mechanism of shifting without explicitly saying the word "shift"), mark it as correct/understood and affirm their reasoning.
+   - Never mark an answer as "completely wrong" when it is conceptually right or logically entails the correct answer.
+   - Distinguish true misconceptions from alternative phrasings, informal explanations, or implied deductions.
+5. Give crisp, specific corrective feedback (affirming what was right, highlighting what was missed) grounded in the source materials.
+6. CONTINUOUS ADVANCEMENT: When the student has mastered a concept, smoothly elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or advance to the next syllabus subtopic. Never end early.
+7. FORMATTING:
    - Use LaTeX for mathematical formulas, variables, and equations ($...$ inline, $$...$$ standalone, e.g. $P$, $Q$, $E = mc^2$, $(1, 2)$). Do NOT wrap currency amounts like $5 or $3 in LaTeX math — write currency as standard plain text ($5, $3).
    - ZERO-DEFECT TABLES: When presenting payoff matrices, comparison matrices, econometric regressions, financial schedules, or summary data, format them as clean Markdown tables (| Col 1 | Col 2 |) with each row on a new line. For numerical schedules, verify that vertical column sums match totals. For econometric tables, format clustered standard errors in parentheses directly below each coefficient and report significance markers ($^*p < 0.10, ^{**}p < 0.05, ^{***}p < 0.01$).
    - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):
      * USAGE FREQUENCY GUARDRAIL: Do NOT overuse charts. Only synthesize an interactive graph when explaining multi-variable models, equilibrium shifts (e.g., Supply/Demand, IS-LM, cost curves), phase diagrams, or dynamical systems, or when the student explicitly asks to visualize something. Never generate charts for simple definitions or single-variable facts.
      * HIGH-DEFINITION INTERACTIVE PARAMETERS: When adding sliders (params with bind: { input: "range", min: ..., max: ..., step: ... }), you MUST generate continuous coordinate points via data: { sequence: { start: 0, stop: N, step: S, as: "x" } } and calculate the curve values dynamically with transform: [{ calculate: "...", as: "y" }]. Use pow(base, exp) instead of ^ in expressions (e.g. C0 * pow(1 + r, datum.t)).
      * Output a valid Vega-Lite v5 JSON specification inside a vega-lite fenced code block with "width": "container".
-7. STRICT SESSION COMPLETION RULE: Do NOT end the session, say goodbye, or output [SESSION_END] while time remains. Always conclude your message with a question or scenario.${syllabusContext}`,
+8. STRICT SESSION COMPLETION RULE: Do NOT end the session, say goodbye, or output [SESSION_END] while time remains. Always conclude your message with a question or scenario.${syllabusContext}`,
 
       socratic: `You are now in the SOCRATIC DEEP DIVE phase for "${className}".
 
@@ -1653,13 +1770,14 @@ PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 2. HINGE-POINT DIAGNOSTIC PROBES: Before advancing to a new concept, ask a Two-Tier Diagnostic question:
    - Tier 1: Ask for an outcome prediction in a novel or counterfactual scenario.
    - Tier 2: Challenge the student to justify the exact theoretical mechanism driving that outcome.
-3. AUTHENTIC MISCONCEPTION ADDRESSING: If the student exhibits a common misconception, do not simply state that they are wrong. Formulate a brief Socratic counter-example that illuminates the logical contradiction.
-4. Challenge the student to explain concepts in their own words as if explaining to an intelligent novice.
-5. Ask them to connect concepts across different sections of the uploaded material.
-6. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
-7. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
-8. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
-9. FORMATTING:
+3. FLEXIBLE SEMANTIC EVALUATION: Recognize semantic equivalence and implied truths (e.g., coordinate shifts = line translation). Do not demand verbatim textbook phrasing when the student's reasoning demonstrates solid conceptual understanding.
+4. AUTHENTIC MISCONCEPTION ADDRESSING: If the student exhibits a common misconception, do not simply state that they are wrong. Formulate a brief Socratic counter-example that illuminates the logical contradiction.
+5. Challenge the student to explain concepts in their own words as if explaining to an intelligent novice.
+6. Ask them to connect concepts across different sections of the uploaded material.
+7. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
+8. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
+9. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
+10. FORMATTING:
    - When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, coordinates $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$. Do not wrap plain currency ($5, $10) in LaTeX.
    - When presenting payoff matrices, comparisons, econometric models, or tabular data, use clean Markdown tables with standard markdown table syntax (| Col 1 | Col 2 |) with each row on a new line and verified footing calculations.
    - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):

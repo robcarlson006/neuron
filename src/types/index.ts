@@ -695,6 +695,7 @@ export interface GapAnalysisItem {
   materialId?: number
   materialName?: string
   priority: 1 | 2 | 3
+  estimatedMinutes?: number
 }
 
 export interface GapAnalysisResult {
@@ -704,6 +705,7 @@ export interface GapAnalysisResult {
   recommendedTopics: string[]
   recommendedModuleId?: number
   recommendedMaterialId?: number
+  recommendedEstimatedMinutes?: number
   totalGapsCount: number
   hasHistory: boolean
 }
@@ -723,7 +725,7 @@ export interface TutorStreamParams {
   }
   attachedContent?: string
   durationMinutes?: number | null
-  depthLevel?: 1 | 2 | 3 | 4 | 5
+  depthLevel?: 1 | 2 | 3 | 4 | 5 | 'adaptive'
   neverStudied?: boolean
   timeElapsedSeconds?: number
   timeRemainingSeconds?: number
@@ -745,7 +747,7 @@ export interface TutorStreamParams {
 
 export interface TutorSessionConfig {
   duration_minutes: number | null
-  depth_level: 1 | 2 | 3 | 4 | 5
+  depth_level: 1 | 2 | 3 | 4 | 5 | 'adaptive'
   never_studied: boolean
   material_id?: number
   material_name?: string

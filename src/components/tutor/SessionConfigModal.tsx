@@ -62,7 +62,7 @@ export default function SessionConfigModal({
 
   // ── Config State ──
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
-  const [selectedDepth, setSelectedDepth] = useState<1 | 2 | 3 | 4 | 5>(3)
+  const [selectedDepth, setSelectedDepth] = useState<1 | 2 | 3 | 4 | 5 | 'adaptive'>('adaptive')
   const [neverStudied, setNeverStudied] = useState(false)
   const [starting, setStarting] = useState(false)
   const [sliderValue, setSliderValue] = useState<number>(30)
@@ -70,8 +70,11 @@ export default function SessionConfigModal({
 
   const sliderRef = useRef<HTMLInputElement>(null)
 
-  // Beginner mode forces minimum depth 3
-  const finalDepth = neverStudied && selectedDepth < 3 ? 3 : selectedDepth
+  // Beginner mode forces minimum depth 3 if manual depth < 3 is selected
+  const finalDepth: 1 | 2 | 3 | 4 | 5 | 'adaptive' =
+    selectedDepth === 'adaptive'
+      ? 'adaptive'
+      : (neverStudied && selectedDepth < 3 ? 3 : selectedDepth)
 
   // All new topics across entire class
   const allNewTopicsList = modules.flatMap(mod =>
@@ -252,8 +255,8 @@ export default function SessionConfigModal({
       }
     } else if (studyMode === 'fill_gaps') {
       isFillGaps = true
-      gapTopics = gapAnalysis?.recommendedTopics || []
-      chosenTopic = gapAnalysis?.recommendedFocus || 'Identified Knowledge Gaps'
+      gapTopics = gapAnalysis?.recommendedTopics?.slice(0, 1) || []
+      chosenTopic = gapTopics[0] || gapAnalysis?.recommendedFocus || 'Identified Knowledge Gap'
       chosenModuleId = gapAnalysis?.recommendedModuleId
     } else if (studyMode === 'active_recall') {
       isActiveRecall = true
@@ -280,8 +283,12 @@ export default function SessionConfigModal({
       chosenTopic = customTopic.trim() || subjectName
     }
 
+    const finalDuration = selectedTime !== null
+      ? selectedTime
+      : (studyMode === 'fill_gaps' && gapAnalysis?.recommendedEstimatedMinutes ? gapAnalysis.recommendedEstimatedMinutes : null)
+
     const config: TutorSessionConfig = {
-      duration_minutes: selectedTime,
+      duration_minutes: finalDuration,
       depth_level: finalDepth,
       never_studied: neverStudied || studyMode === 'new_content',
       material_id: chosenMaterialId,
@@ -686,13 +693,20 @@ export default function SessionConfigModal({
                       </div>
                     )}
 
-                    <div className="pt-2 border-t border-violet-200/60 dark:border-violet-800/60 flex items-center gap-2">
-                      <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">
-                        Focus Plan:
-                      </span>
-                      <span className="text-xs text-slate-700 dark:text-slate-300">
+                    <div className="pt-2 border-t border-violet-200/60 dark:border-violet-800/60 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">
+                          Target Knowledge Gap:
+                        </span>
+                        {gapAnalysis.recommendedEstimatedMinutes && (
+                          <span className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/40 px-2 py-0.5 rounded-full">
+                            ⏱️ Suggested ~{gapAnalysis.recommendedEstimatedMinutes} min
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-700 dark:text-slate-300">
                         {gapAnalysis.recommendedFocus}
-                      </span>
+                      </p>
                     </div>
                   </div>
                 ) : (
@@ -896,6 +910,40 @@ export default function SessionConfigModal({
             </label>
 
             <div className="space-y-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedDepth('adaptive')}
+                className={`w-full text-left px-3 py-2 rounded-xl border transition-all ${
+                  selectedDepth === 'adaptive'
+                    ? 'border-violet-500 dark:border-violet-500 bg-violet-50/90 dark:bg-violet-900/30 shadow-xs'
+                    : 'border-transparent bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">🤖</span>
+                  <div className="flex-1 flex items-baseline justify-between">
+                    <span
+                      className={`text-xs font-semibold ${
+                        selectedDepth === 'adaptive'
+                          ? 'text-violet-700 dark:text-violet-300'
+                          : 'text-slate-700 dark:text-slate-200'
+                      }`}
+                    >
+                      Adaptive (AI Calibrated)
+                    </span>
+                    <span
+                      className={`text-[11px] ${
+                        selectedDepth === 'adaptive'
+                          ? 'text-violet-600 dark:text-violet-400 font-medium'
+                          : 'text-slate-400 dark:text-slate-500'
+                      }`}
+                    >
+                      Auto-scales dynamically based on your mastery & retention
+                    </span>
+                  </div>
+                </div>
+              </button>
+
               {DEPTH_LEVELS.map(dl => {
                 const isSelected = selectedDepth === dl.level
                 return (
@@ -937,7 +985,7 @@ export default function SessionConfigModal({
               })}
             </div>
 
-            {neverStudied && selectedDepth < 3 && (
+            {neverStudied && typeof selectedDepth === 'number' && selectedDepth < 3 && (
               <p className="text-xs text-amber-500 mt-1.5">
                 Beginner mode requires at least Proficient difficulty. Using Level 3.
               </p>

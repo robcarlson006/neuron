@@ -193,7 +193,7 @@ export default function TutorSession(): React.JSX.Element {
 
           const restoredConfig: TutorSessionConfig = {
             duration_minutes: s.duration_minutes ?? null,
-            depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5) ?? 3),
+            depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5 | 'adaptive') ?? 'adaptive'),
             never_studied: Boolean(s.never_studied),
             module_id: s.module_id || undefined
           }
@@ -302,7 +302,7 @@ export default function TutorSession(): React.JSX.Element {
         subjectId, user.id, 'tutor', inProgressMod?.id,
         config.duration_minutes !== null ? {
           duration_minutes: config.duration_minutes,
-          depth_level: config.depth_level,
+          depth_level: config.depth_level === 'adaptive' ? 3 : config.depth_level,
           never_studied: config.never_studied ? 1 : 0
         } : undefined
       ) as { id: number; phase: string }
@@ -325,7 +325,7 @@ export default function TutorSession(): React.JSX.Element {
 
       // Send a "ready to learn" system message to start the session
       const difficultyMap = ['', 'Beginner', 'Intermediate', 'Proficient', 'Expert', 'Professor']
-      const difficultyLabel = difficultyMap[config.depth_level] || 'Proficient'
+      const difficultyLabel = config.depth_level === 'adaptive' ? 'Adaptive (AI-Calibrated)' : (difficultyMap[config.depth_level as number] || 'Proficient')
       const topic = config.target_topic || (config.material_name ? `${config.material_name} (Material)` : (inProgressMod?.title || subject?.name || 'this subject'))
 
       let initialMsg = ''

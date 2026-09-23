@@ -106,5 +106,15 @@ describe('Topic-SRS Engine', () => {
     expect(summary.totalTopics).toBe(2)
     expect(summary.dueTopics.length).toBeGreaterThanOrEqual(1)
     expect(summary.dueTopics[0].topicId).toBe(topic2Id)
+    expect(summary.dueTopics[0].estimatedMinutes).toBeGreaterThanOrEqual(15)
+  })
+
+  test('computeEstimatedMinutesForRetention scales based on decay', () => {
+    const { computeEstimatedMinutesForRetention } = require('../../src/lib/memory/topicSrsEngine')
+    expect(computeEstimatedMinutesForRetention(0.95)).toBe(10)
+    expect(computeEstimatedMinutesForRetention(0.85)).toBe(10)
+    expect(computeEstimatedMinutesForRetention(0.70)).toBeGreaterThanOrEqual(15)
+    expect(computeEstimatedMinutesForRetention(0.30)).toBeGreaterThanOrEqual(20)
+    expect(computeEstimatedMinutesForRetention(0.05)).toBeLessThanOrEqual(30)
   })
 })

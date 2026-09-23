@@ -41,6 +41,7 @@ export interface TopicRetentionMetrics {
   daysOverdue: number
   reps: number
   lapses: number
+  estimatedMinutes: number
 }
 
 export interface SubjectRetentionSummary {
@@ -99,6 +100,21 @@ export function classifyRetentionStatus(
     return 'fading'
   }
   return 'fresh'
+}
+
+/**
+ * Estimates the ideal Tutor maintenance drill duration in minutes based on retention decay.
+ * - Fresh (R >= 0.85): 10 mins quick maintenance
+ * - Fading (0.65 <= R < 0.85): 15-20 mins
+ * - Overdue (R < 0.65): 20-30 mins deep retrieval and reconstruction
+ */
+export function computeEstimatedMinutesForRetention(retrievabilityScore: number): number {
+  if (retrievabilityScore >= RETENTION_THRESHOLDS.FRESH_MIN) {
+    return 10
+  }
+  const decayGap = Math.max(0, RETENTION_THRESHOLDS.FRESH_MIN - retrievabilityScore)
+  const extraMinutes = Math.round((decayGap / RETENTION_THRESHOLDS.FRESH_MIN) * 15)
+  return Math.min(30, Math.max(10, 15 + extraMinutes))
 }
 
 /**
@@ -235,7 +251,8 @@ export function getTopicsRetention(
       nextReviewDue: row.next_review_due,
       daysOverdue,
       reps: row.reps,
-      lapses: row.lapses
+      lapses: row.lapses,
+      estimatedMinutes: computeEstimatedMinutesForRetention(currentR)
     })
   }
 
@@ -338,7 +355,8 @@ export function updateTopicSrsState(
     nextReviewDue: next.dueDate,
     daysOverdue: 0,
     reps: newReps,
-    lapses: newLapses
+    lapses: newLapses,
+    estimatedMinutes: computeEstimatedMinutesForRetention(currentR)
   }
 }
 
