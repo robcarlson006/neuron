@@ -176,7 +176,10 @@ Evaluate the student's retrieval attempt and respond in JSON:
 GRADING CRITERIA & DIAGNOSTIC RULES:
 1. Deconstruct the model answer into 1-3 atomic key points and assess coverage.
 2. POLARITY & CONTRADICTION VETO: If the student asserts a direct factual contradiction, inverted cause-effect relationship, or fundamental misconception, score MUST be capped at 1 and correct MUST be false, even if peripheral keywords match.
-3. Be fair to paraphrases and synonyms: capture of the core concept in the student's own words counts as 'recalled'.
+3. FLEXIBLE SEMANTIC & LOGICAL EVALUATION:
+   - Capture of the core concept, mechanism, or underlying meaning in the student's own words counts as 'recalled'.
+   - If the student's answer logically entails or implies the model answer (e.g. stating that 'all coordinates changed/shifted' implies 'the line/curve moved'; or describing the exact causal mechanism without a rigid buzzword), count it as fully recalled and correct.
+   - Never mark an answer wrong purely due to alternative phrasing or informal terminology if the conceptual understanding is sound.
 4. Partial credit (score 3) if key points are partially recalled without major errors.
 5. Score scale:
    - 5 = Full, accurate recall of core concepts and mechanisms.

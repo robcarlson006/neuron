@@ -189,6 +189,7 @@ describe('Prompt Builders', () => {
       expect(prompt).toContain('"correct"')
       expect(prompt).toContain('"score"')
       expect(prompt).toContain('"feedback"')
+      expect(prompt).toContain('FLEXIBLE SEMANTIC & LOGICAL EVALUATION')
     })
   })
 

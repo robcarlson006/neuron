@@ -5,7 +5,8 @@ import {
   computeGapAnalysis,
   buildHistoricalMemoryBlock,
   buildTopicFocusBlock,
-  evaluateAndSaveSessionMemory
+  evaluateAndSaveSessionMemory,
+  resolveAdaptiveDepth
 } from '../../electron/ipc/tutorHandlers'
 import { DB_SCHEMA, MIGRATIONS_SQL } from '../../src/lib/db'
 
@@ -179,6 +180,55 @@ describe('Tutor Memory & Gap Analysis Engine', () => {
       const evalRecord = db.prepare('SELECT * FROM tutor_session_evaluations WHERE session_id = ?').get(sessionId) as any
       expect(evalRecord).toBeDefined()
       expect(evalRecord.topics_covered_json).toContain('Binary Search')
+    })
+  })
+
+  describe('resolveAdaptiveDepth', () => {
+    it('returns default level 3 when no study history exists', () => {
+      const depth = resolveAdaptiveDepth(db, subjectId, userId, 'Graph Theory')
+      expect(depth).toBe(3)
+    })
+
+    it('returns level 1 or 2 when student is struggling with the target topic', () => {
+      insert(
+        db,
+        'INSERT INTO tutor_topic_memories (user_id, subject_id, topic, mastery_level, struggles) VALUES (?, ?, ?, ?, ?)',
+        userId, subjectId, 'Calculus Integrals', 'struggling', 'Confused about substitution rule'
+      )
+
+      const depth = resolveAdaptiveDepth(db, subjectId, userId, 'Calculus Integrals')
+      expect(depth).toBe(1)
+    })
+
+    it('returns level 5 when student has mastered the target topic', () => {
+      insert(
+        db,
+        'INSERT INTO tutor_topic_memories (user_id, subject_id, topic, mastery_level) VALUES (?, ?, ?, ?)',
+        userId, subjectId, 'Neural Networks', 'mastered'
+      )
+
+      const depth = resolveAdaptiveDepth(db, subjectId, userId, 'Neural Networks')
+      expect(depth).toBe(5)
+    })
+
+    it('scales depth based on concept_mastery probability', () => {
+      insert(
+        db,
+        'INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob) VALUES (?, ?, ?, ?)',
+        userId, subjectId, 'Fourier Transform', 0.92
+      )
+
+      const depth = resolveAdaptiveDepth(db, subjectId, userId, 'Fourier Transform')
+      expect(depth).toBe(5)
+
+      insert(
+        db,
+        'INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob) VALUES (?, ?, ?, ?)',
+        userId, subjectId, 'Linear Algebra', 0.20
+      )
+
+      const depthLow = resolveAdaptiveDepth(db, subjectId, userId, 'Linear Algebra')
+      expect(depthLow).toBe(1)
     })
   })
 })
