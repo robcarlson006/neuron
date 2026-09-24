@@ -27,6 +27,7 @@ import type {
   Deadline,
   Diagnostic,
   ConceptMastery,
+  ConceptDependency,
   SM2Result
 } from '../../src/types'
 
@@ -647,6 +648,33 @@ export function registerDbHandlers(): void {
     return db.prepare(
       'SELECT * FROM concept_mastery WHERE user_id = ? ORDER BY mastery_prob ASC'
     ).all(userId) as ConceptMastery[]
+  })
+
+  // Concept dependencies
+  ipcMain.handle('db:getConceptDependencies', (_event, subjectId: number) => {
+    return db.prepare(
+      'SELECT * FROM concept_dependencies WHERE subject_id = ? ORDER BY id ASC'
+    ).all(subjectId) as ConceptDependency[]
+  })
+
+  ipcMain.handle('db:addConceptDependency', (_event, subjectId: number, prerequisiteConcept: string, targetConcept: string, weight: number = 1.0) => {
+    const res = db.prepare(
+      `INSERT OR REPLACE INTO concept_dependencies (subject_id, prerequisite_concept, target_concept, weight)
+       VALUES (?, ?, ?, ?)`
+    ).run(subjectId, prerequisiteConcept.trim(), targetConcept.trim(), weight)
+    return { success: true, id: Number(res.lastInsertRowid) }
+  })
+
+  ipcMain.handle('db:deleteConceptDependency', (_event, id: number) => {
+    db.prepare('DELETE FROM concept_dependencies WHERE id = ?').run(id)
+    return { success: true }
+  })
+
+  ipcMain.handle('db:removeConceptDependencyEdge', (_event, subjectId: number, prerequisiteConcept: string, targetConcept: string) => {
+    db.prepare(
+      'DELETE FROM concept_dependencies WHERE subject_id = ? AND prerequisite_concept = ? AND target_concept = ?'
+    ).run(subjectId, prerequisiteConcept.trim(), targetConcept.trim())
+    return { success: true }
   })
 
   // FSRS retention forecast: aggregate predicted mean retention over horizon

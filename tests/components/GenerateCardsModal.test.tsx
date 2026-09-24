@@ -81,7 +81,9 @@ describe('GenerateCardsModal', () => {
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'active_recall',
       count: 30,
-      autoCount: false
+      autoCount: false,
+      topicId: null,
+      concept: undefined
     })
   })
 
@@ -106,7 +108,9 @@ describe('GenerateCardsModal', () => {
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
       count: 20,
-      autoCount: false
+      autoCount: false,
+      topicId: null,
+      concept: undefined
     })
   })
 
@@ -131,7 +135,9 @@ describe('GenerateCardsModal', () => {
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
       count: 75,
-      autoCount: false
+      autoCount: false,
+      topicId: null,
+      concept: undefined
     })
   })
 
@@ -176,7 +182,9 @@ describe('GenerateCardsModal', () => {
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
       count: 15,
-      autoCount: true
+      autoCount: true,
+      topicId: null,
+      concept: undefined
     })
   })
 
@@ -206,7 +214,9 @@ describe('GenerateCardsModal', () => {
     expect(mockOnGenerate).toHaveBeenCalledWith({
       type: 'flashcard',
       count: 10,
-      autoCount: false
+      autoCount: false,
+      topicId: null,
+      concept: undefined
     })
   })
 

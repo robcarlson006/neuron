@@ -1228,3 +1228,112 @@ export interface MultiKeyVault {
   visionProvider: 'gemini' | 'openai' | 'local' | 'auto'
   visionModel: string
 }
+
+// ── Exam Readiness & Cram Optimizer Types ────────────────────────────────────
+
+export interface TopicReadinessBreakdown {
+  topicId?: number
+  topicTitle: string
+  cardCount: number
+  masteredCount: number
+  retrievability: number // 0 - 1
+  projectedScore: number // 0 - 100
+  status: 'strong' | 'moderate' | 'weak' | 'gap'
+  priorityRank: number
+}
+
+export interface ExamReadinessResult {
+  subjectId: number
+  deadlineId?: number
+  deadlineLabel: string
+  examDate: string
+  daysRemaining: number
+  projectedScore: number // 0 - 100
+  confidenceMargin: number // e.g. ±4%
+  tier: 'ready' | 'proficient' | 'borderline' | 'critical'
+  tierLabel: string
+  coveragePercent: number
+  totalCards: number
+  weakTopics: TopicReadinessBreakdown[]
+  allTopics: TopicReadinessBreakdown[]
+}
+
+export interface CramPlanDay {
+  dayNumber: number
+  date: string
+  focusTitle: string
+  topics: string[]
+  cardIds: number[]
+  estimatedMinutes: number
+  targetCardCount: number
+  focusType: 'critical_gaps' | 'weak_reinforce' | 'retention_polish' | 'mock_drill'
+}
+
+export interface CramOptimizationResult {
+  dailyMinutes: number
+  daysCount: number
+  totalCardsToReview: number
+  currentScore: number
+  projectedBoostedScore: number
+  scoreDelta: number
+  dailyPlan: CramPlanDay[]
+}
+
+// ── Interactive Concept Dependency & Knowledge Graph Types ────────────────────
+
+export interface ConceptDependency {
+  id?: number
+  subject_id: number
+  prerequisite_concept: string
+  target_concept: string
+  weight?: number
+}
+
+export type ConceptNodeStatus = 'mastered' | 'learning' | 'shaky' | 'gap' | 'blocked'
+
+export interface ConceptGraphNode {
+  id: string // normalized concept key
+  label: string
+  category?: string
+  moduleId?: number
+  topicId?: number
+  masteryProb: number // 0.0 - 1.0 (BKT posterior or score)
+  status: ConceptNodeStatus
+  observations: number
+  cardCount: number
+  prerequisites: string[]
+  dependents: string[]
+  isBottleneck?: boolean
+  bottleneckScore?: number
+  optimalStudyRank?: number
+  layer?: number
+  x?: number
+  y?: number
+  vx?: number
+  vy?: number
+}
+
+export interface ConceptGraphEdge {
+  id: string
+  source: string
+  target: string
+  weight: number
+  isPrerequisiteMet: boolean
+}
+
+export interface ConceptGraphData {
+  nodes: ConceptGraphNode[]
+  edges: ConceptGraphEdge[]
+  metrics: {
+    totalConcepts: number
+    masteredCount: number
+    learningCount: number
+    shakyCount: number
+    gapCount: number
+    blockedCount: number
+    criticalBottlenecks: string[]
+    suggestedNextConcept: string | null
+  }
+}
+
+

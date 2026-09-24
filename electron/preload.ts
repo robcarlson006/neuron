@@ -12,7 +12,7 @@ import type {
   FolderSyncResult, FolderSyncEvent, Lecture,
   PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult,
   AutonomousPracticeGenOptions, AutonomousPracticeGenResult,
-  MultiKeyVault, QuickReviewTopic
+  MultiKeyVault, QuickReviewTopic, ConceptDependency
 } from '../src/types'
 
 const electronAPI = {
@@ -155,6 +155,14 @@ const electronAPI = {
   // FSRS + knowledge tracing
   getConceptMastery: (userId: number, subjectId?: number): Promise<ConceptMastery[]> =>
     ipcRenderer.invoke('db:getConceptMastery', userId, subjectId),
+  getConceptDependencies: (subjectId: number): Promise<ConceptDependency[]> =>
+    ipcRenderer.invoke('db:getConceptDependencies', subjectId),
+  addConceptDependency: (subjectId: number, prerequisiteConcept: string, targetConcept: string, weight?: number): Promise<{ success: boolean; id?: number }> =>
+    ipcRenderer.invoke('db:addConceptDependency', subjectId, prerequisiteConcept, targetConcept, weight),
+  deleteConceptDependency: (id: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('db:deleteConceptDependency', id),
+  removeConceptDependencyEdge: (subjectId: number, prerequisiteConcept: string, targetConcept: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('db:removeConceptDependencyEdge', subjectId, prerequisiteConcept, targetConcept),
   getRetentionForecast: (userId: number, horizonDays?: number, subjectId?: number): Promise<RetentionForecastPoint[]> =>
     ipcRenderer.invoke('db:getRetentionForecast', userId, horizonDays, subjectId),
   getCurrentRetentionBySubject: (userId: number): Promise<{ subject_id: number; retention: number; count: number }[]> =>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react'
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import PomodoroWidget from '../components/PomodoroWidget'
@@ -8,7 +8,11 @@ import CurriculumView from '../components/classes/CurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
 import CardImportModal from '../components/CardImportModal'
-import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats } from '../types'
+import ExamReadinessCard from '../components/readiness/ExamReadinessCard'
+import CramOptimizerModal from '../components/readiness/CramOptimizerModal'
+import KnowledgeGraphView from '../components/graphs/KnowledgeGraphView'
+import { calculateExamReadiness, type CardWithSchedule } from '../lib/readinessEngine'
+import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats, ConceptMastery, ConceptDependency } from '../types'
 import { useLectureRecordingStore } from '../store/lectureRecordingStore'
 import LectureAudioPlayer from '../components/classes/LectureAudioPlayer'
 import LectureNotesModal from '../components/classes/LectureNotesModal'
@@ -17,7 +21,7 @@ import LoadingProgressBar from '../components/common/LoadingProgressBar'
 import PracticeHub from './PracticeHub'
 import PracticeSessionPage from './PracticeSessionPage'
 
-type Tab = 'cards' | 'curriculum' | 'practice' | 'materials' | 'lectures' | 'deadlines'
+type Tab = 'cards' | 'curriculum' | 'graph' | 'practice' | 'materials' | 'lectures' | 'deadlines'
 
 export default function UnifiedSubjectDetail(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
@@ -97,11 +101,15 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [startingLecture, setStartingLecture] = useState(false)
   const recordingStore = useLectureRecordingStore()
 
-  // ── Deadlines state (from SubjectDetail) ──
+  // ── Deadlines & Readiness state ──
   const [deadlines, setDeadlines] = useState<Deadline[]>([])
   const [newDeadlineLabel, setNewDeadlineLabel] = useState('')
   const [newDeadlineDate, setNewDeadlineDate] = useState('')
   const [showDeadlineForm, setShowDeadlineForm] = useState(false)
+  const [cardsWithSchedule, setCardsWithSchedule] = useState<CardWithSchedule[]>([])
+  const [concepts, setConcepts] = useState<ConceptMastery[]>([])
+  const [conceptDependencies, setConceptDependencies] = useState<ConceptDependency[]>([])
+  const [showCramOptimizer, setShowCramOptimizer] = useState(false)
 
   // ── Load all data ──
   useEffect(() => {
@@ -112,6 +120,30 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setEditStatus(subject?.status || 'active')
     }
   }, [subjectId, user])
+
+  // ── Nearest Exam & Readiness Projection ──
+  const nextExamDeadline = useMemo(() => {
+    if (!deadlines || deadlines.length === 0) return null
+    const sorted = [...deadlines].sort((a, b) => new Date(a.deadline_date).getTime() - new Date(b.deadline_date).getTime())
+    const examOnly = sorted.filter(d =>
+      ['exam', 'test', 'quiz'].includes(d.deadline_type) ||
+      d.label.toLowerCase().includes('exam') ||
+      d.label.toLowerCase().includes('test')
+    )
+    return examOnly[0] || sorted[0]
+  }, [deadlines])
+
+  const readinessResult = useMemo(() => {
+    if (!nextExamDeadline) return null
+    return calculateExamReadiness({
+      subjectId,
+      deadline: nextExamDeadline,
+      examDateISO: nextExamDeadline.deadline_date,
+      cards: cardsWithSchedule.length > 0 ? cardsWithSchedule : cards,
+      concepts,
+      modules
+    })
+  }, [subjectId, nextExamDeadline, cardsWithSchedule, cards, concepts, modules])
 
   // ── Lecture status event listener ──
   useEffect(() => {
@@ -162,18 +194,24 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     try {
       const hasCurriculum = subject?.subject_type === 'class' || subject?.subject_type === 'book'
 
-      const [c, d, f, mats, lecs] = await Promise.all([
+      const [c, d, f, mats, lecs, schedCards, conMastery, deps] = await Promise.all([
         window.electronAPI.getCards(subjectId),
         window.electronAPI.getDeadlines(subjectId),
         window.electronAPI.getFolders(subjectId),
         window.electronAPI.getMaterials(subjectId),
-        window.electronAPI.listLectures ? window.electronAPI.listLectures(subjectId) : Promise.resolve([])
+        window.electronAPI.listLectures ? window.electronAPI.listLectures(subjectId) : Promise.resolve([]),
+        user ? window.electronAPI.getAllCardsWithSchedule(user.id, subjectId) : Promise.resolve([]),
+        user ? window.electronAPI.getConceptMastery(user.id, subjectId) : Promise.resolve([]),
+        window.electronAPI.getConceptDependencies ? window.electronAPI.getConceptDependencies(subjectId) : Promise.resolve([])
       ])
       setCards(c)
       setDeadlines(d as Deadline[])
       setFolders(f)
       setMaterials(mats as Material[])
       setLectures((lecs as Lecture[]) || [])
+      setCardsWithSchedule((schedCards as CardWithSchedule[]) || [])
+      setConcepts((conMastery as ConceptMastery[]) || [])
+      setConceptDependencies((deps as ConceptDependency[]) || [])
 
       if (window.electronAPI.syllabusListModules) {
         try {
@@ -847,6 +885,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     tabs.push({ id: 'curriculum', label: 'Curriculum', count: modules.length })
   }
   tabs.push(
+    { id: 'graph', label: 'Knowledge Graph' },
     { id: 'practice', label: 'Practice Lab' },
     { id: 'materials', label: 'Materials', count: materials.length },
     { id: 'lectures', label: 'Lectures', count: lectures.length },
@@ -1301,6 +1340,42 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ═══ KNOWLEDGE GRAPH TAB ═══ */}
+      {activeTab === 'graph' && (
+        <div className="min-h-[550px] h-[calc(100vh-280px)]">
+          <KnowledgeGraphView
+            subjectId={subjectId}
+            subjectName={subject.name}
+            dependencies={conceptDependencies}
+            concepts={concepts}
+            modules={modules}
+            cards={cards}
+            onAddDependency={async (prereq, target) => {
+              if (window.electronAPI?.addConceptDependency) {
+                await window.electronAPI.addConceptDependency(subjectId, prereq, target)
+                const updated = await window.electronAPI.getConceptDependencies(subjectId)
+                setConceptDependencies(updated || [])
+              }
+            }}
+            onDeleteDependency={async (prereq, target) => {
+              if (window.electronAPI?.removeConceptDependencyEdge) {
+                await window.electronAPI.removeConceptDependencyEdge(subjectId, prereq, target)
+                const updated = await window.electronAPI.getConceptDependencies(subjectId)
+                setConceptDependencies(updated || [])
+              }
+            }}
+            onOpenTutor={(concept) => {
+              setShowConfigModal({
+                subjectId,
+                subjectName: subject.name,
+                initialTopic: concept,
+                initialMode: 'fill_gaps'
+              })
+            }}
+          />
         </div>
       )}
 
@@ -1774,6 +1849,20 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       {/* ═══ DEADLINES TAB ═══ */}
       {activeTab === 'deadlines' && (
         <div>
+          {/* Exam Readiness Predictor & Horizon Forecaster */}
+          {readinessResult && (
+            <div className="mb-6">
+              <ExamReadinessCard
+                readiness={readinessResult}
+                subjectName={subject?.name}
+                onOpenCramOptimizer={() => setShowCramOptimizer(true)}
+                onQuickReviewTopic={(topicTitle) => {
+                  navigate(`/study/${subjectId}?topic=${encodeURIComponent(topicTitle)}`)
+                }}
+              />
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-4">
             <span className="text-sm text-slate-500 dark:text-slate-400">
               {deadlines.length} deadline{deadlines.length !== 1 ? 's' : ''}
@@ -2114,6 +2203,28 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                 }
               : undefined
           }
+        />
+      )}
+
+      {/* Cram Schedule Optimizer Modal */}
+      {showCramOptimizer && readinessResult && (
+        <CramOptimizerModal
+          isOpen={showCramOptimizer}
+          readiness={readinessResult}
+          cards={cardsWithSchedule.length > 0 ? cardsWithSchedule : cards}
+          subjectName={subject?.name}
+          onClose={() => setShowCramOptimizer(false)}
+          onStartCramSession={(_cardIds, _title) => {
+            setShowCramOptimizer(false)
+            navigate(`/study/${subjectId}`)
+          }}
+          onApplyDailyPlan={(_cramResult) => {
+            addToast({
+              type: 'success',
+              title: 'Cram Plan Saved',
+              message: 'High-yield study sessions added to your schedule.'
+            })
+          }}
         />
       )}
 

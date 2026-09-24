@@ -211,6 +211,8 @@ export function adjustRatingByResponseTime(
   userAvgMs: number | null | undefined
 ): FSRSRating {
   if (!responseTimeMs || !userAvgMs || userAvgMs <= 0) return rating
+  // Outlier guard: if response time exceeds 2 minutes, assume app was backgrounded/idle
+  if (responseTimeMs > 120000) return rating
   if (rating !== 3) return rating
   const ratio = responseTimeMs / userAvgMs
   if (ratio > 2.2) return 2          // slow "Good" → Hard

@@ -181,6 +181,10 @@ describe('FSRS-5 scheduler', () => {
     it('keeps "Good" within normal range', () => {
       expect(adjustRatingByResponseTime(3, 100, 100)).toBe(3)
     })
+
+    it('ignores extreme response times (> 2 minutes) caused by idle background app', () => {
+      expect(adjustRatingByResponseTime(3, 300000, 1000)).toBe(3)
+    })
   })
 
   describe('boostForExam', () => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react'
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import FlashCard from '../components/FlashCard'
@@ -11,7 +11,11 @@ import ClozeCard from '../components/ClozeCard'
 import UndoToast from '../components/UndoToast'
 import { useSwipe } from '../hooks/useSwipe'
 import CalculatorWidget from '../components/calculator/CalculatorWidget'
-import { Calculator } from '../components/icons'
+import { Calculator, Sparkles, RotateCw } from '../components/icons'
+import {
+  determineCardStudyModality,
+  type AdaptiveStudyPreference
+} from '../lib/adaptiveStudyEngine'
 
 interface StudyCard extends Card {
   interval: number
@@ -83,6 +87,30 @@ export default function StudySession(): React.JSX.Element {
   summaryRef.current = summary
 
   const [isResumed, setIsResumed] = useState(false)
+  const [adaptivePreference, setAdaptivePreference] = useState<AdaptiveStudyPreference>(() => {
+    const mode = searchParams.get('mode')
+    if (mode === 'adaptive') return 'adaptive'
+    if (mode === 'flashcard' || mode === 'flashcards') return 'flashcard'
+    if (mode === 'active_recall') return 'active_recall'
+    if (typeFilter === 'flashcard') return 'flashcard'
+    if (typeFilter === 'active_recall') return 'active_recall'
+    try {
+      const saved = localStorage.getItem('study_adaptive_pref')
+      if (saved === 'flashcard' || saved === 'active_recall' || saved === 'adaptive') return saved
+      return 'adaptive'
+    } catch {
+      return 'adaptive'
+    }
+  })
+  const [sessionLapseIds, setSessionLapseIds] = useState<Set<number>>(new Set())
+  const [manualOverrides, setManualOverrides] = useState<Map<number, 'flashcard' | 'active_recall'>>(new Map())
+
+  const handleSetAdaptivePref = (pref: AdaptiveStudyPreference) => {
+    setAdaptivePreference(pref)
+    try {
+      localStorage.setItem('study_adaptive_pref', pref)
+    } catch {}
+  }
 
   const learnStorageKey = `${user?.id ?? 0}-${subjectId ?? 'all'}`
   const sessionProgressKey = `study-session-progress-${user?.id ?? 0}-${subjectId ?? 'all'}-${folderIdParam ?? 'all'}-${isMCMode ? 'mc' : 'study'}`
@@ -327,6 +355,11 @@ export default function StudySession(): React.JSX.Element {
   const currentCards = phase === 'studying' ? cards : skippedCards
   const currentCard = currentCards[currentIdx]
 
+  const cardModality = useMemo(() => {
+    if (!currentCard) return null
+    return determineCardStudyModality(currentCard, adaptivePreference, sessionLapseIds, manualOverrides)
+  }, [currentCard, adaptivePreference, sessionLapseIds, manualOverrides])
+
   // Reset timer whenever the current card changes
   useEffect(() => {
     cardStartTimeRef.current = Date.now()
@@ -341,6 +374,11 @@ export default function StudySession(): React.JSX.Element {
   // SM2 review — used for flashcards, active recall, and cloze in both standard & folder modes
   async function processReview(quality: number): Promise<void> {
     if (!currentCard || !user) return
+
+    // Dynamic escalation: if user struggles with this card (quality <= 2), mark for active recall on repeat passes
+    if (quality <= 2) {
+      setSessionLapseIds(prev => new Set(prev).add(currentCard.id))
+    }
 
     const responseTimeMs = Date.now() - cardStartTimeRef.current
 
@@ -855,6 +893,43 @@ export default function StudySession(): React.JSX.Element {
               <Calculator size={13} />
               <span>Calculator</span>
             </button>
+            {!isMCMode && !isLearnMode && (
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs">
+                <button
+                  onClick={() => handleSetAdaptivePref('adaptive')}
+                  className={`px-2 py-0.5 rounded-md font-semibold transition-all ${
+                    adaptivePreference === 'adaptive'
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                  title="Automatically escalate struggling cards to active recall"
+                >
+                  🧠 Adaptive
+                </button>
+                <button
+                  onClick={() => handleSetAdaptivePref('flashcard')}
+                  className={`px-2 py-0.5 rounded-md font-semibold transition-all ${
+                    adaptivePreference === 'flashcard'
+                      ? 'bg-white dark:bg-slate-700 text-violet-600 dark:text-violet-300 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                  title="All cards in flashcard flip mode"
+                >
+                  📇 Flashcards
+                </button>
+                <button
+                  onClick={() => handleSetAdaptivePref('active_recall')}
+                  className={`px-2 py-0.5 rounded-md font-semibold transition-all ${
+                    adaptivePreference === 'active_recall'
+                      ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                  title="All cards in open-ended active recall mode"
+                >
+                  ✍️ Active Recall
+                </button>
+              </div>
+            )}
             {isResumed && (
               <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-50 dark:bg-violet-900/30 rounded-full border border-violet-200 dark:border-violet-800">
                 <span className="text-violet-600 dark:text-violet-400 font-medium text-xs">
@@ -960,8 +1035,44 @@ export default function StudySession(): React.JSX.Element {
               totalCards={currentCards.length}
             />
           ) : (
-            <div ref={cardContainerRef} className="w-full max-w-2xl">
-              {currentCard.type === 'cloze' ? (
+            <div ref={cardContainerRef} className="w-full max-w-2xl space-y-3">
+              {/* Adaptive Modality Header Banner */}
+              {cardModality && (
+                <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                      cardModality.modality === 'active_recall'
+                        ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                        : cardModality.modality === 'cloze'
+                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                        : 'bg-violet-50 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800'
+                    }`}>
+                      <Sparkles size={11} className={cardModality.modality === 'active_recall' ? 'text-blue-500' : 'text-violet-500'} />
+                      {adaptivePreference === 'adaptive' ? 'Adaptive: ' : ''}
+                      {cardModality.modality === 'active_recall' ? 'Active Recall' : cardModality.modality === 'cloze' ? 'Cloze' : 'Flashcard'}
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:inline truncate max-w-sm">
+                      {cardModality.rationale}
+                    </span>
+                  </div>
+
+                  {cardModality.modality !== 'cloze' && (
+                    <button
+                      onClick={() => {
+                        const nextModality = cardModality.modality === 'active_recall' ? 'flashcard' : 'active_recall'
+                        setManualOverrides(prev => new Map(prev).set(currentCard.id, nextModality))
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:text-indigo-600 dark:text-slate-300 dark:hover:text-indigo-300 bg-slate-100 hover:bg-indigo-50 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
+                      title="Switch modality for this card"
+                    >
+                      <RotateCw size={11} />
+                      <span>Switch to {cardModality.modality === 'active_recall' ? 'Flashcard' : 'Active Recall'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {currentCard.type === 'cloze' || cardModality?.modality === 'cloze' ? (
                 <ClozeCard
                   key={currentCard.id}
                   card={currentCard}
@@ -970,7 +1081,7 @@ export default function StudySession(): React.JSX.Element {
                   cardNumber={currentIdx + 1}
                   totalCards={currentCards.length}
                 />
-              ) : currentCard.type === 'active_recall' ? (
+              ) : cardModality?.modality === 'active_recall' ? (
                 <ActiveRecallCard
                   key={currentCard.id}
                   card={currentCard}
