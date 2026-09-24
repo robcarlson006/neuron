@@ -67,6 +67,10 @@ export default function TutorSession(): React.JSX.Element {
   const [showTimerMenu, setShowTimerMenu] = useState(false)
   const timerMenuRef = useRef<HTMLDivElement>(null)
 
+  // Quick Review state
+  const [quickReviewTopicIndex, setQuickReviewTopicIndex] = useState<number>(1)
+  const [showRoadmapModal, setShowRoadmapModal] = useState<boolean>(false)
+
   // In-flight card extraction state
   const [showQuickCardModal, setShowQuickCardModal] = useState(false)
   const [quickCardLoading, setQuickCardLoading] = useState(false)
@@ -206,6 +210,21 @@ export default function TutorSession(): React.JSX.Element {
     return undefined
   }, [showTimerMenu])
 
+  // ── Quick Review topic tracker from assistant message headers ──
+  useEffect(() => {
+    if (!sessionConfig?.is_quick_review && !runtime.config.is_quick_review) return
+    const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant')?.content || streamingContent
+    if (lastAssistantMsg) {
+      const match = lastAssistantMsg.match(/(?:📍\s*)?\*?\*?Topic\s+(\d+)\s*(?:\/|\s+of\s+)\s*(\d+)/i)
+      if (match) {
+        const parsedIdx = parseInt(match[1], 10)
+        if (!isNaN(parsedIdx) && parsedIdx > 0) {
+          setQuickReviewTopicIndex(parsedIdx)
+        }
+      }
+    }
+  }, [messages, streamingContent, sessionConfig?.is_quick_review, runtime.config.is_quick_review])
+
   // ── Load / init session ──
   useEffect(() => {
     if (user && subjectId) {
@@ -262,6 +281,14 @@ export default function TutorSession(): React.JSX.Element {
           setSessionPhase(s.phase as SessionPhase)
           sessionPhaseRef.current = s.phase as SessionPhase
 
+          let restoredQrTopics = config.quick_review_topics
+          const isQuickReviewSession = Boolean(config.is_quick_review || s.title?.startsWith('⚡ Quick Review:'))
+          if (isQuickReviewSession && (!restoredQrTopics || restoredQrTopics.length === 0)) {
+            try {
+              restoredQrTopics = await window.electronAPI.tutorGetSubjectCurriculumTopics(subjectId)
+            } catch { /* ignore */ }
+          }
+
           const restoredConfig: TutorSessionConfig = {
             duration_minutes: s.duration_minutes ?? config.duration_minutes ?? null,
             depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5 | 'adaptive') ?? config.depth_level ?? 'adaptive'),
@@ -275,6 +302,8 @@ export default function TutorSession(): React.JSX.Element {
             spaced_review_topics: config.spaced_review_topics,
             is_fill_gaps: config.is_fill_gaps,
             gap_topics: config.gap_topics,
+            is_quick_review: isQuickReviewSession,
+            quick_review_topics: restoredQrTopics,
             material_id: config.material_id,
             material_name: config.material_name
           }
@@ -379,13 +408,18 @@ export default function TutorSession(): React.JSX.Element {
       })
 
       // Create a new tutor session
+      const sessionTitle = config.is_quick_review
+        ? `⚡ Quick Review: ${subject?.name || 'Class'}`
+        : undefined
+
       const session = await window.electronAPI.tutorCreateSession(
         subjectId, user.id, 'tutor', inProgressMod?.id,
-        config.duration_minutes !== null ? {
-          duration_minutes: config.duration_minutes,
+        {
+          duration_minutes: config.duration_minutes !== null ? config.duration_minutes : null,
           depth_level: config.depth_level === 'adaptive' ? 3 : config.depth_level,
-          never_studied: config.never_studied ? 1 : 0
-        } : undefined
+          never_studied: config.never_studied ? 1 : 0,
+          title: sessionTitle
+        }
       ) as { id: number; phase: string }
 
       createdSessionIdRef.current = session.id
@@ -410,7 +444,22 @@ export default function TutorSession(): React.JSX.Element {
       const topic = config.target_topic || (config.material_name ? `${config.material_name} (Material)` : (inProgressMod?.title || subject?.name || 'this subject'))
 
       let initialMsg = ''
-      if (config.is_spaced_review) {
+      if (config.is_quick_review) {
+        const qrTopics = config.quick_review_topics || []
+        const totalCount = qrTopics.length || (config.target_topics?.length || 1)
+        const firstTopic = qrTopics[0]?.title || config.target_topics?.[0] || 'the first topic'
+
+        initialMsg = `Greet me and launch immediately into the first question of our full-subject Quick Review in this exact format:
+"Welcome to the Quick Review for ${subject?.name || 'this subject'}! We'll cover all ${totalCount} topics across your curriculum with 1-3 core questions each (math problem, socratic probe, or active recall depending on what is most effective).
+
+📍 **Topic 1/${totalCount}: ${firstTopic}** (Question 1)
+[Your first sharp question testing this topic]?"
+
+Mode: QUICK REVIEW (Full Subject Coverage: ${totalCount} topics)
+Subject: ${subject?.name || 'this subject'}
+Difficulty: ${difficultyLabel}
+${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'Comprehensive full-subject review (untimed)'}`
+      } else if (config.is_spaced_review) {
         const reviewTopics = config.spaced_review_topics?.length ? config.spaced_review_topics.join(', ') : 'decaying curriculum concepts'
         initialMsg = `Greet me and launch immediately into a rapid active recall question in this exact format:
 "Welcome! Today is a targeted Spaced Retention Drill for ${subject?.name || 'this subject'}. We're reinforcing ${reviewTopics} to lock them into long-term memory. [Sharp recall question testing the first concept]?"
@@ -540,6 +589,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         gapTopics: sessionConfig?.gap_topics || runtime.config.gap_topics,
         isSpacedReview: sessionConfig?.is_spaced_review || runtime.config.is_spaced_review,
         spacedReviewTopics: sessionConfig?.spaced_review_topics || runtime.config.spaced_review_topics,
+        isQuickReview: sessionConfig?.is_quick_review || runtime.config.is_quick_review,
+        quickReviewTopics: sessionConfig?.quick_review_topics || runtime.config.quick_review_topics,
         timeElapsedSeconds: runtime.time_elapsed_seconds,
         timeRemainingSeconds: runtime.time_remaining_seconds,
         pacingStatus: calcPacingStatus(runtime),
@@ -891,6 +942,39 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
     // Clear attachment after sending
     setAttachedFile(null)
+  }
+
+  // ── Quick Review advance to next topic ──
+  async function handleAdvanceToNextTopic(): Promise<void> {
+    if (!sessionId || sending) return
+    const qrTopics = sessionConfig?.quick_review_topics || []
+    const totalCount = qrTopics.length || sessionConfig?.target_topics?.length || 1
+    const nextIdx = quickReviewTopicIndex + 1
+    const nextTopic = qrTopics[nextIdx - 1]?.title || (sessionConfig?.target_topics && sessionConfig.target_topics[nextIdx - 1])
+
+    let prompt = ''
+    if (nextIdx <= totalCount && nextTopic) {
+      prompt = `I'm ready to advance to the next topic in our Quick Review: Topic ${nextIdx}/${totalCount}: "${nextTopic}". Please confirm the previous topic in one sentence and ask your core question for "${nextTopic}".`
+    } else {
+      prompt = `I've finished all the topics in this subject! Let's conclude our full-subject Quick Review and present the final subject mastery summary scorecard.`
+    }
+
+    setQuickReviewTopicIndex(nextIdx)
+    await handleSend(prompt)
+  }
+
+  async function handleJumpToTopic(targetIndex: number): Promise<void> {
+    if (!sessionId || sending) return
+    const qrTopics = sessionConfig?.quick_review_topics || []
+    const totalCount = qrTopics.length || sessionConfig?.target_topics?.length || 1
+    if (targetIndex < 1 || targetIndex > totalCount) return
+    const targetTopic = qrTopics[targetIndex - 1]?.title || (sessionConfig?.target_topics && sessionConfig.target_topics[targetIndex - 1])
+    if (!targetTopic) return
+
+    setShowRoadmapModal(false)
+    setQuickReviewTopicIndex(targetIndex)
+    const prompt = `Let's switch our focus to Topic ${targetIndex}/${totalCount}: "${targetTopic}". Please give a 1-sentence transition and then ask your core question for "${targetTopic}".`
+    await handleSend(prompt)
   }
 
   // ── Phase transition handlers ──
@@ -1424,8 +1508,13 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               </button>
 
               <div>
-                <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                  {subject?.name || 'Tutor Session'}
+                <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50 flex items-center gap-1.5">
+                  {sessionConfig?.is_quick_review && (
+                    <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                      ⚡ Quick Review
+                    </span>
+                  )}
+                  <span>{subject?.name || 'Tutor Session'}</span>
                 </h1>
               <p className="text-xs text-slate-400 dark:text-slate-500">
                 {sessionPhase === 'complete' ? 'Session ended' : phaseLabels[sessionPhase]}
@@ -1647,6 +1736,31 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               )}
             </div>
 
+            {sessionConfig?.is_quick_review && !sessionEnded && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleAdvanceToNextTopic}
+                  disabled={sending || endingSession}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded-lg text-xs font-semibold transition-all border border-amber-300 dark:border-amber-700/60 shadow-2xs"
+                  title="Advance to next topic in Quick Review"
+                >
+                  <span>Next Topic</span>
+                  <span>⏭️</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenEndModal}
+                  disabled={sending || endingSession}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition-all shadow-xs"
+                  title="Finish Quick Review and save topic retention scores"
+                >
+                  <span>⚡</span>
+                  <span>Finish & Save</span>
+                </button>
+              </div>
+            )}
+
             {sessionConfig?.is_spaced_review && !sessionEnded && (
               <button
                 type="button"
@@ -1674,6 +1788,76 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       {/* Messages area */}
       <div className="flex-1 min-h-0 overflow-y-auto" ref={chatContainerRef}>
         <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+          {/* Quick Review Progress Banner */}
+          {sessionConfig?.is_quick_review && (() => {
+            const qrTopics = sessionConfig.quick_review_topics || []
+            const totalTopics = qrTopics.length || (sessionConfig.target_topics?.length || 1)
+            const currentIdx = Math.min(quickReviewTopicIndex, totalTopics)
+            const activeTopicItem = qrTopics[currentIdx - 1]
+            const currentTopicName = activeTopicItem?.title || (sessionConfig.target_topics && sessionConfig.target_topics[currentIdx - 1]) || 'Curriculum Topic'
+            const currentModuleTitle = activeTopicItem?.module_title
+            const progressPct = Math.round((currentIdx / totalTopics) * 100)
+
+            return (
+              <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 dark:from-amber-950/40 dark:via-orange-950/30 dark:to-transparent border border-amber-300/80 dark:border-amber-700/60 rounded-2xl p-4 shadow-sm space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <span className="text-2xl mt-0.5">⚡</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                          Quick Review
+                        </span>
+                        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          · Topic {currentIdx} of {totalTopics} ({progressPct}%)
+                        </span>
+                      </div>
+                      <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5 truncate">
+                        📍 Current: <span className="text-amber-700 dark:text-amber-300">{currentTopicName}</span>
+                      </h3>
+                      {currentModuleTitle && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                          Module: {currentModuleTitle}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-end sm:self-center flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowRoadmapModal(true)}
+                      className="px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                      title="View all topics in this subject's curriculum"
+                    >
+                      <span>📋</span>
+                      <span>Roadmap ({totalTopics})</span>
+                    </button>
+                    {!sessionEnded && (
+                      <button
+                        type="button"
+                        onClick={handleAdvanceToNextTopic}
+                        disabled={sending || endingSession}
+                        className="px-3 py-1 text-xs font-semibold text-amber-900 dark:text-amber-100 bg-amber-200 hover:bg-amber-300 dark:bg-amber-900/60 dark:hover:bg-amber-900/90 border border-amber-300 dark:border-amber-700 rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                        title="Skip ahead to the next topic in the curriculum"
+                      >
+                        <span>Next Topic</span>
+                        <span>⏭️</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full bg-amber-100/80 dark:bg-slate-800 rounded-full h-2 overflow-hidden border border-amber-200/60 dark:border-slate-700/60">
+                  <div
+                    className="h-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-500"
+                    style={{ width: `${Math.max(4, progressPct)}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })()}
           {/* Module context banner */}
           {currentModule && (
             <div className="bg-violet-50 dark:bg-violet-900/20 rounded-xl border border-violet-200 dark:border-violet-800 px-4 py-3">
@@ -2014,6 +2198,119 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 className="w-full py-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs transition-colors"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Review Curriculum Roadmap Modal */}
+      {showRoadmapModal && sessionConfig?.is_quick_review && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-xl w-full max-h-[85vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
+              <div className="flex items-center gap-2.5">
+                <span className="text-xl">⚡</span>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    Quick Review Roadmap
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {subject?.name || 'Subject'} · Topic {Math.min(quickReviewTopicIndex, sessionConfig.quick_review_topics?.length || sessionConfig.target_topics?.length || 1)} of {sessionConfig.quick_review_topics?.length || sessionConfig.target_topics?.length || 1}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRoadmapModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Topics List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {(sessionConfig.quick_review_topics && sessionConfig.quick_review_topics.length > 0
+                ? sessionConfig.quick_review_topics
+                : (sessionConfig.target_topics || []).map((t, i) => ({ id: i + 1, title: t, module_id: 0, module_title: 'Subject Curriculum' }))
+              ).map((topic, index) => {
+                const topicNum = index + 1
+                const isCompleted = topicNum < quickReviewTopicIndex
+                const isCurrent = topicNum === quickReviewTopicIndex
+
+                return (
+                  <div
+                    key={topic.id || index}
+                    className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                      isCurrent
+                        ? 'bg-amber-50/90 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700/80 shadow-xs ring-1 ring-amber-400/30'
+                        : isCompleted
+                        ? 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-200/70 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                        : 'bg-white dark:bg-slate-900 border-slate-200/60 dark:border-slate-800/80 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                        isCurrent
+                          ? 'bg-amber-500 text-white shadow-xs'
+                          : isCompleted
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                      }`}>
+                        {isCompleted ? '✓' : topicNum}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-semibold truncate ${
+                            isCurrent ? 'text-amber-950 dark:text-amber-200 font-bold' : ''
+                          }`}>
+                            {topic.title}
+                          </span>
+                          {isCurrent && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 uppercase tracking-wider">
+                              Active
+                            </span>
+                          )}
+                          {isCompleted && (
+                            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                              Covered
+                            </span>
+                          )}
+                        </div>
+                        {topic.module_title && (
+                          <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate mt-0.5">
+                            {topic.module_title}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {!sessionEnded && !isCurrent && (
+                      <button
+                        type="button"
+                        onClick={() => handleJumpToTopic(topicNum)}
+                        disabled={sending}
+                        className="px-2.5 py-1 text-xs font-medium rounded-lg transition-colors border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex-shrink-0"
+                      >
+                        {isCompleted ? 'Revisit' : 'Jump Here'}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between text-xs text-slate-500">
+              <span>Full curriculum review mode (1-3 questions per topic)</span>
+              <button
+                type="button"
+                onClick={() => setShowRoadmapModal(false)}
+                className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg font-medium transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

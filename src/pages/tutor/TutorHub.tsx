@@ -22,7 +22,7 @@ export default function TutorHub(): React.JSX.Element {
   const [customMinutes, setCustomMinutes] = useState<string>('')
   const [isCustom, setIsCustom] = useState<boolean>(false)
   const [subjectModules, setSubjectModules] = useState<Record<number, SyllabusModule[]>>({})
-  const [showConfigModal, setShowConfigModal] = useState<{ subjectId: number; subjectName: string; initialTopic?: string } | null>(null)
+  const [showConfigModal, setShowConfigModal] = useState<{ subjectId: number; subjectName: string; initialTopic?: string; initialMode?: 'new_content' | 'quick_review' | 'fill_gaps' | 'active_recall' | 'syllabus' | 'material' | 'custom' } | null>(null)
 
   const [scheduleContext, setScheduleContext] = useState<CalendarScheduleContext | null>(null)
   const [dismissContextBanner, setDismissContextBanner] = useState<boolean>(false)
@@ -890,13 +890,23 @@ export default function TutorHub(): React.JSX.Element {
                     onClick={e => { e.stopPropagation(); setShowConfigModal({ subjectId: subject.id, subjectName: subject.name }) }}
                     className="flex-1 text-xs font-medium text-white bg-violet-600 hover:bg-violet-700 px-3 py-1.5 rounded-lg transition-colors"
                   >
-                    Start Tutor Session
+                    Start Tutor
+                  </button>
+                  <button
+                    onClick={e => {
+                      e.stopPropagation()
+                      setShowConfigModal({ subjectId: subject.id, subjectName: subject.name, initialMode: 'quick_review' })
+                    }}
+                    className="text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-700/60 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                    title="Quick Review: 1-3 questions across every topic in this class"
+                  >
+                    <span>⚡</span> Quick Review
                   </button>
                   <button
                     onClick={e => { e.stopPropagation(); navigate(`/study/${subject.id}`) }}
-                    className="text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 px-3 py-1.5 rounded-lg transition-colors"
+                    className="text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 px-2.5 py-1.5 rounded-lg transition-colors"
                   >
-                    Study Cards
+                    Cards
                   </button>
                 </div>
               </div>
@@ -910,7 +920,7 @@ export default function TutorHub(): React.JSX.Element {
           subjectId={showConfigModal.subjectId}
           subjectName={showConfigModal.subjectName}
           initialTopic={showConfigModal.initialTopic}
-          initialMode={showConfigModal.initialTopic ? 'custom' : 'fill_gaps'}
+          initialMode={showConfigModal.initialMode || (showConfigModal.initialTopic ? 'custom' : 'fill_gaps')}
           onClose={() => setShowConfigModal(null)}
         />
       )}

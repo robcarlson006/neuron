@@ -30,7 +30,8 @@ import type {
   TutorTopicMemory,
   TutorSessionEvaluation,
   GapAnalysisResult,
-  GapAnalysisItem
+  GapAnalysisItem,
+  QuickReviewTopic
 } from '../../src/types'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 
@@ -391,7 +392,44 @@ export function buildTopicFocusBlock(params: {
   targetTopics?: string[]
   isFillGaps?: boolean
   gapTopics?: string[]
+  isQuickReview?: boolean
+  quickReviewTopics?: QuickReviewTopic[]
 }): string {
+  if (params.isQuickReview) {
+    const topicLines = params.quickReviewTopics?.length
+      ? params.quickReviewTopics.map((t, idx) => `${idx + 1}. [${t.module_title || 'Module'}] ${t.title}`)
+      : (params.targetTopics?.length ? params.targetTopics.map((t, idx) => `${idx + 1}. ${t}`) : [])
+    const totalCount = topicLines.length
+
+    return [
+      '',
+      '⚡ QUICK REVIEW PROTOCOL (FULL SUBJECT RAPID RECALL & MASTERY):',
+      `This session is a comprehensive, full-subject QUICK REVIEW systematically covering EVERY topic in this subject.`,
+      `Complete Curriculum Roadmap to cover in strict sequential order (${totalCount} topics total):`,
+      ...topicLines,
+      '',
+      'CORE PEDAGOGICAL DIRECTIVES FOR QUICK REVIEW:',
+      '1. STRICT SEQUENTIAL PROGRESSION:',
+      `   - Guide the student through every topic in sequence: Topic 1 of ${totalCount} -> Topic 2 of ${totalCount} -> ... -> Topic ${totalCount} of ${totalCount}.`,
+      '   - In EVERY question you ask, format the topic header clearly at the very top of your message:',
+      `     📍 **Topic [X]/${totalCount}: [Topic Title]** (Question [1, 2, or 3])`,
+      '2. 1 TO 3 CORE QUESTIONS PER TOPIC (MAXIMUM 3):',
+      '   - Ask 1 to 3 core questions per topic.',
+      '   - If the student answers Question 1 with decisive clarity and correctness, immediately validate them with a 1-sentence confirmation takeaway and transition smoothly to the next topic (or ask 1 deeper application question if it is a major pivotal concept).',
+      '   - If the student exhibits partial understanding, hesitation, or error, provide a 5-layer faded hint and ask a follow-up or mirror question (up to 3 questions max for that topic) before moving on.',
+      '   - NEVER ask more than 3 questions on any single topic. Keep the review moving briskly.',
+      '3. QUESTION TYPE ADAPTIVITY (SELECT WHAT IS MOST USEFUL):',
+      '   - Math / Calculation / Formulaic topics -> Pose a concrete calculation, equation solving, or derivation problem.',
+      '   - Deep Conceptual / Systems / Causality -> Pose a Socratic question or two-tier diagnostic counterfactual probe ("What would happen if parameter X changed? Why?").',
+      '   - Factual / Terminological / Anatomical / Distinctions -> Pose a sharp active recall retrieval question testing definitions or contrast-pairs.',
+      '   - Dynamically select whichever modality offers the highest cognitive yield for that specific topic.',
+      '4. CLEAN TRANSITIONS & PACE:',
+      '   - Keep commentary and affirmations concise so the review maintains momentum. Do not give multi-paragraph textbook lectures unless the student is fundamentally stuck.',
+      '5. COMPLETION & AUDIT:',
+      '   - When all topics in the curriculum have been completed, present a concise mastery scorecard summarizing strong topics vs topics that need further practice.',
+      ''
+    ].join('\n')
+  }
   if (params.isFillGaps || params.gapTopics?.length) {
     const focusList = params.gapTopics?.length ? params.gapTopics.join(', ') : 'identified gaps and unstudied areas'
     return [
@@ -428,6 +466,56 @@ export function buildTopicFocusBlock(params: {
     ].join('\n')
   }
   return ''
+}
+
+export function getSubjectCurriculumTopics(
+  database: Database.Database,
+  subjectId: number
+): QuickReviewTopic[] {
+  if (!subjectId) return []
+  // 1. Fetch modules ordered by sort_order
+  const modules = database.prepare(`
+    SELECT id, title, sort_order FROM syllabus_modules
+    WHERE subject_id = ? ORDER BY sort_order ASC, id ASC
+  `).all(subjectId) as { id: number; title: string; sort_order: number }[]
+
+  if (modules.length === 0) return []
+
+  const moduleIds = modules.map(m => m.id)
+  const topics = database.prepare(`
+    SELECT id, module_id, title, description, sort_order FROM module_topics
+    WHERE module_id IN (${moduleIds.map(() => '?').join(',')})
+    ORDER BY sort_order ASC, id ASC
+  `).all(...moduleIds) as { id: number; module_id: number; title: string; description?: string; sort_order: number }[]
+
+  const result: QuickReviewTopic[] = []
+
+  for (const m of modules) {
+    const modTopics = topics.filter(t => t.module_id === m.id)
+    if (modTopics.length > 0) {
+      for (const t of modTopics) {
+        result.push({
+          id: t.id,
+          module_id: m.id,
+          module_title: m.title,
+          title: t.title,
+          description: t.description || undefined,
+          sort_order: t.sort_order
+        })
+      }
+    } else {
+      // Module exists but has no child topics -> treat module title as topic
+      result.push({
+        id: -m.id,
+        module_id: m.id,
+        module_title: m.title,
+        title: m.title,
+        sort_order: m.sort_order
+      })
+    }
+  }
+
+  return result
 }
 
 // ── Gap Analysis Computation ───────────────────────────────────────────
@@ -1690,7 +1778,9 @@ Output your response strictly as valid JSON in this exact structure:
       targetTopic: params.targetTopic,
       targetTopics: params.targetTopics,
       isFillGaps: params.isFillGaps,
-      gapTopics: params.gapTopics
+      gapTopics: params.gapTopics,
+      isQuickReview: params.isQuickReview,
+      quickReviewTopics: params.quickReviewTopics
     })
 
     // Build material context (if studying a specific material or general subject materials)
@@ -2950,6 +3040,15 @@ Rules:
     } catch (err) {
       console.error('Failed to get subject module tutor stats:', err)
       return {}
+    }
+  })
+
+  ipcMain.handle('tutor:getSubjectCurriculumTopics', (_event, subjectId: number): QuickReviewTopic[] => {
+    try {
+      return getSubjectCurriculumTopics(db, subjectId)
+    } catch (err) {
+      console.error('Failed to get subject curriculum topics:', err)
+      return []
     }
   })
 }

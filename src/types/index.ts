@@ -748,6 +748,17 @@ export interface TutorStreamParams {
   isSpacedReview?: boolean
   spacedReviewTopics?: string[]
   isActiveRecall?: boolean
+  isQuickReview?: boolean
+  quickReviewTopics?: QuickReviewTopic[]
+}
+
+export interface QuickReviewTopic {
+  id: number
+  module_id: number
+  module_title: string
+  title: string
+  description?: string
+  sort_order: number
 }
 
 export interface TutorSessionConfig {
@@ -767,6 +778,8 @@ export interface TutorSessionConfig {
   is_spaced_review?: boolean
   spaced_review_topics?: string[]
   is_active_recall?: boolean
+  is_quick_review?: boolean
+  quick_review_topics?: QuickReviewTopic[]
 }
 
 export interface TutorSessionRuntime {

@@ -12,7 +12,7 @@ import type {
   FolderSyncResult, FolderSyncEvent, Lecture,
   PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult,
   AutonomousPracticeGenOptions, AutonomousPracticeGenResult,
-  MultiKeyVault
+  MultiKeyVault, QuickReviewTopic
 } from '../src/types'
 
 const electronAPI = {
@@ -384,6 +384,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getTopDueMaintenanceTopics', userId, limit),
   tutorGetSubjectModuleStats: (subjectId: number, userId?: number): Promise<Record<number, import('../src/types').ModuleTutorStats>> =>
     ipcRenderer.invoke('tutor:getSubjectModuleStats', subjectId, userId),
+  tutorGetSubjectCurriculumTopics: (subjectId: number): Promise<QuickReviewTopic[]> =>
+    ipcRenderer.invoke('tutor:getSubjectCurriculumTopics', subjectId),
   onTutorChunk: (cb: (chunk: { conversationId: number; content: string; type: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; content: string; type: string }): void => cb(data)
     ipcRenderer.on('tutor:chunk', handler)

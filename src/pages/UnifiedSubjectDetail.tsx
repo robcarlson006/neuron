@@ -45,7 +45,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     initialTopic?: string
     initialTopics?: string[]
     moduleId?: number
-    initialMode?: 'fill_gaps' | 'syllabus' | 'material' | 'custom'
+    initialMode?: 'new_content' | 'quick_review' | 'fill_gaps' | 'active_recall' | 'syllabus' | 'material' | 'custom'
   } | null>(null)
   const [editName, setEditName] = useState(subject?.name || '')
   const [editCode, setEditCode] = useState(subject?.course_code || '')
@@ -911,12 +911,21 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         <div className="flex items-center gap-2 flex-shrink-0">
           <PomodoroWidget />
           {hasCurriculum && (
-            <button
-              onClick={() => subject && setShowConfigModal({ subjectId, subjectName: subject.name })}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
-            >
-              Tutor
-            </button>
+            <>
+              <button
+                onClick={() => subject && setShowConfigModal({ subjectId, subjectName: subject.name })}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                Tutor
+              </button>
+              <button
+                onClick={() => subject && setShowConfigModal({ subjectId, subjectName: subject.name, initialMode: 'quick_review' })}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                title="Quick Review: 1-3 questions across every topic in this class"
+              >
+                <span>⚡</span> Quick Review
+              </button>
+            </>
           )}
           <button
             onClick={() => setShowTextImport(true)}

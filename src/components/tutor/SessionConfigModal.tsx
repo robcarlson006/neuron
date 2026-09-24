@@ -11,7 +11,8 @@ import {
   SyllabusModule,
   ModuleTopic,
   LibraryFile,
-  GapAnalysisResult
+  GapAnalysisResult,
+  QuickReviewTopic
 } from '../../types'
 
 interface SessionConfigModalProps {
@@ -26,7 +27,7 @@ interface SessionConfigModalProps {
   onClose: () => void
 }
 
-type StudyMode = 'new_content' | 'fill_gaps' | 'active_recall' | 'syllabus' | 'material' | 'custom'
+type StudyMode = 'new_content' | 'quick_review' | 'fill_gaps' | 'active_recall' | 'syllabus' | 'material' | 'custom'
 
 export default function SessionConfigModal({
   subjectId,
@@ -59,6 +60,7 @@ export default function SessionConfigModal({
   )
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(propMaterialId || null)
   const [customTopic, setCustomTopic] = useState(initialTopic || '')
+  const [quickReviewTopics, setQuickReviewTopics] = useState<QuickReviewTopic[]>([])
 
   // ── Config State ──
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
@@ -100,6 +102,14 @@ export default function SessionConfigModal({
           } catch {
             modsWithTopics.push({ ...mod, topics: [] })
           }
+        }
+
+        // Load full-subject curriculum topics for Quick Review
+        try {
+          const qrTops = (await window.electronAPI.tutorGetSubjectCurriculumTopics(subjectId)) as QuickReviewTopic[]
+          if (isMounted) setQuickReviewTopics(qrTops || [])
+        } catch (qrErr) {
+          console.warn('Failed to load Quick Review topics:', qrErr)
         }
         if (isMounted) {
           setModules(modsWithTopics)
@@ -239,8 +249,15 @@ export default function SessionConfigModal({
     let gapTopics: string[] = []
 
     let isActiveRecall = false
+    let isQuickReview = false
+    let qrTopics: QuickReviewTopic[] = []
 
-    if (studyMode === 'new_content') {
+    if (studyMode === 'quick_review') {
+      isQuickReview = true
+      qrTopics = quickReviewTopics
+      chosenTopics = quickReviewTopics.map(t => t.title)
+      chosenTopic = `Quick Review: ${subjectName} (${quickReviewTopics.length} topics)`
+    } else if (studyMode === 'new_content') {
       if (selectedTopics.length > 0) {
         chosenTopics = selectedTopics
         chosenTopic = selectedTopics.join(', ')
@@ -297,9 +314,12 @@ export default function SessionConfigModal({
       module_name: chosenModuleName,
       target_topic: chosenTopic,
       target_topics: chosenTopics.length > 0 ? chosenTopics : undefined,
+      target_topic_ids: isQuickReview ? quickReviewTopics.map(t => t.id).filter(id => id > 0) : undefined,
       is_fill_gaps: isFillGaps,
       gap_topics: gapTopics,
-      is_active_recall: isActiveRecall
+      is_active_recall: isActiveRecall,
+      is_quick_review: isQuickReview,
+      quick_review_topics: isQuickReview ? qrTopics : undefined
     }
 
     const encoded = encodeURIComponent(JSON.stringify(config))
@@ -357,7 +377,7 @@ export default function SessionConfigModal({
             </label>
 
             {/* Mode selection buttons */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mb-3">
               <button
                 type="button"
                 onClick={() => {
@@ -377,6 +397,23 @@ export default function SessionConfigModal({
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
                   {allNewTopicsList.length > 0 ? `${allNewTopicsList.length} new topics` : 'Across class'}
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStudyMode('quick_review')}
+                className={`p-2.5 rounded-xl text-left border transition-all relative ${
+                  studyMode === 'quick_review'
+                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 shadow-sm'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1 text-amber-600 dark:text-amber-400">
+                  <span>⚡</span> Quick Review
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                  {quickReviewTopics.length > 0 ? `${quickReviewTopics.length} topics (1-3 Qs)` : 'All topics'}
                 </div>
               </button>
 
@@ -621,6 +658,55 @@ export default function SessionConfigModal({
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── Mode: Quick Review Box ── */}
+            {studyMode === 'quick_review' && (
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-50/90 via-violet-50/40 to-amber-50/80 dark:from-amber-950/40 dark:via-violet-950/20 dark:to-amber-950/30 border border-amber-300/80 dark:border-amber-700/60 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                      <span>⚡</span> Quick Review — Full Subject Coverage
+                    </h3>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                      Neuron will systematically progress through every topic in your subject, asking 1–3 core questions per topic (math problem, Socratic reasoning, or active recall based on what's most effective).
+                    </p>
+                  </div>
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 flex-shrink-0">
+                    {quickReviewTopics.length} topic{quickReviewTopics.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                {/* Curriculum topics list preview */}
+                <div className="bg-white/80 dark:bg-slate-800/80 rounded-lg p-2.5 border border-amber-200/80 dark:border-amber-800/50 max-h-48 overflow-y-auto space-y-1.5">
+                  {quickReviewTopics.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-2 text-center">
+                      No syllabus topics found for this class yet. Upload materials or generate a syllabus to unlock structured Quick Review.
+                    </p>
+                  ) : (
+                    quickReviewTopics.map((topic, idx) => (
+                      <div key={topic.id || idx} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 dark:border-slate-700/50 last:border-0">
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span className="w-5 h-5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                            {idx + 1}
+                          </span>
+                          <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                            {topic.title}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono flex-shrink-0">
+                          {topic.module_title}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-400">
+                  <span>💡</span>
+                  <span>Recommended: Use "Untimed" duration so you can complete all {quickReviewTopics.length} topics at your own pace.</span>
+                </div>
               </div>
             )}
 
