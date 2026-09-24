@@ -119,7 +119,7 @@ describe('KnowledgeGraphView', () => {
     // Zoom percentage button exists
     expect(screen.getByTitle('Click to reset to 100%')).toBeInTheDocument()
     // Navigation HUD exists
-    expect(screen.getByText(/Scroll to zoom · Drag to pan/i)).toBeInTheDocument()
+    expect(screen.getByText(/drag to pan/i)).toBeInTheDocument()
 
     // Clicking zoom in and fit to view works without error
     const zoomInBtn = screen.getByTitle('Zoom In')

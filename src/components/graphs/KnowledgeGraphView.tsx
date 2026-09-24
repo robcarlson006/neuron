@@ -251,6 +251,11 @@ export default function KnowledgeGraphView({
     if (!svgEl) return
 
     const handleWheelNative = (e: WheelEvent) => {
+      // Allow natural page scrolling when just hovering cursor over graph without clicking or holding modifier keys
+      if (e.buttons !== 1 && !e.ctrlKey && !e.metaKey) {
+        return
+      }
+
       e.preventDefault()
 
       if (inertiaFrameRef.current) {
@@ -270,11 +275,11 @@ export default function KnowledgeGraphView({
       const worldY = (cursorY - curTy) / curTz
 
       // Trackpad pinch vs regular mouse wheel sensitivity
-      const zoomFactor = e.ctrlKey
+      const zoomFactor = e.ctrlKey || e.metaKey
         ? Math.exp(-e.deltaY * 0.01)
         : Math.exp(-e.deltaY * 0.0018)
 
-      const newTargetZoom = Math.min(4.0, Math.max(0.12, curTz * zoomFactor))
+      const newTargetZoom = Math.min(3.5, Math.max(0.20, curTz * zoomFactor))
       const newTargetPanX = cursorX - worldX * newTargetZoom
       const newTargetPanY = cursorY - worldY * newTargetZoom
 
@@ -796,10 +801,10 @@ export default function KnowledgeGraphView({
 
               const dx = tgtPos.x - srcPos.x
               const dy = tgtPos.y - srcPos.y
-              const cx1 = srcPos.x + dx * 0.5
+              const cx1 = srcPos.x + Math.max(dx * 0.45, 30)
               const cy1 = srcPos.y + dy * 0.1
-              const cx2 = srcPos.x + dx * 0.5
-              const cy2 = srcPos.y + dy * 0.9
+              const cx2 = tgtPos.x - Math.max(dx * 0.45, 30)
+              const cy2 = tgtPos.y - dy * 0.1
 
               const strokeColor = isConnectedToSelected
                 ? '#8b5cf6'
@@ -962,7 +967,7 @@ export default function KnowledgeGraphView({
 
         {/* ── Floating Navigation HUD ── */}
         <div className="absolute bottom-3 left-3 z-10 hidden sm:flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 text-[11px] text-slate-500 dark:text-slate-400 shadow-sm pointer-events-auto">
-          <span>Scroll to zoom · Drag to pan · Double-click to focus</span>
+          <span>Click + drag to pan · Click + scroll to zoom · Double-click to focus</span>
           <button
             onClick={handleFitView}
             className="px-2 py-0.5 rounded-lg bg-violet-50 dark:bg-violet-950/60 hover:bg-violet-100 dark:hover:bg-violet-900/80 text-violet-700 dark:text-violet-300 font-semibold text-[10px] transition-colors"

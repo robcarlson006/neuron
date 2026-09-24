@@ -545,14 +545,14 @@ export function removeOverlaps(
 }
 
 /**
- * Calculates clean hierarchical layer coordinates with anti-overlap spacing and multi-tier grid staggering.
- * Prevents extreme horizontal stretch by arranging wide layers into compact, balanced 2D grids.
+ * Calculates clean horizontal (Left-to-Right) hierarchical layer coordinates with anti-overlap spacing
+ * and multi-row vertical column stacking. Produces a wide landscape layout (Width > Height).
  */
 export function applyHierarchicalLayout(
   nodes: ConceptGraphNode[],
   _edges: ConceptGraphEdge[],
-  width: number,
-  _height: number
+  _width: number,
+  height: number
 ): void {
   if (nodes.length === 0) return
 
@@ -568,21 +568,17 @@ export function applyHierarchicalLayout(
     layerGroups.set(layer, group)
   }
 
-  // Calculate target columns per layer to preserve balanced aspect ratio
-  const maxNodesInAnyLayer = Math.max(...Array.from(layerGroups.values()).map(g => g.length))
-  const targetColsPerLayer = Math.max(1, Math.min(5, Math.ceil(Math.sqrt(maxNodesInAnyLayer * 1.2))))
-
   const colSpacingX = 185
   const rowSpacingY = 115
-  const layerGapY = 140
+  const layerGapX = 220
   const paddingX = 100
   const paddingY = 80
+  const canvasHeight = Math.max(height, 650)
 
-  let currentY = paddingY
+  let currentX = paddingX
 
-  // Iterate through topological layers in order
+  // Iterate through topological layers in order (Left to Right flow)
   const sortedLayers = Array.from(layerGroups.keys()).sort((a, b) => a - b)
-  let maxLayoutX = width
 
   for (const layer of sortedLayers) {
     const group = layerGroups.get(layer)!
@@ -590,33 +586,29 @@ export function applyHierarchicalLayout(
     group.sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.label.localeCompare(b.label))
 
     const count = group.length
-    const numCols = Math.min(count, targetColsPerLayer)
-    const numRows = Math.ceil(count / numCols)
-
-    const layerWidth = (numCols - 1) * colSpacingX
-    const startX = Math.max(paddingX, width / 2 - layerWidth / 2)
+    // Max rows in a vertical column within a single layer
+    const maxRowsPerCol = Math.min(5, Math.max(2, Math.ceil(Math.sqrt(count * 1.2))))
+    const numColsInLayer = Math.ceil(count / maxRowsPerCol)
 
     for (let idx = 0; idx < count; idx++) {
       const node = group[idx]
-      const col = idx % numCols
-      const row = Math.floor(idx / numCols)
+      const subCol = Math.floor(idx / maxRowsPerCol)
+      const subRow = idx % maxRowsPerCol
+
+      const rowsInThisCol = Math.min(count - subCol * maxRowsPerCol, maxRowsPerCol)
+      const colHeight = (rowsInThisCol - 1) * rowSpacingY
+      const startY = Math.max(paddingY, canvasHeight / 2 - colHeight / 2)
 
       // Slight row stagger for natural visual balance
-      const staggerX = (row % 2 === 1 && numCols > 1) ? colSpacingX * 0.25 : 0
-      const nodeX = startX + col * colSpacingX + staggerX
-      const nodeY = currentY + row * rowSpacingY
+      const staggerY = (subCol % 2 === 1 && rowsInThisCol > 1) ? rowSpacingY * 0.25 : 0
 
-      node.x = nodeX
-      node.y = nodeY
+      node.x = currentX + subCol * colSpacingX
+      node.y = startY + subRow * rowSpacingY + staggerY
       node.vx = 0
       node.vy = 0
-
-      if (nodeX + paddingX > maxLayoutX) {
-        maxLayoutX = nodeX + paddingX
-      }
     }
 
-    currentY += numRows * rowSpacingY + (layerGapY - rowSpacingY)
+    currentX += numColsInLayer * colSpacingX + layerGapX
   }
 
   // Run overlap removal pass

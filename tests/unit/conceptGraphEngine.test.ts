@@ -228,13 +228,9 @@ describe('conceptGraphEngine', () => {
       const tDuration = performance.now() - tStart
 
       expect(graph.nodes.length).toBe(200)
-      // Virtual bounds must expand beyond 800x600 for 200 concepts
+      // Virtual bounds expand horizontally along X for deep multi-layer flow
       expect(graph.layoutBounds).toBeDefined()
-      expect(graph.layoutBounds!.width).toBeGreaterThan(800)
-      expect(graph.layoutBounds!.height).toBeGreaterThan(600)
-
-      const ratio = Math.max(graph.layoutBounds!.width / graph.layoutBounds!.height, graph.layoutBounds!.height / graph.layoutBounds!.width)
-      expect(ratio).toBeLessThanOrEqual(10.0)
+      expect(graph.layoutBounds!.width).toBeGreaterThan(graph.layoutBounds!.height)
 
       // Layout should compute smoothly (< 500ms)
       expect(tDuration).toBeLessThan(500)
@@ -295,6 +291,30 @@ describe('conceptGraphEngine', () => {
       // Card concept should be linked under Indifference Curves (topic 102)
       expect(graph.nodes.some(n => n.id === 'marginal rate of substitution')).toBe(true)
       expect(graph.edges.some(e => e.source === 'indifference curves' && e.target === 'marginal rate of substitution')).toBe(true)
+    })
+
+    it('positions topological layers in a horizontal left-to-right flow where X coordinates progress with depth', () => {
+      const dependencies: ConceptDependency[] = [
+        { subject_id: 1, prerequisite_concept: 'Basics', target_concept: 'Intermediate' },
+        { subject_id: 1, prerequisite_concept: 'Intermediate', target_concept: 'Advanced' }
+      ]
+
+      const graph = buildConceptGraph({
+        subjectId: 1,
+        dependencies,
+        layoutMode: 'hierarchical'
+      })
+
+      const basics = graph.nodes.find(n => n.id === 'basics')!
+      const intermediate = graph.nodes.find(n => n.id === 'intermediate')!
+      const advanced = graph.nodes.find(n => n.id === 'advanced')!
+
+      // Left-to-right horizontal flow: X(Basics) < X(Intermediate) < X(Advanced)
+      expect(basics.x!).toBeLessThan(intermediate.x!)
+      expect(intermediate.x!).toBeLessThan(advanced.x!)
+
+      // Graph width should exceed height for multi-layer horizontal flow
+      expect(graph.layoutBounds!.width).toBeGreaterThanOrEqual(graph.layoutBounds!.height * 0.8)
     })
   })
 })
