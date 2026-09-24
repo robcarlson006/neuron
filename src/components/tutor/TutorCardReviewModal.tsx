@@ -8,6 +8,7 @@ interface TutorCardReviewModalProps {
   sessionId: number
   subjectId: number
   sessionContent: string
+  evaluation?: import('../../types').TutorSessionEvaluation | null
   onSaved: (count: number) => void
   onClose: () => void
 }
@@ -16,6 +17,7 @@ export default function TutorCardReviewModal({
   sessionId,
   subjectId,
   sessionContent,
+  evaluation,
   onSaved,
   onClose
 }: TutorCardReviewModalProps): React.JSX.Element {
@@ -34,7 +36,12 @@ export default function TutorCardReviewModal({
   async function generateCards(): Promise<void> {
     setGenerating(true)
     try {
-      const result = await window.electronAPI.tutorGenerateCards(sessionId, subjectId, sessionContent) as string
+      const result = await window.electronAPI.tutorGenerateCards(
+        sessionId,
+        subjectId,
+        sessionContent,
+        evaluation || undefined
+      ) as string
       const parsed = parseCardsFromText(result)
       setParsedCards(parsed)
 
@@ -235,6 +242,24 @@ export default function TutorCardReviewModal({
                         }`}>
                           {card.type === 'flashcard' ? 'FC' : 'AR'}
                         </span>
+                        {/* Pedagogical Category Badges */}
+                        {/\[Struggle Fix/i.test(card.front) || /misconception|struggle/i.test(card.front) ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                            🎯 Struggle Fix
+                          </span>
+                        ) : /\[Distinction/i.test(card.front) || /\bvs\.?\b|difference between/i.test(card.front) ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                            ⚖️ Key Distinction
+                          </span>
+                        ) : /\[Vocabulary/i.test(card.front) ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                            📖 Vocabulary
+                          </span>
+                        ) : /\[Mechanism/i.test(card.front) ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                            ⚙️ Mechanism
+                          </span>
+                        ) : null}
                         {isDuplicate && (
                           <span
                             className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1 font-medium"

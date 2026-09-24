@@ -347,7 +347,7 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:updateSessionPhase', sessionId, phase),
   tutorUpdateSessionDuration: (sessionId: number, durationMinutes: number | null): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:updateSessionDuration', sessionId, durationMinutes),
-  tutorEndSession: (sessionId: number, summary?: string, options?: { targetTopics?: string[]; moduleId?: number }): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
+  tutorEndSession: (sessionId: number, summary?: string, options?: { targetTopics?: string[]; targetTopicIds?: number[]; moduleId?: number }): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
     ipcRenderer.invoke('tutor:endSession', sessionId, summary, options),
   tutorGetGapAnalysis: (subjectId: number, userId: number): Promise<import('../src/types').GapAnalysisResult> =>
     ipcRenderer.invoke('tutor:getGapAnalysis', subjectId, userId),
@@ -361,8 +361,17 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:saveMessage', params),
   tutorGetMessageHistory: (sessionId: number, limit?: number): Promise<Message[]> =>
     ipcRenderer.invoke('tutor:getMessageHistory', sessionId, limit),
-  tutorGenerateCards: (sessionId: number, subjectId: number, sessionContent: string): Promise<string> =>
-    ipcRenderer.invoke('tutor:generateCards', sessionId, subjectId, sessionContent),
+  tutorGenerateCards: (sessionId: number, subjectId: number, sessionContent: string, evaluation?: import('../src/types').TutorSessionEvaluation): Promise<string> =>
+    ipcRenderer.invoke('tutor:generateCards', sessionId, subjectId, sessionContent, evaluation),
+  tutorExtractCardFromSnippet: (
+    subjectId: number,
+    snippet: string,
+    contextTopic?: string
+  ): Promise<{
+    success: boolean
+    cards: Array<{ front: string; back: string; type: 'flashcard' | 'active_recall'; concept?: string }>
+    error?: string
+  }> => ipcRenderer.invoke('tutor:extractCardFromSnippet', subjectId, snippet, contextTopic),
   tutorCheckDuplicates: (subjectId: number, cards: { front: string; back: string }[]): Promise<DuplicateCheckResult[]> =>
     ipcRenderer.invoke('tutor:checkDuplicates', subjectId, cards),
   tutorUpdateMastery: (userId: number, subjectId: number, topic: string, score: number): Promise<{ mastery_prob: number }> =>

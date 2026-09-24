@@ -29,6 +29,9 @@ export default function TutorHub(): React.JSX.Element {
   const [showPostLectureModal, setShowPostLectureModal] = useState<boolean>(false)
   const [subjectMaterials, setSubjectMaterials] = useState<{ id: number; filename: string }[]>([])
   const [dueMaintenanceTopics, setDueMaintenanceTopics] = useState<import('../../lib/memory/topicSrsEngine').TopicRetentionMetrics[]>([])
+  const [showAllMaintenance, setShowAllMaintenance] = useState<boolean>(false)
+  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<number | 'all'>('all')
+  const [durationMenuTopicId, setDurationMenuTopicId] = useState<number | null>(null)
 
   const activeSubjects = subjects.filter(s => s.status !== 'archived')
 
@@ -37,6 +40,18 @@ export default function TutorHub(): React.JSX.Element {
       loadHub()
     }
   }, [user, subjects.length])
+
+  useEffect(() => {
+    function handleWindowFocus(): void {
+      if (user && state === 'loaded') {
+        window.electronAPI?.tutorGetTopDueMaintenanceTopics?.(user.id).then(due => {
+          if (due) setDueMaintenanceTopics(due)
+        }).catch(() => {})
+      }
+    }
+    window.addEventListener('focus', handleWindowFocus)
+    return () => window.removeEventListener('focus', handleWindowFocus)
+  }, [user, state])
 
   async function loadHub(): Promise<void> {
     if (!user) return
@@ -84,7 +99,7 @@ export default function TutorHub(): React.JSX.Element {
       // Load top due Topic-SRS maintenance topics
       if (window.electronAPI.tutorGetTopDueMaintenanceTopics) {
         try {
-          const dueTopics = await window.electronAPI.tutorGetTopDueMaintenanceTopics(user.id, 6)
+          const dueTopics = await window.electronAPI.tutorGetTopDueMaintenanceTopics(user.id)
           setDueMaintenanceTopics(dueTopics || [])
         } catch (srsErr) {
           console.warn('Failed to load due maintenance topics in tutor hub:', srsErr)
@@ -97,6 +112,25 @@ export default function TutorHub(): React.JSX.Element {
       setError('Something went wrong loading your tutor dashboard.')
       setState('error')
     }
+  }
+
+  function startRetentionDrill(
+    t: import('../../lib/memory/topicSrsEngine').TopicRetentionMetrics,
+    durationMinutes: number | null
+  ): void {
+    const config: import('../../types').TutorSessionConfig = {
+      duration_minutes: durationMinutes,
+      depth_level: 'adaptive',
+      never_studied: false,
+      module_id: t.moduleId,
+      target_topic: t.topicTitle,
+      target_topics: [t.topicTitle],
+      target_topic_id: t.topicId,
+      target_topic_ids: [t.topicId],
+      is_spaced_review: true,
+      spaced_review_topics: [t.topicTitle]
+    }
+    navigate(`/tutor/${t.subjectId}?config=${encodeURIComponent(JSON.stringify(config))}`)
   }
 
   async function handleGeneratePlan(
@@ -629,90 +663,176 @@ export default function TutorHub(): React.JSX.Element {
       </div>
 
       {/* Curriculum Spaced Maintenance Due (Topic-SRS) */}
-      {dueMaintenanceTopics.length > 0 && (
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <span className="text-base">⏳</span>
-              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
-                Curriculum Retention Maintenance Due
-              </h2>
-              <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-                {dueMaintenanceTopics.length} topic{dueMaintenanceTopics.length > 1 ? 's' : ''} fading
-              </span>
+      {dueMaintenanceTopics.length > 0 && (() => {
+        const dueSubjectIds = Array.from(new Set(dueMaintenanceTopics.map(t => t.subjectId)))
+        const filteredDueTopics = dueMaintenanceTopics.filter(t =>
+          selectedSubjectFilter === 'all' ? true : t.subjectId === selectedSubjectFilter
+        )
+        const displayedTopics = showAllMaintenance ? filteredDueTopics : filteredDueTopics.slice(0, 6)
+
+        return (
+          <div className="mb-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-base">⏳</span>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
+                  Curriculum Retention Maintenance Due
+                </h2>
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                  {dueMaintenanceTopics.length} topic{dueMaintenanceTopics.length > 1 ? 's' : ''} fading / due
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {filteredDueTopics.length > 6 && (
+                  <button
+                    onClick={() => setShowAllMaintenance(prev => !prev)}
+                    className="text-xs font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition-colors flex items-center gap-1"
+                  >
+                    {showAllMaintenance ? 'Show top 6 ▴' : `Show all ${filteredDueTopics.length} topics ▾`}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Subject Filter Pills (if multiple subjects have due topics) */}
+            {dueSubjectIds.length > 1 && (
+              <div className="flex items-center gap-1.5 mb-3.5 overflow-x-auto pb-1">
+                <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500 mr-1">Filter:</span>
+                <button
+                  onClick={() => setSelectedSubjectFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                    selectedSubjectFilter === 'all'
+                      ? 'bg-violet-600 text-white shadow-2xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  All Classes ({dueMaintenanceTopics.length})
+                </button>
+                {dueSubjectIds.map(sid => {
+                  const s = subjects.find(sub => sub.id === sid)
+                  const count = dueMaintenanceTopics.filter(t => t.subjectId === sid).length
+                  return (
+                    <button
+                      key={sid}
+                      onClick={() => setSelectedSubjectFilter(sid)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all truncate max-w-[160px] ${
+                        selectedSubjectFilter === sid
+                          ? 'bg-violet-600 text-white shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      {s?.name || 'Class'} ({count})
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {displayedTopics.map(t => {
+                const subj = subjects.find(s => s.id === t.subjectId)
+                const pct = Math.round(t.retrievability * 100)
+                const isCrit = t.retentionStatus === 'overdue'
+
+                return (
+                  <div
+                    key={`${t.subjectId}-${t.topicId}`}
+                    className={`p-3.5 rounded-xl border transition-all ${
+                      isCrit
+                        ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/60'
+                        : 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60'
+                    } flex flex-col justify-between`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 truncate">
+                          {subj?.name || 'Class'}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                            isCrit
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/60 dark:text-rose-300'
+                              : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
+                          }`}
+                        >
+                          {pct}% Retention
+                        </span>
+                      </div>
+                      <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100 line-clamp-2">
+                        {t.topicTitle}
+                      </h3>
+                      {t.moduleTitle && (
+                        <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">
+                          {t.moduleTitle}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 min-w-0">
+                        <span className="truncate">{t.daysOverdue > 0 ? `${t.daysOverdue}d overdue` : `Review due`}</span>
+                        <span>·</span>
+                        <span className="font-semibold text-amber-700 dark:text-amber-400 whitespace-nowrap" title="Estimated ideal drill duration">
+                          ⏱️ ~{t.estimatedMinutes || 15}m suggested
+                        </span>
+                      </div>
+
+                      <div className="relative flex-shrink-0">
+                        <div className="flex items-center rounded-lg shadow-2xs overflow-hidden">
+                          <button
+                            onClick={() => startRetentionDrill(t, t.estimatedMinutes || 15)}
+                            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-medium transition-colors flex items-center gap-1"
+                            title={`Start suggested ${t.estimatedMinutes || 15}m retention drill`}
+                          >
+                            <span>⚡</span> Drill Now
+                          </button>
+                          <button
+                            onClick={() => setDurationMenuTopicId(durationMenuTopicId === t.topicId ? null : t.topicId)}
+                            className="px-1.5 py-1 bg-amber-700 hover:bg-amber-800 text-white text-[11px] border-l border-amber-600 transition-colors"
+                            title="Choose drill duration"
+                          >
+                            ▾
+                          </button>
+                        </div>
+
+                        {durationMenuTopicId === t.topicId && (
+                          <div className="absolute right-0 bottom-full mb-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-1 z-30 animate-in fade-in zoom-in-95 duration-100">
+                            <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                              Select Duration
+                            </div>
+                            <button
+                              onClick={() => { setDurationMenuTopicId(null); startRetentionDrill(t, 5) }}
+                              className="w-full text-left px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs flex items-center justify-between transition-colors"
+                            >
+                              <span className="font-medium">⚡ Quick Drill</span>
+                              <span className="text-[10px] text-slate-400">5 min</span>
+                            </button>
+                            <button
+                              onClick={() => { setDurationMenuTopicId(null); startRetentionDrill(t, t.estimatedMinutes || 15) }}
+                              className="w-full text-left px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs flex items-center justify-between text-amber-700 dark:text-amber-300 font-semibold bg-amber-50/50 dark:bg-amber-950/30 transition-colors"
+                            >
+                              <span>⚡ Recommended</span>
+                              <span className="text-[10px]">{t.estimatedMinutes || 15} min</span>
+                            </button>
+                            <button
+                              onClick={() => { setDurationMenuTopicId(null); startRetentionDrill(t, null) }}
+                              className="w-full text-left px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs flex items-center justify-between transition-colors"
+                            >
+                              <span className="font-medium">♾️ Open-ended</span>
+                              <span className="text-[10px] text-slate-400">Untimed</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {dueMaintenanceTopics.map(t => {
-              const subj = subjects.find(s => s.id === t.subjectId)
-              const pct = Math.round(t.retrievability * 100)
-              const isCrit = t.retentionStatus === 'overdue'
-
-              return (
-                <div
-                  key={`${t.subjectId}-${t.topicId}`}
-                  className={`p-3.5 rounded-xl border transition-all ${
-                    isCrit
-                      ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/60'
-                      : 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60'
-                  } flex flex-col justify-between`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 truncate">
-                        {subj?.name || 'Class'}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                          isCrit
-                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/60 dark:text-rose-300'
-                            : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
-                        }`}
-                      >
-                        {pct}% Retention
-                      </span>
-                    </div>
-                    <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100 line-clamp-2">
-                      {t.topicTitle}
-                    </h3>
-                    {t.moduleTitle && (
-                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">
-                        {t.moduleTitle}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
-                      <span>{t.daysOverdue > 0 ? `${t.daysOverdue}d overdue` : `Review due`}</span>
-                      <span>·</span>
-                      <span className="font-semibold text-amber-700 dark:text-amber-400">⏱️ {t.estimatedMinutes || 15}m</span>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const config: import('../../types').TutorSessionConfig = {
-                          duration_minutes: t.estimatedMinutes || 15,
-                          depth_level: 'adaptive',
-                          never_studied: false,
-                          module_id: t.moduleId,
-                          target_topic: t.topicTitle,
-                          is_spaced_review: true,
-                          spaced_review_topics: [t.topicTitle]
-                        }
-                        navigate(`/tutor/${t.subjectId}?config=${encodeURIComponent(JSON.stringify(config))}`)
-                      }}
-                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-medium transition-colors flex items-center gap-1 shadow-2xs"
-                    >
-                      <span>⚡</span> Drill Now
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Classes Grid */}
       <div>

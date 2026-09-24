@@ -624,6 +624,8 @@ export interface ModuleTopic {
   next_review_due?: string
   stability?: number
   days_overdue?: number
+  // Flashcard coverage
+  card_count?: number
 }
 
 /** Result of a syllabus update or reconciliation (syllabus:updateFromMaterials or syllabus:generateFromMaterials). */
@@ -682,8 +684,11 @@ export interface TutorSessionEvaluation {
   strengths: string[]
   struggles: string[]
   topics_covered: string[]
+  misconceptions?: Array<{ concept: string; misconception_title?: string; description: string }>
+  breakthroughs?: string[]
   summary?: string
   created_at: string
+  updatedTopics?: import('../lib/memory/topicSrsEngine').TopicRetentionMetrics[]
 }
 
 export interface GapAnalysisItem {
@@ -755,6 +760,8 @@ export interface TutorSessionConfig {
   module_name?: string
   target_topic?: string
   target_topics?: string[]
+  target_topic_id?: number
+  target_topic_ids?: number[]
   is_fill_gaps?: boolean
   gap_topics?: string[]
   is_spaced_review?: boolean

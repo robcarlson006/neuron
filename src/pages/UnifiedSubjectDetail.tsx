@@ -369,6 +369,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           title: 'Cards Generated',
           message: `${result.count} ${typeStr} created from ${result.module_name || 'module'}${dupNote}.`
         })
+        await loadAllData()
       } else {
         addToast({ type: 'error', title: 'Generation Failed', message: result.error || 'Unknown error' })
       }

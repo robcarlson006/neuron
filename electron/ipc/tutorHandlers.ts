@@ -620,10 +620,16 @@ export async function evaluateAndSaveSessionMemory(
   database: Database.Database,
   sessionId: number,
   summaryText?: string,
-  options?: { targetTopics?: string[]; moduleId?: number }
-): Promise<{ strengths: string[]; struggles: string[]; topics_covered: string[]; summary: string } | null> {
+  options?: { targetTopics?: string[]; targetTopicIds?: number[]; moduleId?: number }
+): Promise<{ strengths: string[]; struggles: string[]; topics_covered: string[]; summary: string; updatedTopics?: import('../../src/lib/memory/topicSrsEngine').TopicRetentionMetrics[] } | null> {
   const session = database.prepare('SELECT * FROM tutor_sessions WHERE id = ?').get(sessionId) as TutorSession | undefined
-  if (!session || !session.subject_id || !session.user_id) return null
+  if (!session || !session.subject_id) return null
+
+  let actualUserId = session.user_id
+  if (!actualUserId) {
+    const u = database.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined
+    actualUserId = u?.id || 1
+  }
 
   const subject = database.prepare('SELECT name FROM subjects WHERE id = ?').get(session.subject_id) as { name: string } | undefined
   const className = subject?.name || 'the subject'
@@ -711,10 +717,18 @@ Return STRICT JSON ONLY, no extra text, in this format:
         evaluation.topics_covered.push(match[1].trim())
       }
     }
-    if (evaluation.topics_covered.length === 0 && options?.targetTopics && options.targetTopics.length <= 2) {
+    if (options?.targetTopics && Array.isArray(options.targetTopics)) {
       for (const t of options.targetTopics) {
         if (t && typeof t === 'string' && t.trim() && !evaluation.topics_covered.includes(t.trim())) {
           evaluation.topics_covered.push(t.trim())
+        }
+      }
+    }
+    if (options?.targetTopicIds && Array.isArray(options.targetTopicIds)) {
+      for (const tid of options.targetTopicIds) {
+        const row = database.prepare('SELECT title FROM module_topics WHERE id = ?').get(tid) as { title: string } | undefined
+        if (row && row.title && !evaluation.topics_covered.includes(row.title.trim())) {
+          evaluation.topics_covered.push(row.title.trim())
         }
       }
     }
@@ -732,7 +746,7 @@ Return STRICT JSON ONLY, no extra text, in this format:
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     sessionId,
-    session.user_id,
+    actualUserId,
     session.subject_id,
     JSON.stringify(evaluation.strengths),
     JSON.stringify(evaluation.struggles),
@@ -753,27 +767,27 @@ Return STRICT JSON ONLY, no extra text, in this format:
         strengths = excluded.strengths,
         session_id = excluded.session_id,
         last_studied_at = excluded.last_studied_at
-    `).run(session.user_id, session.subject_id, cleanTopic, cleanTopic, sessionId, now)
+    `).run(actualUserId, session.subject_id, cleanTopic, cleanTopic, sessionId, now)
 
     // Update BKT concept mastery
     try {
-      const existing = database.prepare('SELECT mastery_prob FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?').get(session.user_id, session.subject_id, cleanTopic) as { mastery_prob: number } | undefined
+      const existing = database.prepare('SELECT mastery_prob FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?').get(actualUserId, session.subject_id, cleanTopic) as { mastery_prob: number } | undefined
       const prior = existing?.mastery_prob ?? 0.3
       const newProb = bktUpdate(prior, true)
       if (existing) {
-        database.prepare('UPDATE concept_mastery SET mastery_prob = ?, observations = observations + 1, updated_at = ? WHERE user_id = ? AND subject_id = ? AND concept = ?').run(newProb, now, session.user_id, session.subject_id, cleanTopic)
+        database.prepare('UPDATE concept_mastery SET mastery_prob = ?, observations = observations + 1, updated_at = ? WHERE user_id = ? AND subject_id = ? AND concept = ?').run(newProb, now, actualUserId, session.subject_id, cleanTopic)
       } else {
-        database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(session.user_id, session.subject_id, cleanTopic, newProb, now)
+        database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(actualUserId, session.subject_id, cleanTopic, newProb, now)
       }
     } catch { /* ignore */ }
 
     // Update CKRF Rating & advance concept remediation
     try {
-      recordTopicAssessment(database, session.user_id, session.subject_id, cleanTopic, {
+      recordTopicAssessment(database, actualUserId, session.subject_id, cleanTopic, {
         itemDifficulty: 3,
         score: 1.0
       })
-      recordConceptSuccess(database, session.user_id, session.subject_id, cleanTopic)
+      recordConceptSuccess(database, actualUserId, session.subject_id, cleanTopic)
     } catch (ckrfErr) {
       console.warn('CKRF strength update error:', ckrfErr)
     }
@@ -791,23 +805,23 @@ Return STRICT JSON ONLY, no extra text, in this format:
         struggles = excluded.struggles,
         session_id = excluded.session_id,
         last_studied_at = excluded.last_studied_at
-    `).run(session.user_id, session.subject_id, cleanTopic, cleanTopic, sessionId, now)
+    `).run(actualUserId, session.subject_id, cleanTopic, cleanTopic, sessionId, now)
 
     // Update BKT concept mastery
     try {
-      const existing = database.prepare('SELECT mastery_prob FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?').get(session.user_id, session.subject_id, cleanTopic) as { mastery_prob: number } | undefined
+      const existing = database.prepare('SELECT mastery_prob FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?').get(actualUserId, session.subject_id, cleanTopic) as { mastery_prob: number } | undefined
       const prior = existing?.mastery_prob ?? 0.3
       const newProb = bktUpdate(prior, false)
       if (existing) {
-        database.prepare('UPDATE concept_mastery SET mastery_prob = ?, observations = observations + 1, updated_at = ? WHERE user_id = ? AND subject_id = ? AND concept = ?').run(newProb, now, session.user_id, session.subject_id, cleanTopic)
+        database.prepare('UPDATE concept_mastery SET mastery_prob = ?, observations = observations + 1, updated_at = ? WHERE user_id = ? AND subject_id = ? AND concept = ?').run(newProb, now, actualUserId, session.subject_id, cleanTopic)
       } else {
-        database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(session.user_id, session.subject_id, cleanTopic, newProb, now)
+        database.prepare('INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at) VALUES (?, ?, ?, ?, 1, ?)').run(actualUserId, session.subject_id, cleanTopic, newProb, now)
       }
     } catch { /* ignore */ }
 
     // Update CKRF Rating for struggle
     try {
-      recordTopicAssessment(database, session.user_id, session.subject_id, cleanTopic, {
+      recordTopicAssessment(database, actualUserId, session.subject_id, cleanTopic, {
         itemDifficulty: 3,
         score: 0.25
       })
@@ -820,7 +834,7 @@ Return STRICT JSON ONLY, no extra text, in this format:
   for (const misc of evaluation.misconceptions) {
     try {
       const misconceptionKey = `${misc.concept.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_misconception`
-      recordMisconception(database, session.user_id, session.subject_id, {
+      recordMisconception(database, actualUserId, session.subject_id, {
         concept: misc.concept,
         misconceptionKey,
         misconceptionTitle: misc.misconception_title || `Misconception on ${misc.concept}`,
@@ -835,7 +849,7 @@ Return STRICT JSON ONLY, no extra text, in this format:
   for (const bt of evaluation.breakthroughs) {
     try {
       recordEpisodicMemory(database, {
-        userId: session.user_id,
+        userId: actualUserId,
         subjectId: session.subject_id,
         topic: bt.topic,
         memoryType: bt.effective_intervention ? 'analogy' : 'breakthrough',
@@ -853,7 +867,7 @@ Return STRICT JSON ONLY, no extra text, in this format:
   if (evaluation.summary) {
     try {
       recordEpisodicMemory(database, {
-        userId: session.user_id,
+        userId: actualUserId,
         subjectId: session.subject_id,
         topic: evaluation.topics_covered[0] || className,
         memoryType: 'pedagogical_profile',
@@ -941,8 +955,8 @@ Return STRICT JSON ONLY, no extra text, in this format:
     }
   }
 
-  // If user targeted a specific small set of topics (<= 2), ensure they are also included in topicsToLog
-  if (options?.targetTopics && Array.isArray(options.targetTopics) && options.targetTopics.length <= 2) {
+  // Include all user-targeted review topics
+  if (options?.targetTopics && Array.isArray(options.targetTopics)) {
     for (const t of options.targetTopics) {
       if (t && typeof t === 'string' && t.trim()) {
         topicsToLog.add(t.trim())
@@ -950,26 +964,57 @@ Return STRICT JSON ONLY, no extra text, in this format:
     }
   }
 
+  // Also include direct targetTopicIds if supplied
+  const directTopicIds = new Set<number>()
+  if (options?.targetTopicIds && Array.isArray(options.targetTopicIds)) {
+    for (const tid of options.targetTopicIds) {
+      if (tid && typeof tid === 'number') {
+        directTopicIds.add(tid)
+        const tRow = subjectTopics.find(t => t.id === tid) ||
+          database.prepare('SELECT id, module_id, title FROM module_topics WHERE id = ?').get(tid) as { id: number; module_id: number; title: string } | undefined
+        if (tRow) {
+          topicsToLog.add(tRow.title)
+        }
+      }
+    }
+  }
+
   const touchedModuleIds = new Set<number>()
   if (effectiveModuleId) touchedModuleIds.add(effectiveModuleId)
 
-  // Log covered topics in module_topic_study_log and clear new_content / gap flags
+  // Collect all topic IDs to update (both matched from title strings and directly targeted by ID)
+  const topicIdsToProcess = new Set<number>()
   for (const topStr of topicsToLog) {
+    const modTopic = matchTopicToSubject(topStr)
+    if (modTopic) {
+      topicIdsToProcess.add(modTopic.id)
+    }
+  }
+  for (const tid of directTopicIds) {
+    topicIdsToProcess.add(tid)
+  }
+
+  const updatedTopics: import('../../src/lib/memory/topicSrsEngine').TopicRetentionMetrics[] = []
+
+  // Log covered topics in module_topic_study_log, clear new_content / gap flags, and update SRS
+  for (const tid of topicIdsToProcess) {
     try {
-      const modTopic = matchTopicToSubject(topStr)
+      const modTopic = subjectTopics.find(t => t.id === tid) ||
+        database.prepare('SELECT id, module_id, title FROM module_topics WHERE id = ?').get(tid) as { id: number; module_id: number; title: string } | undefined
       if (modTopic) {
         touchedModuleIds.add(modTopic.module_id)
 
         database.prepare(`
           INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
           VALUES (?, ?, ?)
-        `).run(modTopic.id, session.user_id, now)
+        `).run(modTopic.id, actualUserId, now)
 
         database.prepare(`
           UPDATE module_topics SET has_new_material = 0, is_gap = 0 WHERE id = ?
         `).run(modTopic.id)
 
         // Topic-SRS: Determine FSRS rating from dialogue evaluation
+        const topStr = modTopic.title
         const isStruggle = evaluation.struggles.some(s => s.toLowerCase().includes(topStr.toLowerCase()) || topStr.toLowerCase().includes(s.toLowerCase()))
         const isStrength = evaluation.strengths.some(s => s.toLowerCase().includes(topStr.toLowerCase()) || topStr.toLowerCase().includes(s.toLowerCase()))
 
@@ -985,7 +1030,10 @@ Return STRICT JSON ONLY, no extra text, in this format:
         }
 
         try {
-          updateTopicSrsState(database, session.user_id, session.subject_id, modTopic.id, srsRating, now)
+          const srsResult = updateTopicSrsState(database, actualUserId, session.subject_id, modTopic.id, srsRating, now)
+          if (srsResult) {
+            updatedTopics.push(srsResult)
+          }
         } catch (srsErr) {
           console.warn('Failed to update topic SRS state:', srsErr)
         }
@@ -995,10 +1043,13 @@ Return STRICT JSON ONLY, no extra text, in this format:
 
   // Recalculate and sync parent module completion statuses
   for (const modId of touchedModuleIds) {
-    syncModuleCompletionStatus(database, modId, session.user_id)
+    syncModuleCompletionStatus(database, modId, actualUserId)
   }
 
-  return evaluation
+  return {
+    ...evaluation,
+    updatedTopics
+  }
 }
 
 // ── Response post-processing (fix garbled text) ──────────────────────────
@@ -1223,7 +1274,7 @@ export function registerTutorHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('tutor:endSession', async (_event, sessionId: number, summary?: string, options?: { targetTopics?: string[]; moduleId?: number }) => {
+  ipcMain.handle('tutor:endSession', async (_event, sessionId: number, summary?: string, options?: { targetTopics?: string[]; targetTopicIds?: number[]; moduleId?: number }) => {
     const now = new Date().toISOString()
     db.prepare(`
       UPDATE tutor_sessions SET phase = 'complete', summary = ?, ended_at = ? WHERE id = ?
@@ -1353,7 +1404,13 @@ export function registerTutorHandlers(): void {
   // TUTOR CARD GENERATION
   // ═══════════════════════════════════════════════════════════════════════════
 
-  ipcMain.handle('tutor:generateCards', async (_event, sessionId: number, subjectId: number, sessionContent: string) => {
+  ipcMain.handle('tutor:generateCards', async (
+    _event,
+    sessionId: number,
+    subjectId: number,
+    sessionContent: string,
+    evaluation?: TutorSessionEvaluation
+  ) => {
     const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subjectId) as { name: string } | undefined
     const subjectName = subject?.name || 'the subject'
 
@@ -1376,22 +1433,46 @@ export function registerTutorHandlers(): void {
       ? `\n\nCRITICAL ANTI-DUPLICATION LIST: Existing cards in this deck that you MUST NOT duplicate (avoid similar questions, terms, or answers):\n${existingCards.slice(0, 80).map(c => `- "${c.front}" -> "${c.back.substring(0, 80)}"`).join('\n')}\nEvery generated card MUST introduce a novel concept or a distinctly fresh perspective not covered above.`
       : ''
 
+    // Incorporate session evaluation struggles & misconceptions for targeted repair
+    const struggles = evaluation?.struggles || []
+    const misconceptions = evaluation?.misconceptions || []
+
+    let gapGuidance = ''
+    if (struggles.length > 0 || misconceptions.length > 0) {
+      gapGuidance = `
+
+## CRITICAL TARGETED REPAIR REQUIREMENTS (HIGHEST PRIORITY):
+The student specifically struggled with, hesitated on, or exhibited misconceptions about the following concepts during this dialogue:
+${struggles.map(s => `- Trouble spot / Struggle: "${s}"`).join('\n')}
+${misconceptions.map(m => `- Misconception: ${m.concept} — "${m.description}"`).join('\n')}
+
+MANDATORY INSTRUCTION: At least 3-5 of your cards MUST directly target and repair these exact trouble spots and misconceptions!
+Formulate high-yield DISCRIMINATION / CONTRAST questions that clarify easily confused concepts (for example: "Internal vs External Rotation: Which muscle is responsible for each?", or "Common misconception: Why is X not caused by Y?").`
+    }
+
     const prompt = `You are a Senior Cognitive Systems Engineer, Psychometric Assessment Specialist, and expert flashcard designer creating high-yield, atomic study cards from a tutoring session about "${subjectName}".${moduleContext}
+${gapGuidance}
 
 <source_material>
-${sessionContent.substring(0, 6000)}
+${sessionContent.substring(0, 10000)}
 </source_material>
 
-Create a balanced MIX of atomic flashcards (term -> concise definition) and active recall questions (focused question -> concise mechanism/application) based on the session's key takeaways and trouble spots.${existingCardHints}
+Create a balanced MIX of atomic flashcards (term -> concise definition) and active recall questions (focused question -> concise mechanism/application) based on the session's key takeaways, nuanced distinctions, and trouble spots.${existingCardHints}
 
 Generate 6-10 cards total. Format each card on its own line using this exact format:
 
-**[Topic] Question or Term** -> Concise Answer or Definition
+**[Category: Topic] Question or Term** -> Concise Answer or Definition
+
+Category tags should clearly specify the purpose:
+- **[Struggle Fix: Topic] Question** -> Answer (for cards addressing student mistakes/confusions)
+- **[Distinction: Topic] Question** -> Answer (for contrast between confusable terms/concepts like internal vs outward rotation)
+- **[Vocabulary: Topic] Term** -> Definition (for high-yield terminology introduced in dialogue)
+- **[Mechanism: Topic] Question** -> Answer (for causal steps or reasoning)
 
 ## STRICT PSYCHOMETRIC DESIGN RULES (CRITICAL):
 1. **MINIMUM INFORMATION PRINCIPLE (ATOMICITY)**: Each card must test exactly ONE indivisible idea, mechanism, or fact. Never create compound cards or multi-item lists.
 2. **ANSWER CONCISENESS (<15 WORDS / SINGLE BREATH)**:
-   - Front: 1 clear, unambiguous question or term with optional domain tag in brackets (max 15 words). Do NOT include numbering (like "1.") inside the bold tags.
+   - Front: 1 clear, unambiguous question or term with domain tag in brackets (max 15 words). Do NOT include numbering (like "1.") inside the bold tags.
    - Back: Direct target answer (<15 words, speakable in a single breath). Get straight to the point—no filler, no paragraphs.
 3. **SPOILER-FREE PROMPT FRAMING**: Never give away the answer or causal link inside the question (e.g. do NOT ask "Why does X cause Y?", ask "What effect is produced by X?").
 4. **PROHIBITION OF LOW-EFFORT FORMATS**:
@@ -1416,6 +1497,80 @@ Generate 6-10 cards total. Format each card on its own line using this exact for
     db.prepare('UPDATE tutor_sessions SET cards_generated = cards_generated + 1 WHERE id = ?').run(sessionId)
 
     return responseText
+  })
+
+  ipcMain.handle('tutor:extractCardFromSnippet', async (_event, subjectId: number, snippet: string, contextTopic?: string) => {
+    try {
+      const subject = db.prepare('SELECT name FROM subjects WHERE id = ?').get(subjectId) as { name: string } | undefined
+      const subjectName = subject?.name || 'the subject'
+
+      const existingCards = db.prepare(
+        'SELECT front, back FROM cards WHERE subject_id = ?'
+      ).all(subjectId) as { front: string; back: string }[]
+
+      const existingCardHints = existingCards.length > 0
+        ? `\nAvoid duplicating existing cards in this deck:\n${existingCards.slice(0, 30).map(c => `- "${c.front}"`).join('\n')}`
+        : ''
+
+      const prompt = `You are a Senior Cognitive Systems Engineer and expert flashcard designer. A student studying "${subjectName}" highlighted or selected the following text from an AI tutoring dialogue:${contextTopic ? `\nContext topic: ${contextTopic}` : ''}
+
+<dialogue_snippet>
+${snippet.substring(0, 3000)}
+</dialogue_snippet>
+${existingCardHints}
+
+Convert this specific insight or explanation into 1-2 ultra-high-yield, atomic study cards.
+- Focus on key distinctions (e.g. contrast between confusable terms like internal vs external rotation), high-yield vocabulary definitions, or causal mechanisms.
+- Adhere strictly to the Minimum Information Principle (<15 words on the back, atomic, speakable in a single breath).
+
+Output your response strictly as valid JSON in this exact structure:
+{
+  "cards": [
+    {
+      "type": "flashcard",
+      "front": "Question or term (e.g. [Topic] Term or question)",
+      "back": "Concise target answer (<15 words)",
+      "concept": "${contextTopic || 'Key Concept'}"
+    }
+  ]
+}`
+
+      const config = getAIConfig()
+      const apiKey = getApiKey()
+      if (!apiKey) throw new Error('AI API key not configured. Go to Settings to configure your AI provider.')
+
+      const responseText = await callAIMessages(
+        [{ role: 'user', content: prompt }],
+        { ...config, apiKey },
+        { type: 'json_object' }
+      )
+
+      let parsed: { cards?: Array<{ type: 'flashcard' | 'active_recall'; front: string; back: string; concept?: string }> } = {}
+      try {
+        parsed = JSON.parse(responseText)
+      } catch {
+        // Fallback
+      }
+
+      const validCards = (parsed.cards || []).filter(c => c.front && c.back).map(c => ({
+        type: c.type || 'flashcard',
+        front: c.front.trim(),
+        back: c.back.trim(),
+        concept: c.concept || contextTopic || 'Key Concept'
+      }))
+
+      return {
+        success: validCards.length > 0,
+        cards: validCards
+      }
+    } catch (err: any) {
+      console.error('tutor:extractCardFromSnippet error:', err)
+      return {
+        success: false,
+        cards: [],
+        error: err.message || 'Failed to extract card'
+      }
+    }
   })
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2444,10 +2599,20 @@ Rules:
         CASE WHEN EXISTS (
           SELECT 1 FROM module_topic_study_log sl
           WHERE sl.topic_id = mt.id AND sl.user_id = ?
-        ) THEN 1 ELSE 0 END as studied
+        ) THEN 1 ELSE 0 END as studied,
+        (
+          SELECT COUNT(*) FROM cards c
+          WHERE c.subject_id = ?
+            AND (
+              c.topic_id = mt.id
+              OR LOWER(TRIM(c.concept)) = LOWER(TRIM(mt.title))
+              OR LOWER(c.concept) LIKE '%' || LOWER(mt.title) || '%'
+              OR LOWER(mt.title) LIKE '%' || LOWER(c.concept) || '%'
+            )
+        ) as card_count
       FROM module_topics mt
       WHERE mt.module_id = ?
-    `).all(actualUserId, actualUserId, moduleId) as (Omit<ModuleTopic, 'completed' | 'studied'> & { completed: number; studied: number })[]
+    `).all(actualUserId, actualUserId, subjectId, moduleId) as (Omit<ModuleTopic, 'completed' | 'studied'> & { completed: number; studied: number; card_count?: number })[]
 
     return rows.map(r => {
       const srs = srsMap.get(r.id)
@@ -2462,7 +2627,8 @@ Rules:
         retention_status: srs ? srs.retentionStatus : undefined,
         next_review_due: srs ? srs.nextReviewDue : undefined,
         stability: srs ? srs.stability : undefined,
-        days_overdue: srs ? srs.daysOverdue : undefined
+        days_overdue: srs ? srs.daysOverdue : undefined,
+        card_count: Number(r.card_count) || 0
       }
     })
   })
@@ -2704,7 +2870,7 @@ Rules:
 
   ipcMain.handle('tutor:getTopDueMaintenanceTopics', (_event, userId: number, limit?: number) => {
     try {
-      return getTopDueMaintenanceTopics(db, userId, limit ?? 8)
+      return getTopDueMaintenanceTopics(db, userId, limit)
     } catch (err) {
       console.error('Failed to get top due maintenance topics:', err)
       return []

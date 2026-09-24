@@ -422,7 +422,7 @@ export function getSubjectRetentionSummary(
 export function getTopDueMaintenanceTopics(
   db: DatabaseLike,
   userId: number,
-  limit = 8
+  limit?: number
 ): TopicRetentionMetrics[] {
   const activeSubjects = db.prepare(`
     SELECT id FROM subjects WHERE user_id = ? AND status != 'archived'
@@ -437,5 +437,5 @@ export function getTopDueMaintenanceTopics(
 
   // Sort by lowest retrievability first
   allDue.sort((a, b) => a.retrievability - b.retrievability)
-  return allDue.slice(0, limit)
+  return limit && limit > 0 ? allDue.slice(0, limit) : allDue
 }

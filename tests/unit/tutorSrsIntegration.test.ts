@@ -72,4 +72,74 @@ describe('Tutor Session Topic-SRS Integration', () => {
     expect(srsRecord?.retrievability).toBeGreaterThan(0.85)
     expect(srsRecord?.retentionStatus).toBe('fresh')
   })
+
+  test('evaluating with targetTopicIds restores decaying 83% topic to 100% and returns updatedTopics', async () => {
+    // Seed topic with decayed retention (<0.85)
+    const pastDate = new Date(Date.now() - 5 * 86400000).toISOString()
+    insert(
+      db,
+      `INSERT INTO topic_spaced_memory 
+        (topic_id, user_id, subject_id, stability, difficulty, retrievability, reps, lapses, last_studied_at, next_review_due, status)
+       VALUES (?, ?, ?, 2.0, 5.0, 0.70, 2, 0, ?, ?, 'fading')`,
+      topicId, userId, subjectId, pastDate, new Date().toISOString().split('T')[0]
+    )
+
+    // Pre-check: topic is fading and retrievability is ~83%
+    const initialMap = getTopicsRetention(db, userId, subjectId, moduleId)
+    expect(initialMap.get(topicId)?.retrievability).toBeLessThan(0.85)
+
+    // Create drill session
+    const sessionId = insert(
+      db,
+      'INSERT INTO tutor_sessions (subject_id, user_id, module_id, session_type, phase) VALUES (?, ?, ?, ?, ?)',
+      subjectId, userId, moduleId, 'tutor', 'structured_qa'
+    )
+    insert(db, 'INSERT INTO conversations (id, subject_id, title) VALUES (?, ?, ?)', sessionId, subjectId, 'Gibbs Free Energy Drill')
+    insert(db, 'INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)', sessionId, 'assistant', 'Explain Gibbs Free Energy in equilibrium.')
+    insert(db, 'INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)', sessionId, 'user', 'At equilibrium delta G is zero and K equals Q.')
+
+    // End drill passing targetTopicIds (as sent by our updated TutorSession)
+    const evalResult = await evaluateAndSaveSessionMemory(db, sessionId, 'Excellent recall on equilibrium', {
+      targetTopicIds: [topicId],
+      moduleId
+    })
+
+    expect(evalResult).toBeDefined()
+    expect(evalResult?.updatedTopics).toBeDefined()
+    expect(evalResult?.updatedTopics?.length).toBeGreaterThanOrEqual(1)
+
+    // Post-check: topic retention is restored to 1.0 (fresh)
+    const updatedMap = getTopicsRetention(db, userId, subjectId, moduleId)
+    const updatedRecord = updatedMap.get(topicId)
+
+    expect(updatedRecord).toBeDefined()
+    expect(updatedRecord?.retrievability).toBe(1.0)
+    expect(updatedRecord?.retentionStatus).toBe('fresh')
+    expect(updatedRecord?.reps).toBe(3)
+  })
+
+  test('getTopDueMaintenanceTopics returns all due topics when limit is omitted', async () => {
+    const { getTopDueMaintenanceTopics } = await import('../../src/lib/memory/topicSrsEngine')
+
+    // Create 10 decaying topics
+    const today = new Date().toISOString().split('T')[0]
+    for (let i = 2; i <= 11; i++) {
+      const tId = insert(db, 'INSERT INTO module_topics (module_id, title, sort_order) VALUES (?, ?, ?)', moduleId, `Topic ${i}`, i)
+      insert(
+        db,
+        `INSERT INTO topic_spaced_memory 
+          (topic_id, user_id, subject_id, stability, difficulty, retrievability, reps, lapses, last_studied_at, next_review_due, status)
+         VALUES (?, ?, ?, 2.0, 5.0, 0.70, 1, 0, ?, ?, 'fading')`,
+        tId, userId, subjectId, '2026-09-01T12:00:00.000Z', today
+      )
+    }
+
+    // Unlimited query should return all 10 topics
+    const allDue = getTopDueMaintenanceTopics(db, userId)
+    expect(allDue.length).toBe(10)
+
+    // Specific limit should restrict to that count
+    const top3 = getTopDueMaintenanceTopics(db, userId, 3)
+    expect(top3.length).toBe(3)
+  })
 })

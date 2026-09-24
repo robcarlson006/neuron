@@ -9,6 +9,7 @@ interface GenerateCardsModalProps {
   module: SyllabusModule & { topics?: ModuleTopic[] }
   subjectName?: string
   isGenerating?: boolean
+  initialTopicId?: number
   onClose: () => void
   onGenerate: (options: ModuleCardGenOptions) => void
 }
@@ -18,21 +19,24 @@ export default function GenerateCardsModal({
   module,
   subjectName,
   isGenerating = false,
+  initialTopicId,
   onClose,
   onGenerate
 }: GenerateCardsModalProps): React.JSX.Element | null {
   const [selectedType, setSelectedType] = useState<ModuleCardGenType>('flashcard')
-  const [cardCount, setCardCount] = useState<number>(15)
+  const [cardCount, setCardCount] = useState<number>(initialTopicId ? 5 : 15)
   const [isAutoCount, setIsAutoCount] = useState<boolean>(false)
+  const [selectedTopicId, setSelectedTopicId] = useState<number | null>(initialTopicId ?? null)
 
-  // Reset state when modal opens for a new module
+  // Reset state when modal opens for a new module or initialTopicId changes
   useEffect(() => {
     if (isOpen) {
       setSelectedType('flashcard')
-      setCardCount(15)
+      setSelectedTopicId(initialTopicId ?? null)
+      setCardCount(initialTopicId ? 5 : 15)
       setIsAutoCount(false)
     }
-  }, [isOpen, module.id])
+  }, [isOpen, module.id, initialTopicId])
 
   // Handle keyboard shortcuts (Escape to close, Enter to submit)
   const handleKeyDown = useCallback(
@@ -44,7 +48,7 @@ export default function GenerateCardsModal({
         handleConfirm()
       }
     },
-    [isOpen, isGenerating, onClose, selectedType, cardCount, isAutoCount]
+    [isOpen, isGenerating, onClose, selectedType, cardCount, isAutoCount, selectedTopicId]
   )
 
   useEffect(() => {
@@ -58,11 +62,14 @@ export default function GenerateCardsModal({
     if (isGenerating) return
 
     const finalCount = Math.max(1, cardCount)
+    const selectedTopic = (module.topics || []).find(t => t.id === selectedTopicId)
 
     onGenerate({
       type: selectedType,
       count: finalCount,
-      autoCount: isAutoCount
+      autoCount: isAutoCount,
+      topicId: selectedTopicId,
+      concept: selectedTopic?.title
     })
   }
 
@@ -119,6 +126,65 @@ export default function GenerateCardsModal({
 
         {/* Body */}
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+          {/* Target Scope Selection */}
+          {module.topics && module.topics.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+                Target Scope
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTopicId(null)
+                    setCardCount(15)
+                  }}
+                  className={`flex-1 py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    selectedTopicId === null
+                      ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  <span>📚 Entire Module</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstTopicId = module.topics?.[0]?.id ?? null
+                    setSelectedTopicId(firstTopicId)
+                    setCardCount(5)
+                  }}
+                  className={`flex-1 py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    selectedTopicId !== null
+                      ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  <span>🎯 Specific Topic Gap</span>
+                </button>
+              </div>
+
+              {selectedTopicId !== null && (
+                <div className="mt-2">
+                  <select
+                    value={selectedTopicId}
+                    onChange={e => {
+                      setSelectedTopicId(Number(e.target.value))
+                      setCardCount(5)
+                    }}
+                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                  >
+                    {module.topics.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.title} {(t.card_count ?? 0) === 0 ? '⚠️ (No cards yet)' : `(${t.card_count} cards)`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Card Type Selection */}
           <div className="space-y-3">
             <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">

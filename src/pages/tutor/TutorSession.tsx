@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/appStore'
 import ChatMessage from '../../components/tutor/ChatMessage'
 import ChatInput from '../../components/tutor/ChatInput'
 import TutorCardReviewModal from '../../components/tutor/TutorCardReviewModal'
+import QuickCardModal, { type QuickCardCandidate } from '../../components/tutor/QuickCardModal'
 import TutorChatSidebar from './TutorChatSidebar'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
@@ -62,8 +63,78 @@ export default function TutorSession(): React.JSX.Element {
   const [isPaused, setIsPaused] = useState(false)
   const [breakSeconds, setBreakSeconds] = useState(0)
   const [showTimeUp, setShowTimeUp] = useState(false)
+  const [showExitConfirmModal, setShowExitConfirmModal] = useState(false)
   const [showTimerMenu, setShowTimerMenu] = useState(false)
   const timerMenuRef = useRef<HTMLDivElement>(null)
+
+  // In-flight card extraction state
+  const [showQuickCardModal, setShowQuickCardModal] = useState(false)
+  const [quickCardLoading, setQuickCardLoading] = useState(false)
+  const [quickCardSnippet, setQuickCardSnippet] = useState('')
+  const [quickCardCandidate, setQuickCardCandidate] = useState<QuickCardCandidate | null>(null)
+
+  async function handleExtractCard(snippet: string): Promise<void> {
+    setQuickCardSnippet(snippet)
+    setQuickCardCandidate(null)
+    setQuickCardLoading(true)
+    setShowQuickCardModal(true)
+
+    try {
+      const activeTopic = sessionConfig?.target_topic || currentModule?.title
+      const res = await window.electronAPI.tutorExtractCardFromSnippet(subjectId, snippet, activeTopic)
+      if (res && res.success && res.cards && res.cards.length > 0) {
+        setQuickCardCandidate({
+          type: res.cards[0].type || 'flashcard',
+          front: res.cards[0].front,
+          back: res.cards[0].back,
+          concept: res.cards[0].concept || activeTopic || 'Key Concept'
+        })
+      } else {
+        setQuickCardCandidate({
+          type: 'flashcard',
+          front: snippet.length > 80 ? snippet.substring(0, 80) + '...' : snippet,
+          back: '',
+          concept: activeTopic || 'Key Concept'
+        })
+      }
+    } catch (err) {
+      console.error('Extract card error:', err)
+      setQuickCardCandidate({
+        type: 'flashcard',
+        front: snippet.length > 80 ? snippet.substring(0, 80) + '...' : snippet,
+        back: '',
+        concept: sessionConfig?.target_topic || 'Key Concept'
+      })
+    } finally {
+      setQuickCardLoading(false)
+    }
+  }
+
+  async function handleSaveQuickCard(card: QuickCardCandidate): Promise<void> {
+    try {
+      const targetTopicId = sessionConfig?.target_topic_id || (sessionConfig?.target_topic_ids && sessionConfig.target_topic_ids[0])
+      await window.electronAPI.saveCard({
+        subject_id: subjectId,
+        type: card.type,
+        front: card.front,
+        back: card.back,
+        concept: card.concept || sessionConfig?.target_topic || null,
+        topic_id: targetTopicId || null,
+        is_manual: 0,
+        source: 'tutor'
+      })
+
+      addToast({
+        type: 'success',
+        title: 'Card Saved!',
+        message: `Added "${card.front.length > 40 ? card.front.substring(0, 40) + '...' : card.front}" to your deck.`
+      })
+      setShowQuickCardModal(false)
+    } catch (err) {
+      console.error('Error saving quick card:', err)
+      addToast({ type: 'error', title: 'Save Failed', message: 'Could not save card to deck.' })
+    }
+  }
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -192,10 +263,20 @@ export default function TutorSession(): React.JSX.Element {
           sessionPhaseRef.current = s.phase as SessionPhase
 
           const restoredConfig: TutorSessionConfig = {
-            duration_minutes: s.duration_minutes ?? null,
-            depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5 | 'adaptive') ?? 'adaptive'),
-            never_studied: Boolean(s.never_studied),
-            module_id: s.module_id || undefined
+            duration_minutes: s.duration_minutes ?? config.duration_minutes ?? null,
+            depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5 | 'adaptive') ?? config.depth_level ?? 'adaptive'),
+            never_studied: Boolean(s.never_studied ?? config.never_studied),
+            module_id: s.module_id || config.module_id || undefined,
+            target_topic: config.target_topic,
+            target_topics: config.target_topics,
+            target_topic_id: config.target_topic_id,
+            target_topic_ids: config.target_topic_ids,
+            is_spaced_review: config.is_spaced_review,
+            spaced_review_topics: config.spaced_review_topics,
+            is_fill_gaps: config.is_fill_gaps,
+            gap_topics: config.gap_topics,
+            material_id: config.material_id,
+            material_name: config.material_name
           }
           setSessionConfig(restoredConfig)
 
@@ -855,6 +936,14 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     await streamMessage(sessionId!, transitionMsg, 'summary', history)
   }
 
+  function handleBackNavigation(): void {
+    if (!sessionEnded && messages.some(m => m.role === 'user')) {
+      setShowExitConfirmModal(true)
+    } else {
+      navigate('/tutor')
+    }
+  }
+
   function handleOpenEndModal(): void {
     setShowTimeUp(false)
     setShowEndModal(true)
@@ -873,16 +962,39 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
         .join('\n\n')
 
+      const effectiveTopics = sessionConfig?.target_topics?.length
+        ? sessionConfig.target_topics
+        : sessionConfig?.spaced_review_topics?.length
+          ? sessionConfig.spaced_review_topics
+          : sessionConfig?.target_topic
+            ? [sessionConfig.target_topic]
+            : []
+
+      const effectiveTopicIds = sessionConfig?.target_topic_id
+        ? [sessionConfig.target_topic_id]
+        : sessionConfig?.target_topic_ids?.length
+          ? sessionConfig.target_topic_ids
+          : []
+
       const res = await window.electronAPI.tutorEndSession(
         sessionId,
         sessionContent.substring(0, 5000),
         {
-          targetTopics: sessionConfig?.target_topics,
+          targetTopics: effectiveTopics.length > 0 ? effectiveTopics : undefined,
+          targetTopicIds: effectiveTopicIds.length > 0 ? effectiveTopicIds : undefined,
           moduleId: currentModule?.id || sessionConfig?.module_id
         }
       )
       if (res && (res as { evaluation?: TutorSessionEvaluation }).evaluation) {
-        setSessionEvaluation((res as { evaluation: TutorSessionEvaluation }).evaluation)
+        const evalData = (res as { evaluation: TutorSessionEvaluation }).evaluation
+        setSessionEvaluation(evalData)
+        if (evalData.updatedTopics && evalData.updatedTopics.length > 0) {
+          addToast({
+            type: 'success',
+            title: 'Retention Refreshed',
+            message: `Topic retention updated to 100% for ${evalData.updatedTopics.map(t => t.topicTitle).join(', ')}!`
+          })
+        }
       }
 
       setSessionEnded(true)
@@ -1099,6 +1211,28 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 </p>
               </div>
 
+              {/* Retention Maintained Indicator */}
+              {sessionEvaluation?.updatedTopics && sessionEvaluation.updatedTopics.length > 0 && (
+                <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-left">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-base">🎉</span>
+                    <h3 className="text-xs font-bold text-emerald-800 dark:text-emerald-200">
+                      Curriculum Retention Maintained!
+                    </h3>
+                  </div>
+                  <div className="space-y-1.5">
+                    {sessionEvaluation.updatedTopics.map((ut, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-300">
+                        <span className="font-semibold truncate mr-2">{ut.topicTitle}</span>
+                        <span className="font-bold px-2 py-0.5 rounded-full bg-emerald-200/80 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-100 text-[10px] whitespace-nowrap">
+                          {Math.round(ut.retrievability * 100)}% Retention · Next: {ut.nextReviewDue || 'Scheduled'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Evaluation Insights Card */}
               {sessionEvaluation && (sessionEvaluation.strengths?.length > 0 || sessionEvaluation.struggles?.length > 0) && (
                 <div className="text-left p-4 rounded-xl bg-slate-50 dark:bg-slate-700/40 border border-slate-200 dark:border-slate-600 space-y-3">
@@ -1258,7 +1392,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <button
-                onClick={() => navigate('/tutor')}
+                onClick={handleBackNavigation}
                 title="Back to Tutor Hub"
                 className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
@@ -1513,6 +1647,19 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               )}
             </div>
 
+            {sessionConfig?.is_spaced_review && !sessionEnded && (
+              <button
+                type="button"
+                onClick={handleOpenEndModal}
+                disabled={sending || endingSession}
+                className="flex items-center gap-1.5 px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition-all shadow-xs"
+                title="Complete drill and restore retention score"
+              >
+                <span>⚡</span>
+                <span>Finish Drill & Save</span>
+              </button>
+            )}
+
             <button
               onClick={handleOpenEndModal}
               disabled={sending || endingSession}
@@ -1581,6 +1728,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 role={msg.role}
                 content={msg.content}
                 created_at={msg.created_at}
+                onExtractCard={handleExtractCard}
               />
             ))}
 
@@ -1819,6 +1967,59 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         </div>
       )}
 
+      {/* Exit Confirmation Modal */}
+      {showExitConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => setShowExitConfirmModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl max-w-sm w-full p-5 text-center animate-slide-up"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xl mx-auto mb-2.5">
+              ⏳
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-50 mb-1">
+              Save Retention Progress?
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
+              You've completed discussion in this drill. Would you like to save your learning progress and refresh topic retention before leaving?
+            </p>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowExitConfirmModal(false)
+                  await executeEndSession({ generateCards: false })
+                  navigate('/tutor')
+                }}
+                className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <span>⚡</span> Save Retention & Exit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExitConfirmModal(false)
+                  navigate('/tutor')
+                }}
+                className="w-full py-2 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-medium transition-colors"
+              >
+                Exit Without Saving
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowExitConfirmModal(false)}
+                className="w-full py-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Ending Session Loading Progress Overlay */}
       {endingSession && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
@@ -1840,6 +2041,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         <TutorCardReviewModal
           sessionId={sessionId}
           subjectId={subjectId}
+          evaluation={sessionEvaluation}
           sessionContent={messages
             .filter(m => m.role !== 'system')
             .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
@@ -1852,6 +2054,16 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           }}
         />
       )}
+
+      {/* In-Flight Quick Card Modal */}
+      <QuickCardModal
+        isOpen={showQuickCardModal}
+        isLoading={quickCardLoading}
+        snippet={quickCardSnippet}
+        initialCard={quickCardCandidate}
+        onSave={handleSaveQuickCard}
+        onClose={() => setShowQuickCardModal(false)}
+      />
     </div>
   )
 }

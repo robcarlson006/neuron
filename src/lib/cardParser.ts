@@ -312,6 +312,13 @@ function splitSegments(text: string): string[] {
   const doubleNewline = text.split(/\n\s*\n/).filter(s => s.trim().length > 0)
   if (doubleNewline.length >= 2) return doubleNewline
 
+  // Try splitting by lines starting with bold: "**Term** -> ..."
+  const boldLineMatch = text.match(/\n\s*\*\*/m)
+  if (boldLineMatch) {
+    const segments = text.split(/\n\s*(?=\*\*)/).filter(s => s.trim().length > 0)
+    if (segments.length >= 2) return segments
+  }
+
   // Try splitting by separator lines (--- or ***)
   const hrSplit = text.split(/\n[-*]{3,}\n/).filter(s => s.trim().length > 0)
   if (hrSplit.length >= 2) return hrSplit

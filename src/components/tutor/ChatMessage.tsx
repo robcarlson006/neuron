@@ -10,6 +10,7 @@ export interface ChatMessageProps {
   content: string
   isStreaming?: boolean
   onSaveCards?: (content: string) => void
+  onExtractCard?: (snippet: string) => void
   created_at?: string
 }
 
@@ -18,6 +19,7 @@ export default function ChatMessage({
   content,
   isStreaming,
   onSaveCards,
+  onExtractCard,
   created_at
 }: ChatMessageProps): React.JSX.Element {
   const isUser = role === 'user'
@@ -73,11 +75,26 @@ export default function ChatMessage({
 
         {/* Action buttons row */}
         {showActions && !isStreaming && !isUser && (
-          <div className="flex items-center gap-1 mt-1 px-1 animate-fade-in">
+          <div className="flex items-center gap-1.5 mt-1 px-1 animate-fade-in">
+            {onExtractCard && content.trim().length > 15 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const sel = window.getSelection()?.toString()?.trim()
+                  onExtractCard(sel && sel.length > 5 ? sel : content)
+                }}
+                title="Create a targeted flashcard or active recall item from this explanation"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/60 border border-violet-200 dark:border-violet-800/60 transition-colors shadow-2xs cursor-pointer"
+              >
+                <span>🃏</span>
+                <span>Turn into Card</span>
+              </button>
+            )}
             {hasCards && onSaveCards && (
               <button
+                type="button"
                 onClick={() => onSaveCards(content)}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors cursor-pointer"
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path d="M1.5 2a.5.5 0 01.5-.5h5l3 3v5.5a.5.5 0 01-.5.5H2a.5.5 0 01-.5-.5V2z" stroke="currentColor" strokeWidth="1.2" fill="none"/>

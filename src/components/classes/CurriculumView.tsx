@@ -66,6 +66,7 @@ export default function CurriculumView({
     modules.find(m => m.status === 'in_progress')?.id ?? null
   )
   const [modalModule, setModalModule] = useState<(SyllabusModule & { topics?: ModuleTopic[] }) | null>(null)
+  const [modalInitialTopicId, setModalInitialTopicId] = useState<number | undefined>(undefined)
   const [selectedTopicsByModule, setSelectedTopicsByModule] = useState<Record<number, Set<number>>>({})
 
   function toggleModule(id: number): void {
@@ -246,6 +247,29 @@ export default function CurriculumView({
                 )}
               </div>
 
+              {/* Flashcard Coverage Badge */}
+              {(() => {
+                const topicsWithCards = (mod.topics || []).filter(t => (t.card_count ?? 0) > 0).length
+                const totalTopics = (mod.topics || []).length
+                if (totalTopics === 0) return null
+                const coveragePercent = Math.round((topicsWithCards / totalTopics) * 100)
+                return (
+                  <span
+                    title={`Card Coverage: ${topicsWithCards}/${totalTopics} topics have flashcards (${coveragePercent}%)`}
+                    className={`hidden sm:inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+                      coveragePercent === 100
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                        : coveragePercent > 0
+                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <span>🃏</span>
+                    <span>{coveragePercent}% Cards ({topicsWithCards}/{totalTopics})</span>
+                  </span>
+                )
+              })()}
+
               {/* Status badge */}
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium
                 ${isCompleted ? 'bg-emerald-100 dark:bg-emerald-800/50 text-emerald-600 dark:text-emerald-300' : ''}
@@ -405,6 +429,31 @@ export default function CurriculumView({
 
                             {/* Completed indicator & Retention badge with toggle option */}
                             <div className="flex items-center gap-2 flex-shrink-0">
+                              {/* Flashcard Coverage Badge */}
+                              {topic.card_count !== undefined && topic.card_count > 0 ? (
+                                <span
+                                  title={`${topic.card_count} flashcards or active recall questions created for this topic`}
+                                  className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1"
+                                >
+                                  <span>🃏</span>
+                                  <span>{topic.card_count} cards</span>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setModalModule(mod)
+                                    setModalInitialTopicId(topic.id)
+                                  }}
+                                  title="No cards created for this topic yet. Click to generate targeted cards."
+                                  className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>⚠️ 0 cards</span>
+                                  <span className="text-[9px] opacity-75 font-normal">· + Add</span>
+                                </button>
+                              )}
                               {topicCompleted ? (
                                 <div className="flex items-center gap-1.5">
                                   {/* Retention Status Indicator */}
@@ -544,12 +593,17 @@ export default function CurriculumView({
           isOpen={!!modalModule}
           module={modalModule}
           subjectName={subjectName}
+          initialTopicId={modalInitialTopicId}
           isGenerating={!!loadingCards?.[modalModule.id]}
-          onClose={() => setModalModule(null)}
+          onClose={() => {
+            setModalModule(null)
+            setModalInitialTopicId(undefined)
+          }}
           onGenerate={async (options) => {
             const modId = modalModule.id
             await onGenerateCards(modId, options)
             setModalModule(null)
+            setModalInitialTopicId(undefined)
           }}
         />
       )}

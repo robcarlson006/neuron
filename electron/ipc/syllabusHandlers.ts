@@ -700,10 +700,29 @@ Return ONLY valid JSON. No markdown.`
   ipcMain.handle('syllabus:getModule', (_event, moduleId: number) => {
     const mod = db.prepare('SELECT * FROM syllabus_modules WHERE id = ?').get(moduleId) as SyllabusModule | undefined
     if (!mod) return null
-    const topics = db.prepare(
-      'SELECT * FROM module_topics WHERE module_id = ? ORDER BY sort_order ASC'
-    ).all(moduleId) as ModuleTopic[]
-    return { ...mod, topics }
+    const topics = db.prepare(`
+      SELECT mt.*,
+        (
+          SELECT COUNT(*) FROM cards c
+          WHERE c.subject_id = ?
+            AND (
+              c.topic_id = mt.id
+              OR LOWER(TRIM(c.concept)) = LOWER(TRIM(mt.title))
+              OR LOWER(c.concept) LIKE '%' || LOWER(mt.title) || '%'
+              OR LOWER(mt.title) LIKE '%' || LOWER(c.concept) || '%'
+            )
+        ) as card_count
+      FROM module_topics mt
+      WHERE mt.module_id = ?
+      ORDER BY mt.sort_order ASC
+    `).all(mod.subject_id, moduleId) as (ModuleTopic & { card_count?: number })[]
+    return {
+      ...mod,
+      topics: topics.map(t => ({
+        ...t,
+        card_count: Number(t.card_count) || 0
+      }))
+    }
   })
 }
 
