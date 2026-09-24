@@ -185,12 +185,12 @@ export default function KnowledgeGraphView({
     }
 
     const pad = 80
-    const graphW = Math.max(maxX - minX + pad * 2, 250)
-    const graphH = Math.max(maxY - minY + pad * 2, 200)
+    const graphW = Math.max(maxX - minX + pad * 2, 400)
+    const graphH = Math.max(maxY - minY + pad * 2, 300)
 
-    const scaleX = canvasDim.width / graphW
-    const scaleY = canvasDim.height / graphH
-    const fitZoom = Math.max(0.14, Math.min(scaleX, scaleY, 1.15))
+    const scaleX = (canvasDim.width - 40) / graphW
+    const scaleY = (canvasDim.height - 40) / graphH
+    const fitZoom = Math.max(0.32, Math.min(scaleX, scaleY, 1.15))
 
     const centerX = (minX + maxX) / 2
     const centerY = (minY + maxY) / 2
@@ -229,7 +229,7 @@ export default function KnowledgeGraphView({
     const worldX = (cx - curPx) / curZ
     const worldY = (cy - curPy) / curZ
 
-    const newZ = Math.min(4.0, Math.max(0.12, curZ * factor))
+    const newZ = Math.min(3.5, Math.max(0.20, curZ * factor))
     const newPx = cx - worldX * newZ
     const newPy = cy - worldY * newZ
 
@@ -926,8 +926,8 @@ export default function KnowledgeGraphView({
                     {node.observations} obs
                   </text>
 
-                  {/* Node Label Below (Semantic Zoom: visible when zoom >= 0.38 or selected) */}
-                  {(zoom >= 0.38 || isSelected) && (
+                  {/* Node Label Below (Semantic Zoom: visible when zoom >= 0.25 or selected) */}
+                  {(zoom >= 0.25 || isSelected) && (
                     <g transform={`translate(0, ${radius + 14})`}>
                       <rect
                         x={-((isSelected ? node.label.length : Math.min(node.label.length, 26)) * 3.5 + 8)}

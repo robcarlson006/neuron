@@ -233,6 +233,9 @@ describe('conceptGraphEngine', () => {
       expect(graph.layoutBounds!.width).toBeGreaterThan(800)
       expect(graph.layoutBounds!.height).toBeGreaterThan(600)
 
+      const ratio = Math.max(graph.layoutBounds!.width / graph.layoutBounds!.height, graph.layoutBounds!.height / graph.layoutBounds!.width)
+      expect(ratio).toBeLessThanOrEqual(10.0)
+
       // Layout should compute smoothly (< 500ms)
       expect(tDuration).toBeLessThan(500)
 
@@ -243,6 +246,55 @@ describe('conceptGraphEngine', () => {
         expect(Number.isFinite(node.x)).toBe(true)
         expect(Number.isFinite(node.y)).toBe(true)
       }
+    })
+
+    it('merges curriculum structure when explicit dependencies exist without dropping module/topic DAG', () => {
+      const mockModules: any[] = [
+        {
+          id: 1,
+          subject_id: 1,
+          title: 'Module 1: Consumer Theory',
+          sort_order: 1,
+          topics: [
+            { id: 101, module_id: 1, title: 'Budget Constraints', sort_order: 1 },
+            { id: 102, module_id: 1, title: 'Indifference Curves', sort_order: 2 }
+          ]
+        },
+        {
+          id: 2,
+          subject_id: 1,
+          title: 'Module 2: Producer Theory',
+          sort_order: 2,
+          topics: [
+            { id: 201, module_id: 2, title: 'Cost Minimization', sort_order: 1 }
+          ]
+        }
+      ]
+
+      // Explicit user dependency
+      const manualDeps: ConceptDependency[] = [
+        { subject_id: 1, prerequisite_concept: 'Indifference Curves', target_concept: 'Cost Minimization', weight: 1.0 }
+      ]
+
+      // Cards with topic IDs
+      const cards: Card[] = [
+        { id: 1, subject_id: 1, type: 'flashcard', front: 'Q1', back: 'A1', is_manual: 0, concept: 'Marginal Rate of Substitution', topic_id: 102, created_at: '2026-01-01' }
+      ]
+
+      const graph = buildConceptGraph({
+        subjectId: 1,
+        modules: mockModules,
+        dependencies: manualDeps,
+        cards
+      })
+
+      // Curriculum dependencies must be present (e.g. Module 1 -> Module 2, Module 1 -> Budget Constraints)
+      expect(graph.edges.some(e => e.source === 'module 1: consumer theory' && e.target === 'budget constraints')).toBe(true)
+      expect(graph.edges.some(e => e.source === 'indifference curves' && e.target === 'cost minimization')).toBe(true)
+
+      // Card concept should be linked under Indifference Curves (topic 102)
+      expect(graph.nodes.some(n => n.id === 'marginal rate of substitution')).toBe(true)
+      expect(graph.edges.some(e => e.source === 'indifference curves' && e.target === 'marginal rate of substitution')).toBe(true)
     })
   })
 })

@@ -38,7 +38,7 @@ export function normalizeConceptKey(name: string): string {
 
 /**
  * Infers natural prerequisite dependencies from curriculum structure when
- * explicit database dependencies are sparse.
+ * explicit database dependencies are sparse or need curriculum context.
  */
 export function inferDependenciesFromCurriculum(
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
@@ -99,6 +99,22 @@ export function inferDependenciesFromCurriculum(
           weight: 0.9
         })
       }
+
+      // Inter-module bridge: connect last topic of module (i-1) to first topic of module (i)
+      if (i > 0) {
+        const prevMod = sortedModules[i - 1]
+        const prevTopics = prevMod.topics || []
+        if (prevTopics.length > 0) {
+          const sortedPrevTopics = [...prevTopics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          const lastPrevTopic = sortedPrevTopics[sortedPrevTopics.length - 1]
+          inferred.push({
+            subject_id: subjectId,
+            prerequisite_concept: lastPrevTopic.title,
+            target_concept: sortedTopics[0].title,
+            weight: 0.75
+          })
+        }
+      }
     }
   }
 
@@ -115,25 +131,36 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     concepts = [],
     modules = [],
     cards = [],
-    layoutWidth = 800,
-    layoutHeight = 600,
+    layoutWidth = 900,
+    layoutHeight = 650,
     layoutMode = 'hierarchical'
   } = params
 
-  // Merge explicit dependencies with curriculum-inferred dependencies if explicit is small
+  // 1. Merge explicit dependencies with curriculum-inferred dependencies
   const allDeps: ConceptDependency[] = [...dependencies]
-  if (allDeps.length === 0 && modules.length > 0) {
-    allDeps.push(...inferDependenciesFromCurriculum(modules))
+  const explicitDepKeys = new Set(
+    dependencies.map(d => `${normalizeConceptKey(d.prerequisite_concept)}->${normalizeConceptKey(d.target_concept)}`)
+  )
+
+  if (modules.length > 0) {
+    const inferred = inferDependenciesFromCurriculum(modules)
+    for (const inf of inferred) {
+      const key = `${normalizeConceptKey(inf.prerequisite_concept)}->${normalizeConceptKey(inf.target_concept)}`
+      if (!explicitDepKeys.has(key)) {
+        allDeps.push(inf)
+      }
+    }
   }
 
-  // 1. Concept Registry Map
+  // 2. Concept Registry Map
   const nodeMap = new Map<string, ConceptGraphNode>()
+  const topicIdMap = new Map<number, { title: string; moduleTitle: string; moduleId: number }>()
 
   function getOrCreateNode(rawName: string, category?: string, modId?: number, topId?: number): ConceptGraphNode {
     const key = normalizeConceptKey(rawName)
     if (nodeMap.has(key)) {
       const existing = nodeMap.get(key)!
-      if (!existing.category && category) existing.category = category
+      if ((!existing.category || existing.category === 'General') && category) existing.category = category
       if (!existing.moduleId && modId) existing.moduleId = modId
       if (!existing.topicId && topId) existing.topicId = topId
       return existing
@@ -158,6 +185,29 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     return node
   }
 
+  // Register concepts from modules & topics
+  const sortedMods = [...modules].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+  for (let mIdx = 0; mIdx < sortedMods.length; mIdx++) {
+    const mod = sortedMods[mIdx]
+    const modNode = getOrCreateNode(mod.title, 'Module', mod.id)
+    if (modNode.layer === undefined) modNode.layer = mIdx * 2
+
+    if (mod.topics) {
+      const sortedTopics = [...mod.topics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      for (let tIdx = 0; tIdx < sortedTopics.length; tIdx++) {
+        const top = sortedTopics[tIdx]
+        topicIdMap.set(top.id, { title: top.title, moduleTitle: mod.title, moduleId: mod.id })
+        const topNode = getOrCreateNode(top.title, mod.title, mod.id, top.id)
+        if (topNode.layer === undefined) topNode.layer = mIdx * 2 + 1 + Math.floor(tIdx / 2)
+        if (top.card_count) topNode.cardCount += top.card_count
+        if (top.retrievability !== undefined && top.retrievability > 0 && topNode.observations === 0) {
+          topNode.masteryProb = Math.min(Math.max(top.retrievability, 0), 1)
+          topNode.observations = 1
+        }
+      }
+    }
+  }
+
   // Register concepts from BKT concept_mastery table
   for (const cm of concepts) {
     if (!cm.concept) continue
@@ -166,42 +216,55 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     node.observations = cm.observations ?? 0
   }
 
-  // Register concepts and card counts from cards
+  // Register concepts and link them with topics/modules from cards
   for (const card of cards) {
-    if (card.concept) {
-      const node = getOrCreateNode(card.concept)
-      node.cardCount += 1
-    }
-    if (card.tags) {
-      const tags = card.tags.split(',').map(t => t.trim()).filter(Boolean)
-      for (const t of tags) {
-        if (!nodeMap.has(normalizeConceptKey(t))) {
-          // If concept is not already registered, optionally register prominent tags
-          if (t.length > 2 && t.length < 30) {
-            const tagNode = getOrCreateNode(t)
-            tagNode.cardCount += 1
+    if (card.concept && card.concept.trim()) {
+      const rawConcept = card.concept.trim()
+      let associatedCat: string | undefined
+      let associatedModId: number | undefined
+      let associatedTopId: number | undefined
+
+      // If card has topic_id, link concept under that topic
+      if (card.topic_id && topicIdMap.has(card.topic_id)) {
+        const topInfo = topicIdMap.get(card.topic_id)!
+        associatedCat = topInfo.moduleTitle
+        associatedModId = topInfo.moduleId
+        associatedTopId = card.topic_id
+
+        const topKey = normalizeConceptKey(topInfo.title)
+        const conceptKey = normalizeConceptKey(rawConcept)
+        if (topKey !== conceptKey) {
+          const edgeKey = `${topKey}->${conceptKey}`
+          if (!explicitDepKeys.has(edgeKey)) {
+            allDeps.push({
+              subject_id: card.subject_id,
+              prerequisite_concept: topInfo.title,
+              target_concept: rawConcept,
+              weight: 0.85
+            })
+            explicitDepKeys.add(edgeKey)
           }
         }
       }
-    }
-  }
 
-  // Register concepts from modules & topics
-  for (const mod of modules) {
-    getOrCreateNode(mod.title, 'Module', mod.id)
-    if (mod.topics) {
-      for (const top of mod.topics) {
-        const topNode = getOrCreateNode(top.title, mod.title, mod.id, top.id)
-        if (top.card_count) topNode.cardCount += top.card_count
-        if (top.retrievability !== undefined && top.retrievability > 0 && topNode.observations === 0) {
-          topNode.masteryProb = top.retrievability
-          topNode.observations = 1
+      const node = getOrCreateNode(rawConcept, associatedCat, associatedModId, associatedTopId)
+      node.cardCount += 1
+    }
+
+    // Only match tags if they correspond to an existing topic or concept (avoid noise from random tags)
+    if (card.tags) {
+      const tags = card.tags.split(',').map(t => t.trim()).filter(Boolean)
+      for (const t of tags) {
+        const tagKey = normalizeConceptKey(t)
+        if (nodeMap.has(tagKey)) {
+          const existingNode = nodeMap.get(tagKey)!
+          existingNode.cardCount += 1
         }
       }
     }
   }
 
-  // Register concepts and links from dependencies
+  // Register concepts and directed links from dependencies
   const edgeList: ConceptGraphEdge[] = []
   const edgeSet = new Set<string>()
 
@@ -215,6 +278,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     const sourceNode = getOrCreateNode(dep.prerequisite_concept)
     const targetNode = getOrCreateNode(dep.target_concept)
 
+    // Inherit category/module if missing
+    if ((!targetNode.category || targetNode.category === 'General') && sourceNode.category && sourceNode.category !== 'General' && sourceNode.category !== 'Module') {
+      targetNode.category = sourceNode.category
+    }
+
     const edgeKey = `${sourceKey}->${targetKey}`
     if (!edgeSet.has(edgeKey)) {
       edgeSet.add(edgeKey)
@@ -226,7 +294,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
         targetNode.prerequisites.push(sourceKey)
       }
 
-      // Is prerequisite met? (Prerequisite node has mastery >= 0.50 or observations > 2 with mastery >= 0.45)
+      // Is prerequisite met? (Prerequisite node has mastery >= 0.50 or observations >= 3 with mastery >= 0.45)
       const isMet = sourceNode.masteryProb >= 0.50 || (sourceNode.observations >= 3 && sourceNode.masteryProb >= 0.45)
 
       edgeList.push({
@@ -239,11 +307,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     }
   }
 
-  // 2. Topological Layering & Cycle Safety
+  // 3. Topological Layering & Cycle Safety
   const nodes = Array.from(nodeMap.values())
   computeTopologicalLayers(nodes, nodeMap)
 
-  // 3. Prerequisite Readiness & Status Assignment
+  // 4. Prerequisite Readiness & Status Assignment
   for (const node of nodes) {
     const hasUnmetPrereq = node.prerequisites.some(pKey => {
       const pNode = nodeMap.get(pKey)
@@ -263,7 +331,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     }
   }
 
-  // 4. Bottleneck & Optimal Next Concept Scoring
+  // 5. Bottleneck & Optimal Next Concept Scoring
   const bottlenecks = computeBottlenecks(nodes, nodeMap)
   const criticalBottlenecks = bottlenecks.slice(0, 3).map(n => n.id)
 
@@ -271,14 +339,14 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
   const studyCandidates = bottlenecks.filter(n => n.status !== 'blocked' && n.status !== 'mastered')
   const suggestedNextConcept = studyCandidates.length > 0 ? studyCandidates[0].id : (bottlenecks[0]?.id || null)
 
-  // 5. 2D Coordinate Layout Computation
+  // 6. 2D Coordinate Layout Computation
   if (layoutMode === 'hierarchical') {
     applyHierarchicalLayout(nodes, edgeList, layoutWidth, layoutHeight)
   } else {
     applyForceDirectedLayout(nodes, edgeList, layoutWidth, layoutHeight)
   }
 
-  // 6. Calculate Layout Bounds
+  // 7. Calculate Layout Bounds
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
@@ -302,7 +370,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     height: Math.ceil(Math.max(layoutHeight, maxY - minY + paddingBounds * 2))
   } : undefined
 
-  // 7. Metrics aggregation
+  // 8. Metrics aggregation
   const metrics = {
     totalConcepts: nodes.length,
     masteredCount: nodes.filter(n => n.status === 'mastered').length,
@@ -324,7 +392,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
 
 /**
  * Computes topological depth layer for each node (longest path from root),
- * handling potential cycles gracefully.
+ * handling potential cycles gracefully and incorporating module progression.
  */
 function computeTopologicalLayers(nodes: ConceptGraphNode[], nodeMap: Map<string, ConceptGraphNode>): void {
   const visited = new Set<string>()
@@ -334,7 +402,7 @@ function computeTopologicalLayers(nodes: ConceptGraphNode[], nodeMap: Map<string
     if (inStack.has(nodeKey)) return 0 // Cycle detected, break recursion
     const node = nodeMap.get(nodeKey)
     if (!node) return 0
-    if (node.layer !== undefined) return node.layer
+    if (node.layer !== undefined && visited.has(nodeKey)) return node.layer
 
     inStack.add(nodeKey)
     let maxPrereqDepth = -1
@@ -344,10 +412,11 @@ function computeTopologicalLayers(nodes: ConceptGraphNode[], nodeMap: Map<string
     }
     inStack.delete(nodeKey)
 
-    const layer = maxPrereqDepth + 1
-    node.layer = layer
+    // If prerequisites exist, layer is max prerequisite + 1; otherwise keep module-seeded layer or 0
+    const calculatedLayer = maxPrereqDepth >= 0 ? maxPrereqDepth + 1 : (node.layer ?? 0)
+    node.layer = calculatedLayer
     visited.add(nodeKey)
-    return layer
+    return calculatedLayer
   }
 
   for (const node of nodes) {
@@ -405,53 +474,64 @@ function computeBottlenecks(
 
 /**
  * Removes overlaps between nodes ensuring adequate clearance for node circles and text labels.
+ * Uses bounded damping to prevent runaway coordinate explosion.
  */
 export function removeOverlaps(
   nodes: ConceptGraphNode[],
-  minDistX: number = 100,
-  minDistY: number = 60,
-  iterations: number = 4
+  minDistX: number = 120,
+  minDistY: number = 75,
+  iterations: number = 3
 ): void {
   if (nodes.length <= 1) return
 
   for (let iter = 0; iter < iterations; iter++) {
     let moved = false
+    const damping = 1.0 / (iter + 1)
+    const maxShiftX = 25 * damping
+    const maxShiftY = 20 * damping
+
     for (let i = 0; i < nodes.length; i++) {
       const u = nodes[i]
       const ux = u.x ?? 0
       const uy = u.y ?? 0
-      const uLabelHalf = Math.max(45, (u.label.length * 7 + 24) / 2)
+      const uLabelHalf = Math.max(40, Math.min(80, (u.label.length * 6.0 + 20) / 2))
 
       for (let j = i + 1; j < nodes.length; j++) {
         const v = nodes[j]
         const vx = v.x ?? 0
         const vy = v.y ?? 0
-        const vLabelHalf = Math.max(45, (v.label.length * 7 + 24) / 2)
+        const vLabelHalf = Math.max(40, Math.min(80, (v.label.length * 6.0 + 20) / 2))
 
-        const requiredX = Math.max(minDistX, uLabelHalf + vLabelHalf + 16)
+        const requiredX = Math.max(minDistX, uLabelHalf + vLabelHalf + 14)
         const requiredY = minDistY
 
         const dx = vx - ux
         const dy = vy - uy
 
+        // Fast bounding box reject before distance calculation
+        if (Math.abs(dx) >= requiredX || Math.abs(dy) >= requiredY) continue
+
         const normDistSq = (dx * dx) / (requiredX * requiredX) + (dy * dy) / (requiredY * requiredY)
 
-        if (normDistSq < 1.0 && normDistSq > 1e-6) {
+        if (normDistSq < 1.0 && normDistSq > 1e-4) {
           const normDist = Math.sqrt(normDistSq)
           const overlap = 1.0 - normDist
-          const pushFraction = overlap * 0.5
+          const pushFraction = overlap * 0.4 * damping
 
-          const shiftX = (dx / normDist) * pushFraction * requiredX
-          const shiftY = (dy / normDist) * pushFraction * requiredY
+          const rawShiftX = (dx / normDist) * pushFraction * requiredX
+          const rawShiftY = (dy / normDist) * pushFraction * requiredY
+
+          const shiftX = Math.max(-maxShiftX, Math.min(maxShiftX, rawShiftX))
+          const shiftY = Math.max(-maxShiftY, Math.min(maxShiftY, rawShiftY))
 
           u.x = ux - shiftX
           u.y = uy - shiftY
           v.x = vx + shiftX
           v.y = vy + shiftY
           moved = true
-        } else if (normDistSq <= 1e-6) {
-          const jitterX = (Math.random() - 0.5) * 40
-          const jitterY = (Math.random() - 0.5) * 40
+        } else if (normDistSq <= 1e-4) {
+          const jitterX = (Math.random() - 0.5) * 15 * damping
+          const jitterY = (Math.random() - 0.5) * 15 * damping
           u.x = ux - jitterX
           u.y = uy - jitterY
           v.x = vx + jitterX
@@ -465,13 +545,14 @@ export function removeOverlaps(
 }
 
 /**
- * Calculates clean hierarchical layer coordinates with anti-overlap spacing and multi-tier staggering.
+ * Calculates clean hierarchical layer coordinates with anti-overlap spacing and multi-tier grid staggering.
+ * Prevents extreme horizontal stretch by arranging wide layers into compact, balanced 2D grids.
  */
 export function applyHierarchicalLayout(
   nodes: ConceptGraphNode[],
   _edges: ConceptGraphEdge[],
   width: number,
-  height: number
+  _height: number
 ): void {
   if (nodes.length === 0) return
 
@@ -487,60 +568,64 @@ export function applyHierarchicalLayout(
     layerGroups.set(layer, group)
   }
 
-  const totalLayers = maxLayer + 1
+  // Calculate target columns per layer to preserve balanced aspect ratio
+  const maxNodesInAnyLayer = Math.max(...Array.from(layerGroups.values()).map(g => g.length))
+  const targetColsPerLayer = Math.max(1, Math.min(5, Math.ceil(Math.sqrt(maxNodesInAnyLayer * 1.2))))
 
-  // Determine needed canvas width based on maximum nodes in a layer and their label lengths
-  let maxNeededWidth = 0
-  layerGroups.forEach(group => {
-    let layerWidth = 0
-    for (const n of group) {
-      const approxWidth = Math.max(120, n.label.length * 7.5 + 40)
-      layerWidth += approxWidth
-    }
-    if (layerWidth > maxNeededWidth) maxNeededWidth = layerWidth
-  })
-
-  // Dynamic virtual canvas size
-  const effectiveWidth = Math.max(width, maxNeededWidth + 240, 950)
-  const layerStepY = Math.max(160, (Math.max(height, 600) - 160) / Math.max(totalLayers - 1, 1))
+  const colSpacingX = 185
+  const rowSpacingY = 115
+  const layerGapY = 140
   const paddingX = 100
   const paddingY = 80
 
-  layerGroups.forEach((group, layer) => {
-    const baseY = paddingY + layer * layerStepY
-    const count = group.length
+  let currentY = paddingY
 
+  // Iterate through topological layers in order
+  const sortedLayers = Array.from(layerGroups.keys()).sort((a, b) => a - b)
+  let maxLayoutX = width
+
+  for (const layer of sortedLayers) {
+    const group = layerGroups.get(layer)!
     // Sort group by category/label for visual stability
     group.sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.label.localeCompare(b.label))
 
-    const shouldStagger = count > 6
-    const usableWidth = effectiveWidth - paddingX * 2
-    const stepX = count > 1 ? usableWidth / (count - 1) : 0
-    const startX = count === 1 ? effectiveWidth / 2 : paddingX
+    const count = group.length
+    const numCols = Math.min(count, targetColsPerLayer)
+    const numRows = Math.ceil(count / numCols)
 
-    group.forEach((node, idx) => {
-      node.x = count === 1 ? startX : startX + idx * stepX
+    const layerWidth = (numCols - 1) * colSpacingX
+    const startX = Math.max(paddingX, width / 2 - layerWidth / 2)
 
-      // Multi-tier staggered vertical offset if dense layer
-      let yOffset = 0
-      if (shouldStagger) {
-        const staggerPattern = [0, -32, 32, -16, 16]
-        yOffset = staggerPattern[idx % staggerPattern.length]
-      }
+    for (let idx = 0; idx < count; idx++) {
+      const node = group[idx]
+      const col = idx % numCols
+      const row = Math.floor(idx / numCols)
 
-      node.y = baseY + yOffset
+      // Slight row stagger for natural visual balance
+      const staggerX = (row % 2 === 1 && numCols > 1) ? colSpacingX * 0.25 : 0
+      const nodeX = startX + col * colSpacingX + staggerX
+      const nodeY = currentY + row * rowSpacingY
+
+      node.x = nodeX
+      node.y = nodeY
       node.vx = 0
       node.vy = 0
-    })
-  })
 
-  // Run overlap removal pass to resolve any tight bounds
-  removeOverlaps(nodes, 105, 60, 4)
+      if (nodeX + paddingX > maxLayoutX) {
+        maxLayoutX = nodeX + paddingX
+      }
+    }
+
+    currentY += numRows * rowSpacingY + (layerGapY - rowSpacingY)
+  }
+
+  // Run overlap removal pass
+  removeOverlaps(nodes, 120, 75, 3)
 }
 
 /**
- * Applies iterative 2D force simulation with dynamic virtual canvas scaling,
- * cosine annealing damping, center gravity, and post-layout overlap removal.
+ * Applies iterative 2D force simulation with module cluster gravity,
+ * cosine annealing damping, and post-layout overlap removal.
  */
 export function applyForceDirectedLayout(
   nodes: ConceptGraphNode[],
@@ -552,24 +637,33 @@ export function applyForceDirectedLayout(
   if (nodes.length === 0) return
 
   const nodeCount = nodes.length
-  const scaleFactor = Math.max(1.0, Math.sqrt(nodeCount / 20))
+  const scaleFactor = Math.max(1.0, Math.sqrt(nodeCount / 25))
   const simWidth = Math.max(width * scaleFactor, 1200)
   const simHeight = Math.max(height * scaleFactor, 850)
 
-  // First seed with hierarchical layout on scaled canvas for good initial dispersion
+  // Seed with hierarchical grid layout on scaled canvas for balanced initial positions
   applyHierarchicalLayout(nodes, edges, simWidth, simHeight)
 
   const nodeMap = new Map<string, ConceptGraphNode>()
   nodes.forEach(n => nodeMap.set(n.id, n))
 
-  const totalIterations = iterations ?? Math.max(75, Math.min(160, 50 + Math.floor(nodeCount * 0.4)))
-  const kRepulsion = 8000 + nodeCount * 30
-  const kSpring = 0.04
-  const idealLength = 150 + Math.min(120, Math.sqrt(nodeCount) * 8)
+  // Module category cluster centers
+  const categoryMap = new Map<string, ConceptGraphNode[]>()
+  nodes.forEach(n => {
+    const cat = n.category || 'General'
+    const list = categoryMap.get(cat) || []
+    list.push(n)
+    categoryMap.set(cat, list)
+  })
+
+  const totalIterations = iterations ?? Math.max(80, Math.min(180, 60 + Math.floor(nodeCount * 0.4)))
+  const kRepulsion = 7500 + nodeCount * 25
+  const kSpring = 0.045
+  const idealLength = 140 + Math.min(100, Math.sqrt(nodeCount) * 6)
   const padding = 80
   const centerX = simWidth / 2
   const centerY = simHeight / 2
-  const kCenterGravity = 0.005
+  const kCenterGravity = 0.006
 
   for (let iter = 0; iter < totalIterations; iter++) {
     const damping = 0.5 * (1 + Math.cos((Math.PI * iter) / totalIterations))
@@ -584,7 +678,7 @@ export function applyForceDirectedLayout(
         const distSq = dx * dx + dy * dy + 1e-4
         const dist = Math.sqrt(distSq)
 
-        if (dist < 800) {
+        if (dist < 650) {
           const force = (kRepulsion / distSq) * damping
           const fx = (dx / dist) * force
           const fy = (dy / dist) * force
@@ -618,7 +712,27 @@ export function applyForceDirectedLayout(
       v.y = (v.y ?? 0) - fy
     }
 
-    // 3. Gentle Center Gravity & Bounding Box Constraints
+    // 3. Category Cluster Cohesion
+    categoryMap.forEach(catNodes => {
+      if (catNodes.length <= 1) return
+      let catSumX = 0
+      let catSumY = 0
+      for (const cn of catNodes) {
+        catSumX += cn.x ?? centerX
+        catSumY += cn.y ?? centerY
+      }
+      const catAvgX = catSumX / catNodes.length
+      const catAvgY = catSumY / catNodes.length
+
+      for (const cn of catNodes) {
+        const cdx = (catAvgX - (cn.x ?? catAvgX)) * 0.015 * damping
+        const cdy = (catAvgY - (cn.y ?? catAvgY)) * 0.015 * damping
+        cn.x = (cn.x ?? catAvgX) + cdx
+        cn.y = (cn.y ?? catAvgY) + cdy
+      }
+    })
+
+    // 4. Gentle Center Gravity & Bounding Box Constraints
     for (const node of nodes) {
       const cx = (centerX - (node.x ?? centerX)) * kCenterGravity * damping
       const cy = (centerY - (node.y ?? centerY)) * kCenterGravity * damping
@@ -628,7 +742,7 @@ export function applyForceDirectedLayout(
   }
 
   // Post-simulation overlap removal sweep
-  removeOverlaps(nodes, 105, 60, 4)
+  removeOverlaps(nodes, 120, 75, 4)
 }
 
 /**
