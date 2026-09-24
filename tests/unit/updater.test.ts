@@ -74,6 +74,18 @@ describe('Updater - pickAsset selection', () => {
   test('returns null for empty asset list', () => {
     expect(pickAsset([], 'darwin', 'arm64')).toBeNull()
   })
+
+  test('prefers asset API url over browser_download_url when provided', () => {
+    const assetsWithApiUrl = [
+      {
+        name: 'Neuron-4.16.1-arm64.dmg',
+        browser_download_url: 'https://github.com/robmcarlson006/neuron/releases/download/v4.16.1/Neuron-4.16.1-arm64.dmg',
+        url: 'https://api.github.com/repositories/1205182997/releases/assets/586871478'
+      }
+    ]
+    const url = pickAsset(assetsWithApiUrl, 'darwin', 'arm64')
+    expect(url).toBe('https://api.github.com/repositories/1205182997/releases/assets/586871478')
+  })
 })
 
 describe('Updater - buildMacInstallScript', () => {

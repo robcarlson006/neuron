@@ -83,23 +83,52 @@ export function downloadFile(
   onProgress?: (pct: number) => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    function get(u: string, redirectCount = 0): void {
-      if (redirectCount > 5) {
+    function executeGet(u: string, redirectCount = 0): void {
+      if (redirectCount > 8) {
         reject(new Error('Too many redirects'))
         return
       }
+
+      const isGitHubApi = u.includes('api.github.com')
+      const headers: Record<string, string> = {
+        'User-Agent': 'Neuron-App'
+      }
+      if (isGitHubApi) {
+        headers['Accept'] = 'application/octet-stream'
+      }
+
       const lib = u.startsWith('https') ? https : http
       lib.get(
         u,
-        { headers: { 'User-Agent': 'Neuron-App' } },
+        { headers },
         (res) => {
-          // Follow redirects
-          if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
-            if (res.headers.location) {
-              get(res.headers.location, redirectCount + 1)
+          // Follow redirects (301, 302, 307, 308)
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            executeGet(res.headers.location, redirectCount + 1)
+            return
+          }
+
+          // If GitHub returned 404 on browser_download_url, attempt fallback to API asset download
+          if (res.statusCode === 404 && u.includes('/releases/download/')) {
+            const fileName = u.split('/').pop()?.split('?')[0]
+            if (fileName) {
+              fetchJSON(`https://api.github.com/repositories/${GITHUB_REPO_ID}/releases/latest`)
+                .then((releaseData) => {
+                  const data = releaseData as { assets?: { name: string; url: string }[] }
+                  const matchingAsset = data.assets?.find(a => a.name === fileName)
+                  if (matchingAsset && matchingAsset.url) {
+                    executeGet(matchingAsset.url, 0)
+                  } else {
+                    reject(new Error(`Download failed: HTTP ${res.statusCode}`))
+                  }
+                })
+                .catch(() => {
+                  reject(new Error(`Download failed: HTTP ${res.statusCode}`))
+                })
               return
             }
           }
+
           if (res.statusCode !== 200) {
             reject(new Error(`Download failed: HTTP ${res.statusCode}`))
             return
@@ -129,18 +158,24 @@ export function downloadFile(
         }
       ).on('error', reject)
     }
-    get(url)
+
+    executeGet(url)
   })
 }
 
 /** Pick the right asset URL for the current platform/arch. */
 export function pickAsset(
-  assets: { name: string; browser_download_url: string }[],
+  assets: { name: string; browser_download_url: string; url?: string }[],
   targetPlatform: string = process.platform,
   targetArch: string = process.arch,
   preferredArch?: string
 ): string | null {
   if (!assets || assets.length === 0) return null
+
+  const getUrl = (a: { name: string; browser_download_url: string; url?: string } | undefined): string | null => {
+    if (!a) return null
+    return a.url ?? a.browser_download_url
+  }
 
   if (targetPlatform === 'darwin') {
     let resolvedArch = preferredArch && preferredArch !== 'auto' ? preferredArch : targetArch
@@ -157,24 +192,24 @@ export function pickAsset(
       : assets.find(a => a.name.toLowerCase().endsWith('.dmg') && !a.name.includes('arm64') && !a.name.includes('aarch64'))
 
     // 3. Final fallback: any DMG
-    return target?.browser_download_url
-      ?? fallback?.browser_download_url
-      ?? assets.find(a => a.name.toLowerCase().endsWith('.dmg'))?.browser_download_url
+    return getUrl(target)
+      ?? getUrl(fallback)
+      ?? getUrl(assets.find(a => a.name.toLowerCase().endsWith('.dmg')))
       ?? null
   }
 
   if (targetPlatform === 'win32') {
     // Prefer NSIS Setup exe
-    return assets.find(a => /Setup.*\.exe$/i.test(a.name))?.browser_download_url
-      ?? assets.find(a => a.name.toLowerCase().endsWith('.exe'))?.browser_download_url
+    return getUrl(assets.find(a => /Setup.*\.exe$/i.test(a.name)))
+      ?? getUrl(assets.find(a => a.name.toLowerCase().endsWith('.exe')))
       ?? null
   }
 
   if (targetPlatform === 'linux') {
     // Prefer AppImage
-    return assets.find(a => a.name.toLowerCase().endsWith('.appimage'))?.browser_download_url
-      ?? assets.find(a => a.name.toLowerCase().endsWith('.deb'))?.browser_download_url
-      ?? assets.find(a => a.name.toLowerCase().endsWith('.tar.gz'))?.browser_download_url
+    return getUrl(assets.find(a => a.name.toLowerCase().endsWith('.appimage')))
+      ?? getUrl(assets.find(a => a.name.toLowerCase().endsWith('.deb')))
+      ?? getUrl(assets.find(a => a.name.toLowerCase().endsWith('.tar.gz')))
       ?? null
   }
 
