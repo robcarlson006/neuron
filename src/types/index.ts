@@ -1334,6 +1334,14 @@ export interface ConceptGraphData {
     criticalBottlenecks: string[]
     suggestedNextConcept: string | null
   }
+  layoutBounds?: {
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+    width: number
+    height: number
+  }
 }
 
 

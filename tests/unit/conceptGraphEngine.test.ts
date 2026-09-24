@@ -3,7 +3,8 @@ import {
   inferDependenciesFromCurriculum,
   buildConceptGraph,
   getImpactedDownstreamConcepts,
-  findShortestLearningPath
+  findShortestLearningPath,
+  removeOverlaps
 } from '../../src/lib/conceptGraphEngine'
 import type { ConceptDependency, ConceptMastery, SyllabusModule, Card } from '../../src/types'
 
@@ -175,4 +176,74 @@ describe('conceptGraphEngine', () => {
       expect(path.map(n => n.id)).toEqual(['algebra', 'functions', 'calculus i', 'differential equations'])
     })
   })
+
+  describe('removeOverlaps & large graph layout scaling', () => {
+    it('pushes overlapping nodes apart so clearance is enforced', () => {
+      const mockNodes: any[] = [
+        { id: 'a', label: 'Microeconomics Demand Curve', x: 200, y: 200 },
+        { id: 'b', label: 'Microeconomics Supply Curve', x: 205, y: 202 }
+      ]
+
+      removeOverlaps(mockNodes, 100, 60, 4)
+
+      const dx = mockNodes[0].x - mockNodes[1].x
+      const dy = mockNodes[0].y - mockNodes[1].y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      // Nodes must be pushed apart substantially from initial ~5px
+      expect(dist).toBeGreaterThanOrEqual(40)
+    })
+
+    it('dynamically scales virtual layout bounds for 200+ node graphs without overlapping stacks', () => {
+      const largeConcepts: ConceptMastery[] = Array.from({ length: 200 }, (_, i) => ({
+        id: i + 1,
+        user_id: 1,
+        subject_id: 1,
+        concept: `Microeconomics Concept ${i + 1}`,
+        mastery_prob: 0.5,
+        observations: 1,
+        updated_at: '2026-01-01'
+      }))
+
+      // Create chained and branched dependencies across 200 concepts
+      const largeDeps: ConceptDependency[] = []
+      for (let i = 0; i < 150; i++) {
+        largeDeps.push({
+          subject_id: 1,
+          prerequisite_concept: `Microeconomics Concept ${Math.floor(i / 3) + 1}`,
+          target_concept: `Microeconomics Concept ${i + 2}`,
+          weight: 1.0
+        })
+      }
+
+      const tStart = performance.now()
+      const graph = buildConceptGraph({
+        subjectId: 1,
+        concepts: largeConcepts,
+        dependencies: largeDeps,
+        layoutWidth: 800,
+        layoutHeight: 600,
+        layoutMode: 'hierarchical'
+      })
+      const tDuration = performance.now() - tStart
+
+      expect(graph.nodes.length).toBe(200)
+      // Virtual bounds must expand beyond 800x600 for 200 concepts
+      expect(graph.layoutBounds).toBeDefined()
+      expect(graph.layoutBounds!.width).toBeGreaterThan(800)
+      expect(graph.layoutBounds!.height).toBeGreaterThan(600)
+
+      // Layout should compute smoothly (< 500ms)
+      expect(tDuration).toBeLessThan(500)
+
+      // Nodes must all have valid coordinates
+      for (const node of graph.nodes) {
+        expect(node.x).toBeDefined()
+        expect(node.y).toBeDefined()
+        expect(Number.isFinite(node.x)).toBe(true)
+        expect(Number.isFinite(node.y)).toBe(true)
+      }
+    })
+  })
 })
+

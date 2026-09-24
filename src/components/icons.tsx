@@ -493,6 +493,3 @@ export function Filter({ size = 16, className, ...props }: IconProps): React.JSX
 }
 
 
-
-
-

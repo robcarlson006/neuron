@@ -9,6 +9,7 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
+  Maximize2,
   Lock,
   Zap,
   Flame,
@@ -66,17 +67,29 @@ export default function KnowledgeGraphView({
   const [newLinkTarget, setNewLinkTarget] = useState('')
   const [isSavingLink, setIsSavingLink] = useState(false)
 
-  // Zoom / Pan state
+  // Zoom / Pan state & smooth animation refs
   const [zoom, setZoom] = useState(1.0)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+
+  const targetZoomRef = useRef(1.0)
+  const currentZoomRef = useRef(1.0)
+  const targetPanRef = useRef({ x: 0, y: 0 })
+  const currentPanRef = useRef({ x: 0, y: 0 })
+  const animFrameRef = useRef<number | null>(null)
+
+  // Pan inertia velocity tracking
+  const lastMoveTimeRef = useRef(0)
+  const velocityRef = useRef({ vx: 0, vy: 0 })
+  const inertiaFrameRef = useRef<number | null>(null)
 
   // Node Dragging state
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null)
   const [draggedPositions, setDraggedPositions] = useState<Record<string, { x: number; y: number }>>({})
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
   const [canvasDim, setCanvasDim] = useState({ width: 900, height: 600 })
 
   useEffect(() => {
@@ -92,6 +105,50 @@ export default function KnowledgeGraphView({
     updateDimensions()
     window.addEventListener('resize', updateDimensions)
     return () => window.removeEventListener('resize', updateDimensions)
+  }, [])
+
+  // Animation step loop (exponential ease lerp for silky smooth 60fps transitions)
+  const startAnimation = useCallback(() => {
+    if (animFrameRef.current) return
+
+    const step = () => {
+      const diffZ = targetZoomRef.current - currentZoomRef.current
+      const diffPx = targetPanRef.current.x - currentPanRef.current.x
+      const diffPy = targetPanRef.current.y - currentPanRef.current.y
+
+      const isZoomClose = Math.abs(diffZ) < 0.001
+      const isPanClose = Math.abs(diffPx) < 0.4 && Math.abs(diffPy) < 0.4
+
+      if (isZoomClose && isPanClose) {
+        currentZoomRef.current = targetZoomRef.current
+        currentPanRef.current = { ...targetPanRef.current }
+        setZoom(currentZoomRef.current)
+        setPan(currentPanRef.current)
+        animFrameRef.current = null
+        return
+      }
+
+      currentZoomRef.current += diffZ * 0.22
+      currentPanRef.current = {
+        x: currentPanRef.current.x + diffPx * 0.22,
+        y: currentPanRef.current.y + diffPy * 0.22
+      }
+
+      setZoom(currentZoomRef.current)
+      setPan({ ...currentPanRef.current })
+
+      animFrameRef.current = requestAnimationFrame(step)
+    }
+
+    animFrameRef.current = requestAnimationFrame(step)
+  }, [])
+
+  // Cleanup animation frames on unmount
+  useEffect(() => {
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+      if (inertiaFrameRef.current) cancelAnimationFrame(inertiaFrameRef.current)
+    }
   }, [])
 
   // 1. Build Graph
@@ -114,6 +171,123 @@ export default function KnowledgeGraphView({
     return { x: n?.x ?? 0, y: n?.y ?? 0 }
   }, [draggedPositions, graphData.nodes])
 
+  // Fit to screen calculation
+  const handleFitView = useCallback(() => {
+    if (graphData.nodes.length === 0) return
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of graphData.nodes) {
+      const pos = getNodePos(n.id)
+      if (pos.x < minX) minX = pos.x
+      if (pos.x > maxX) maxX = pos.x
+      if (pos.y < minY) minY = pos.y
+      if (pos.y > maxY) maxY = pos.y
+    }
+
+    const pad = 80
+    const graphW = Math.max(maxX - minX + pad * 2, 250)
+    const graphH = Math.max(maxY - minY + pad * 2, 200)
+
+    const scaleX = canvasDim.width / graphW
+    const scaleY = canvasDim.height / graphH
+    const fitZoom = Math.max(0.14, Math.min(scaleX, scaleY, 1.15))
+
+    const centerX = (minX + maxX) / 2
+    const centerY = (minY + maxY) / 2
+
+    const newPanX = canvasDim.width / 2 - centerX * fitZoom
+    const newPanY = canvasDim.height / 2 - centerY * fitZoom
+
+    targetZoomRef.current = fitZoom
+    targetPanRef.current = { x: newPanX, y: newPanY }
+    startAnimation()
+  }, [graphData.nodes, getNodePos, canvasDim, startAnimation])
+
+  // Auto-fit on graph load or layout switch
+  useEffect(() => {
+    if (graphData.nodes.length === 0) return undefined
+    const timer = setTimeout(() => {
+      handleFitView()
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [graphData.nodes.length, layoutMode, handleFitView])
+
+  // Smooth Zoom By Factor relative to coordinate
+  const zoomByFactor = useCallback((factor: number, centerX?: number, centerY?: number) => {
+    if (inertiaFrameRef.current) {
+      cancelAnimationFrame(inertiaFrameRef.current)
+      inertiaFrameRef.current = null
+    }
+
+    const cx = centerX ?? canvasDim.width / 2
+    const cy = centerY ?? canvasDim.height / 2
+
+    const curZ = targetZoomRef.current
+    const curPx = targetPanRef.current.x
+    const curPy = targetPanRef.current.y
+
+    const worldX = (cx - curPx) / curZ
+    const worldY = (cy - curPy) / curZ
+
+    const newZ = Math.min(4.0, Math.max(0.12, curZ * factor))
+    const newPx = cx - worldX * newZ
+    const newPy = cy - worldY * newZ
+
+    targetZoomRef.current = newZ
+    targetPanRef.current = { x: newPx, y: newPy }
+    startAnimation()
+  }, [canvasDim, startAnimation])
+
+  const handleZoomIn = () => zoomByFactor(1.3)
+  const handleZoomOut = () => zoomByFactor(0.77)
+  const handleResetView = () => {
+    setDraggedPositions({})
+    handleFitView()
+  }
+
+  // Native non-passive Wheel Event Listener for continuous zoom toward cursor
+  useEffect(() => {
+    const svgEl = svgRef.current
+    if (!svgEl) return
+
+    const handleWheelNative = (e: WheelEvent) => {
+      e.preventDefault()
+
+      if (inertiaFrameRef.current) {
+        cancelAnimationFrame(inertiaFrameRef.current)
+        inertiaFrameRef.current = null
+      }
+
+      const rect = svgEl.getBoundingClientRect()
+      const cursorX = e.clientX - rect.left
+      const cursorY = e.clientY - rect.top
+
+      const curTz = targetZoomRef.current
+      const curTx = targetPanRef.current.x
+      const curTy = targetPanRef.current.y
+
+      const worldX = (cursorX - curTx) / curTz
+      const worldY = (cursorY - curTy) / curTz
+
+      // Trackpad pinch vs regular mouse wheel sensitivity
+      const zoomFactor = e.ctrlKey
+        ? Math.exp(-e.deltaY * 0.01)
+        : Math.exp(-e.deltaY * 0.0018)
+
+      const newTargetZoom = Math.min(4.0, Math.max(0.12, curTz * zoomFactor))
+      const newTargetPanX = cursorX - worldX * newTargetZoom
+      const newTargetPanY = cursorY - worldY * newTargetZoom
+
+      targetZoomRef.current = newTargetZoom
+      targetPanRef.current = { x: newTargetPanX, y: newTargetPanY }
+
+      startAnimation()
+    }
+
+    svgEl.addEventListener('wheel', handleWheelNative, { passive: false })
+    return () => svgEl.removeEventListener('wheel', handleWheelNative)
+  }, [startAnimation])
+
   // Active selected node
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) return null
@@ -123,7 +297,6 @@ export default function KnowledgeGraphView({
   // Filtered nodes
   const filteredNodes = useMemo(() => {
     return graphData.nodes.filter(node => {
-      // Search query
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim()
         const matchesLabel = node.label.toLowerCase().includes(query)
@@ -131,7 +304,6 @@ export default function KnowledgeGraphView({
         if (!matchesLabel && !matchesCat) return false
       }
 
-      // Filter category
       if (filter === 'all') return true
       if (filter === 'gaps') return node.status === 'gap'
       if (filter === 'blocked') return node.status === 'blocked'
@@ -151,34 +323,79 @@ export default function KnowledgeGraphView({
     )
   }, [graphData.edges, visibleNodeIds])
 
-  // Zoom handlers
-  const handleZoomIn = () => setZoom(z => Math.min(2.5, Number((z + 0.2).toFixed(2))))
-  const handleZoomOut = () => setZoom(z => Math.max(0.4, Number((z - 0.2).toFixed(2))))
-  const handleResetView = () => {
-    setZoom(1.0)
-    setPan({ x: 0, y: 0 })
-    setDraggedPositions({})
-  }
+  // Category clusters for visual grouping hulls
+  const categoryClusters = useMemo(() => {
+    const map = new Map<string, { nodes: ConceptGraphNode[]; minX: number; minY: number; maxX: number; maxY: number }>()
 
-  // Pan Canvas Mouse Events
+    filteredNodes.forEach(node => {
+      const cat = node.category || 'General'
+      const pos = getNodePos(node.id)
+      const existing = map.get(cat)
+      if (!existing) {
+        map.set(cat, {
+          nodes: [node],
+          minX: pos.x,
+          minY: pos.y,
+          maxX: pos.x,
+          maxY: pos.y
+        })
+      } else {
+        existing.nodes.push(node)
+        if (pos.x < existing.minX) existing.minX = pos.x
+        if (pos.x > existing.maxX) existing.maxX = pos.x
+        if (pos.y < existing.minY) existing.minY = pos.y
+        if (pos.y > existing.maxY) existing.maxY = pos.y
+      }
+    })
+
+    return Array.from(map.entries())
+      .filter(([_, data]) => data.nodes.length >= 2)
+      .map(([name, data]) => ({
+        name,
+        count: data.nodes.length,
+        x: data.minX - 45,
+        y: data.minY - 45,
+        width: Math.max(data.maxX - data.minX + 90, 110),
+        height: Math.max(data.maxY - data.minY + 90, 90)
+      }))
+  }, [filteredNodes, getNodePos])
+
+  // Pan Canvas Mouse Events with Inertia
   const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'svg') {
       setIsDraggingCanvas(true)
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y })
+      setDragStart({ x: e.clientX - targetPanRef.current.x, y: e.clientY - targetPanRef.current.y })
+      velocityRef.current = { vx: 0, vy: 0 }
+      lastMoveTimeRef.current = performance.now()
+
+      if (inertiaFrameRef.current) {
+        cancelAnimationFrame(inertiaFrameRef.current)
+        inertiaFrameRef.current = null
+      }
     }
   }
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     if (isDraggingCanvas) {
-      setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      })
+      const now = performance.now()
+      const dt = Math.max(now - lastMoveTimeRef.current, 1)
+      const newPx = e.clientX - dragStart.x
+      const newPy = e.clientY - dragStart.y
+
+      velocityRef.current = {
+        vx: (newPx - targetPanRef.current.x) / dt,
+        vy: (newPy - targetPanRef.current.y) / dt
+      }
+      lastMoveTimeRef.current = now
+
+      targetPanRef.current = { x: newPx, y: newPy }
+      currentPanRef.current = { x: newPx, y: newPy }
+      setPan({ x: newPx, y: newPy })
     } else if (draggingNodeId) {
       const rect = containerRef.current?.getBoundingClientRect()
       if (rect) {
-        const mouseX = (e.clientX - rect.left - pan.x) / zoom
-        const mouseY = (e.clientY - rect.top - pan.y) / zoom
+        const mouseX = (e.clientX - rect.left - currentPanRef.current.x) / currentZoomRef.current
+        const mouseY = (e.clientY - rect.top - currentPanRef.current.y) / currentZoomRef.current
         setDraggedPositions(prev => ({
           ...prev,
           [draggingNodeId]: { x: mouseX, y: mouseY }
@@ -188,8 +405,51 @@ export default function KnowledgeGraphView({
   }
 
   const handleMouseUp = () => {
-    setIsDraggingCanvas(false)
+    if (isDraggingCanvas) {
+      setIsDraggingCanvas(false)
+
+      const speed = Math.hypot(velocityRef.current.vx, velocityRef.current.vy)
+      if (speed > 0.12) {
+        let vx = velocityRef.current.vx * 14
+        let vy = velocityRef.current.vy * 14
+
+        const momentumStep = () => {
+          vx *= 0.91
+          vy *= 0.91
+
+          if (Math.hypot(vx, vy) < 0.2) {
+            inertiaFrameRef.current = null
+            return
+          }
+
+          targetPanRef.current.x += vx
+          targetPanRef.current.y += vy
+          currentPanRef.current.x += vx
+          currentPanRef.current.y += vy
+          setPan({ ...currentPanRef.current })
+
+          inertiaFrameRef.current = requestAnimationFrame(momentumStep)
+        }
+
+        inertiaFrameRef.current = requestAnimationFrame(momentumStep)
+      }
+    }
     setDraggingNodeId(null)
+  }
+
+  // Double Click Canvas to Zoom / Fit
+  const handleDoubleClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (e.target !== e.currentTarget && (e.target as HTMLElement).tagName !== 'svg') return
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const cx = e.clientX - rect.left
+    const cy = e.clientY - rect.top
+
+    if (targetZoomRef.current < 0.85) {
+      zoomByFactor(1.7, cx, cy)
+    } else {
+      handleFitView()
+    }
   }
 
   // Focus on top bottleneck
@@ -199,13 +459,16 @@ export default function KnowledgeGraphView({
       setSelectedNodeId(targetId)
       const targetPos = getNodePos(targetId)
       if (targetPos.x && targetPos.y) {
-        setPan({
-          x: canvasDim.width / 2 - targetPos.x * zoom,
-          y: canvasDim.height / 2 - targetPos.y * zoom
-        })
+        const curZ = Math.max(targetZoomRef.current, 0.85)
+        targetZoomRef.current = curZ
+        targetPanRef.current = {
+          x: canvasDim.width / 2 - targetPos.x * curZ,
+          y: canvasDim.height / 2 - targetPos.y * curZ
+        }
+        startAnimation()
       }
     }
-  }, [graphData.metrics.suggestedNextConcept, getNodePos, canvasDim, zoom])
+  }, [graphData.metrics.suggestedNextConcept, getNodePos, canvasDim, startAnimation])
 
   // Add dependency action
   const handleSaveDependency = async () => {
@@ -409,7 +672,7 @@ export default function KnowledgeGraphView({
             </button>
           </div>
 
-          {/* Zoom Buttons */}
+          {/* Zoom Buttons & Fit View */}
           <div className="flex items-center gap-0.5 bg-white dark:bg-slate-900 rounded-lg p-0.5 border border-slate-200 dark:border-slate-700">
             <button
               onClick={handleZoomIn}
@@ -426,11 +689,25 @@ export default function KnowledgeGraphView({
               <ZoomOut size={14} />
             </button>
             <button
+              onClick={handleFitView}
+              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
+              title="Fit to View"
+            >
+              <Maximize2 size={14} />
+            </button>
+            <button
               onClick={handleResetView}
               className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
               title="Reset View"
             >
               <RotateCcw size={14} />
+            </button>
+            <button
+              onClick={() => zoomByFactor(1.0 / targetZoomRef.current)}
+              className="px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 rounded"
+              title="Click to reset to 100%"
+            >
+              {Math.round(zoom * 100)}%
             </button>
           </div>
         </div>
@@ -440,14 +717,12 @@ export default function KnowledgeGraphView({
       <div className="relative flex-1 min-h-[450px] overflow-hidden" ref={containerRef}>
         {/* SVG Graph View */}
         <svg
+          ref={svgRef}
           className="w-full h-full cursor-grab active:cursor-grabbing select-none"
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onWheel={e => {
-            if (e.deltaY < 0) handleZoomIn()
-            else handleZoomOut()
-          }}
+          onDoubleClick={handleDoubleClick}
         >
           <defs>
             {/* Standard Arrow Marker */}
@@ -487,7 +762,29 @@ export default function KnowledgeGraphView({
           </defs>
 
           {/* Graph Content Group with Pan and Zoom */}
-          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} style={{ willChange: 'transform' }}>
+            {/* 0. Render Category Clusters / Module Hulls */}
+            {categoryClusters.map(cluster => (
+              <g key={cluster.name} className="pointer-events-none select-none">
+                <rect
+                  x={cluster.x}
+                  y={cluster.y}
+                  width={cluster.width}
+                  height={cluster.height}
+                  rx={20}
+                  className="fill-violet-500/[0.03] dark:fill-violet-400/[0.04] stroke-violet-500/15 dark:stroke-violet-400/20 stroke-1"
+                  strokeDasharray="6 4"
+                />
+                <text
+                  x={cluster.x + 14}
+                  y={cluster.y + 18}
+                  className="fill-slate-400 dark:fill-slate-500 text-[10px] font-bold tracking-wider uppercase select-none opacity-70"
+                >
+                  {cluster.name} ({cluster.count})
+                </text>
+              </g>
+            ))}
+
             {/* 1. Render Directed Edges */}
             {visibleEdges.map(edge => {
               const srcPos = getNodePos(edge.source)
@@ -629,37 +926,50 @@ export default function KnowledgeGraphView({
                     {node.observations} obs
                   </text>
 
-                  {/* Node Label Below */}
-                  <g transform={`translate(0, ${radius + 14})`}>
-                    <rect
-                      x={-(node.label.length * 3.5 + 8)}
-                      y={-9}
-                      width={node.label.length * 7 + 16}
-                      height={18}
-                      rx={6}
-                      className={
-                        isSelected
-                          ? 'fill-violet-600 text-white shadow-sm'
-                          : 'fill-white/95 dark:fill-slate-800/95 stroke-slate-200/80 dark:stroke-slate-700/80 stroke-1 shadow-sm'
-                      }
-                    />
-                    <text
-                      textAnchor="middle"
-                      y={3}
-                      className={`text-[10px] font-semibold ${
-                        isSelected
-                          ? 'fill-white'
-                          : 'fill-slate-800 dark:fill-slate-200'
-                      }`}
-                    >
-                      {node.label}
-                    </text>
-                  </g>
+                  {/* Node Label Below (Semantic Zoom: visible when zoom >= 0.38 or selected) */}
+                  {(zoom >= 0.38 || isSelected) && (
+                    <g transform={`translate(0, ${radius + 14})`}>
+                      <rect
+                        x={-((isSelected ? node.label.length : Math.min(node.label.length, 26)) * 3.5 + 8)}
+                        y={-9}
+                        width={(isSelected ? node.label.length : Math.min(node.label.length, 26)) * 7 + 16}
+                        height={18}
+                        rx={6}
+                        className={
+                          isSelected
+                            ? 'fill-violet-600 text-white shadow-sm'
+                            : 'fill-white/95 dark:fill-slate-800/95 stroke-slate-200/80 dark:stroke-slate-700/80 stroke-1 shadow-sm'
+                        }
+                      />
+                      <text
+                        textAnchor="middle"
+                        y={3}
+                        className={`text-[10px] font-semibold ${
+                          isSelected
+                            ? 'fill-white'
+                            : 'fill-slate-800 dark:fill-slate-200'
+                        }`}
+                      >
+                        {!isSelected && node.label.length > 26 ? `${node.label.slice(0, 24)}…` : node.label}
+                      </text>
+                    </g>
+                  )}
                 </g>
               )
             })}
           </g>
         </svg>
+
+        {/* ── Floating Navigation HUD ── */}
+        <div className="absolute bottom-3 left-3 z-10 hidden sm:flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 text-[11px] text-slate-500 dark:text-slate-400 shadow-sm pointer-events-auto">
+          <span>Scroll to zoom · Drag to pan · Double-click to focus</span>
+          <button
+            onClick={handleFitView}
+            className="px-2 py-0.5 rounded-lg bg-violet-50 dark:bg-violet-950/60 hover:bg-violet-100 dark:hover:bg-violet-900/80 text-violet-700 dark:text-violet-300 font-semibold text-[10px] transition-colors"
+          >
+            Fit View
+          </button>
+        </div>
 
         {/* ── Empty State if no nodes ── */}
         {graphData.nodes.length === 0 && (

@@ -103,4 +103,47 @@ describe('KnowledgeGraphView', () => {
     expect(screen.getByText('Add Concept Dependency Link')).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Linear Algebra or Derivatives/i)).toBeInTheDocument()
   })
+
+  it('renders fit to view button, zoom percentage, and navigation HUD', () => {
+    render(
+      <KnowledgeGraphView
+        subjectId={1}
+        dependencies={dependencies}
+        concepts={concepts}
+        cards={cards}
+      />
+    )
+
+    // Fit to view button exists
+    expect(screen.getByTitle('Fit to View')).toBeInTheDocument()
+    // Zoom percentage button exists
+    expect(screen.getByTitle('Click to reset to 100%')).toBeInTheDocument()
+    // Navigation HUD exists
+    expect(screen.getByText(/Scroll to zoom · Drag to pan/i)).toBeInTheDocument()
+
+    // Clicking zoom in and fit to view works without error
+    const zoomInBtn = screen.getByTitle('Zoom In')
+    fireEvent.click(zoomInBtn)
+
+    const fitBtn = screen.getByTitle('Fit to View')
+    fireEvent.click(fitBtn)
+  })
+
+  it('handles double clicking the canvas to trigger zoom/fit', () => {
+    const { container } = render(
+      <KnowledgeGraphView
+        subjectId={1}
+        dependencies={dependencies}
+        concepts={concepts}
+        cards={cards}
+      />
+    )
+
+    const svg = container.querySelector('svg')
+    expect(svg).toBeInTheDocument()
+    if (svg) {
+      fireEvent.doubleClick(svg, { clientX: 300, clientY: 300 })
+    }
+  })
 })
+

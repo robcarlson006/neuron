@@ -278,7 +278,31 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     applyForceDirectedLayout(nodes, edgeList, layoutWidth, layoutHeight)
   }
 
-  // 6. Metrics aggregation
+  // 6. Calculate Layout Bounds
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const n of nodes) {
+    const nx = n.x ?? 0
+    const ny = n.y ?? 0
+    if (nx < minX) minX = nx
+    if (nx > maxX) maxX = nx
+    if (ny < minY) minY = ny
+    if (ny > maxY) maxY = ny
+  }
+
+  const paddingBounds = 80
+  const layoutBounds = nodes.length > 0 ? {
+    minX: Math.floor(Math.max(0, minX - paddingBounds)),
+    minY: Math.floor(Math.max(0, minY - paddingBounds)),
+    maxX: Math.ceil(maxX + paddingBounds),
+    maxY: Math.ceil(maxY + paddingBounds),
+    width: Math.ceil(Math.max(layoutWidth, maxX - minX + paddingBounds * 2)),
+    height: Math.ceil(Math.max(layoutHeight, maxY - minY + paddingBounds * 2))
+  } : undefined
+
+  // 7. Metrics aggregation
   const metrics = {
     totalConcepts: nodes.length,
     masteredCount: nodes.filter(n => n.status === 'mastered').length,
@@ -293,7 +317,8 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
   return {
     nodes,
     edges: edgeList,
-    metrics
+    metrics,
+    layoutBounds
   }
 }
 
@@ -379,7 +404,68 @@ function computeBottlenecks(
 }
 
 /**
- * Calculates clean hierarchical layer coordinates.
+ * Removes overlaps between nodes ensuring adequate clearance for node circles and text labels.
+ */
+export function removeOverlaps(
+  nodes: ConceptGraphNode[],
+  minDistX: number = 100,
+  minDistY: number = 60,
+  iterations: number = 4
+): void {
+  if (nodes.length <= 1) return
+
+  for (let iter = 0; iter < iterations; iter++) {
+    let moved = false
+    for (let i = 0; i < nodes.length; i++) {
+      const u = nodes[i]
+      const ux = u.x ?? 0
+      const uy = u.y ?? 0
+      const uLabelHalf = Math.max(45, (u.label.length * 7 + 24) / 2)
+
+      for (let j = i + 1; j < nodes.length; j++) {
+        const v = nodes[j]
+        const vx = v.x ?? 0
+        const vy = v.y ?? 0
+        const vLabelHalf = Math.max(45, (v.label.length * 7 + 24) / 2)
+
+        const requiredX = Math.max(minDistX, uLabelHalf + vLabelHalf + 16)
+        const requiredY = minDistY
+
+        const dx = vx - ux
+        const dy = vy - uy
+
+        const normDistSq = (dx * dx) / (requiredX * requiredX) + (dy * dy) / (requiredY * requiredY)
+
+        if (normDistSq < 1.0 && normDistSq > 1e-6) {
+          const normDist = Math.sqrt(normDistSq)
+          const overlap = 1.0 - normDist
+          const pushFraction = overlap * 0.5
+
+          const shiftX = (dx / normDist) * pushFraction * requiredX
+          const shiftY = (dy / normDist) * pushFraction * requiredY
+
+          u.x = ux - shiftX
+          u.y = uy - shiftY
+          v.x = vx + shiftX
+          v.y = vy + shiftY
+          moved = true
+        } else if (normDistSq <= 1e-6) {
+          const jitterX = (Math.random() - 0.5) * 40
+          const jitterY = (Math.random() - 0.5) * 40
+          u.x = ux - jitterX
+          u.y = uy - jitterY
+          v.x = vx + jitterX
+          v.y = vy + jitterY
+          moved = true
+        }
+      }
+    }
+    if (!moved) break
+  }
+}
+
+/**
+ * Calculates clean hierarchical layer coordinates with anti-overlap spacing and multi-tier staggering.
  */
 export function applyHierarchicalLayout(
   nodes: ConceptGraphNode[],
@@ -402,55 +488,93 @@ export function applyHierarchicalLayout(
   }
 
   const totalLayers = maxLayer + 1
-  const paddingX = 80
-  const paddingY = 70
-  const usableWidth = Math.max(width - paddingX * 2, 200)
-  const usableHeight = Math.max(height - paddingY * 2, 200)
 
-  const layerStepY = totalLayers > 1 ? usableHeight / (totalLayers - 1) : usableHeight / 2
+  // Determine needed canvas width based on maximum nodes in a layer and their label lengths
+  let maxNeededWidth = 0
+  layerGroups.forEach(group => {
+    let layerWidth = 0
+    for (const n of group) {
+      const approxWidth = Math.max(120, n.label.length * 7.5 + 40)
+      layerWidth += approxWidth
+    }
+    if (layerWidth > maxNeededWidth) maxNeededWidth = layerWidth
+  })
+
+  // Dynamic virtual canvas size
+  const effectiveWidth = Math.max(width, maxNeededWidth + 240, 950)
+  const layerStepY = Math.max(160, (Math.max(height, 600) - 160) / Math.max(totalLayers - 1, 1))
+  const paddingX = 100
+  const paddingY = 80
 
   layerGroups.forEach((group, layer) => {
-    const y = paddingY + layer * layerStepY
+    const baseY = paddingY + layer * layerStepY
     const count = group.length
+
+    // Sort group by category/label for visual stability
+    group.sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.label.localeCompare(b.label))
+
+    const shouldStagger = count > 6
+    const usableWidth = effectiveWidth - paddingX * 2
     const stepX = count > 1 ? usableWidth / (count - 1) : 0
-    const startX = count === 1 ? width / 2 : paddingX
+    const startX = count === 1 ? effectiveWidth / 2 : paddingX
 
     group.forEach((node, idx) => {
       node.x = count === 1 ? startX : startX + idx * stepX
-      node.y = y
+
+      // Multi-tier staggered vertical offset if dense layer
+      let yOffset = 0
+      if (shouldStagger) {
+        const staggerPattern = [0, -32, 32, -16, 16]
+        yOffset = staggerPattern[idx % staggerPattern.length]
+      }
+
+      node.y = baseY + yOffset
       node.vx = 0
       node.vy = 0
     })
   })
+
+  // Run overlap removal pass to resolve any tight bounds
+  removeOverlaps(nodes, 105, 60, 4)
 }
 
 /**
- * Applies iterative 2D force simulation for natural web visualization.
+ * Applies iterative 2D force simulation with dynamic virtual canvas scaling,
+ * cosine annealing damping, center gravity, and post-layout overlap removal.
  */
 export function applyForceDirectedLayout(
   nodes: ConceptGraphNode[],
   edges: ConceptGraphEdge[],
   width: number,
   height: number,
-  iterations: number = 60
+  iterations?: number
 ): void {
   if (nodes.length === 0) return
 
-  // First seed with hierarchical layout for good initial dispersion
-  applyHierarchicalLayout(nodes, edges, width, height)
+  const nodeCount = nodes.length
+  const scaleFactor = Math.max(1.0, Math.sqrt(nodeCount / 20))
+  const simWidth = Math.max(width * scaleFactor, 1200)
+  const simHeight = Math.max(height * scaleFactor, 850)
+
+  // First seed with hierarchical layout on scaled canvas for good initial dispersion
+  applyHierarchicalLayout(nodes, edges, simWidth, simHeight)
 
   const nodeMap = new Map<string, ConceptGraphNode>()
   nodes.forEach(n => nodeMap.set(n.id, n))
 
-  const kRepulsion = 4000
-  const kSpring = 0.05
-  const idealLength = 120
-  const padding = 50
+  const totalIterations = iterations ?? Math.max(75, Math.min(160, 50 + Math.floor(nodeCount * 0.4)))
+  const kRepulsion = 8000 + nodeCount * 30
+  const kSpring = 0.04
+  const idealLength = 150 + Math.min(120, Math.sqrt(nodeCount) * 8)
+  const padding = 80
+  const centerX = simWidth / 2
+  const centerY = simHeight / 2
+  const kCenterGravity = 0.005
 
-  for (let iter = 0; iter < iterations; iter++) {
-    const damping = Math.max(0.2, 1.0 - iter / iterations)
+  for (let iter = 0; iter < totalIterations; iter++) {
+    const damping = 0.5 * (1 + Math.cos((Math.PI * iter) / totalIterations))
 
-    // Node-Node Repulsion
+    // 1. Node-Node Repulsion
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const u = nodes[i]
@@ -460,7 +584,7 @@ export function applyForceDirectedLayout(
         const distSq = dx * dx + dy * dy + 1e-4
         const dist = Math.sqrt(distSq)
 
-        if (dist < 400) {
+        if (dist < 800) {
           const force = (kRepulsion / distSq) * damping
           const fx = (dx / dist) * force
           const fy = (dy / dist) * force
@@ -473,7 +597,7 @@ export function applyForceDirectedLayout(
       }
     }
 
-    // Edge Springs
+    // 2. Edge Springs
     for (const edge of edges) {
       const u = nodeMap.get(edge.source)
       const v = nodeMap.get(edge.target)
@@ -494,12 +618,17 @@ export function applyForceDirectedLayout(
       v.y = (v.y ?? 0) - fy
     }
 
-    // Bounding Box Constraints
+    // 3. Gentle Center Gravity & Bounding Box Constraints
     for (const node of nodes) {
-      node.x = Math.max(padding, Math.min(width - padding, node.x ?? width / 2))
-      node.y = Math.max(padding, Math.min(height - padding, node.y ?? height / 2))
+      const cx = (centerX - (node.x ?? centerX)) * kCenterGravity * damping
+      const cy = (centerY - (node.y ?? centerY)) * kCenterGravity * damping
+      node.x = Math.max(padding, Math.min(simWidth - padding, (node.x ?? centerX) + cx))
+      node.y = Math.max(padding, Math.min(simHeight - padding, (node.y ?? centerY) + cy))
     }
   }
+
+  // Post-simulation overlap removal sweep
+  removeOverlaps(nodes, 105, 60, 4)
 }
 
 /**
