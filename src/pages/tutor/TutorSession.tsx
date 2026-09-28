@@ -477,7 +477,7 @@ export default function TutorSession(): React.JSX.Element {
       }
 
       // Send a "ready to learn" system message to start the session
-      const difficultyMap = ['', 'Beginner', 'Intermediate', 'Proficient', 'Expert', 'Professor']
+      const difficultyMap = ['', 'Beginner', 'Intermediate', 'Proficient', 'Expert', 'Professor', 'Scholar', 'Frontier']
       const difficultyLabel = config.depth_level === 'adaptive' ? 'Adaptive (AI-Calibrated)' : (difficultyMap[config.depth_level as number] || 'Proficient')
       const topic = config.target_topic || (config.material_name ? `${config.material_name} (Material)` : (inProgressMod?.title || subject?.name || 'this subject'))
 

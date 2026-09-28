@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
 import {
   TutorSessionConfig,
+  TutorDepthLevel,
   DEPTH_LEVELS,
   TIME_PRESETS,
   TIME_SLIDER_MIN,
@@ -83,7 +84,7 @@ export default function SessionConfigModal({
 
   // ── Config State ──
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
-  const [selectedDepth, setSelectedDepth] = useState<1 | 2 | 3 | 4 | 5 | 'adaptive'>('adaptive')
+  const [selectedDepth, setSelectedDepth] = useState<TutorDepthLevel | 'adaptive'>('adaptive')
   const [neverStudied, setNeverStudied] = useState(false)
   const [starting, setStarting] = useState(false)
   const [sliderValue, setSliderValue] = useState<number>(30)
@@ -92,7 +93,7 @@ export default function SessionConfigModal({
   const sliderRef = useRef<HTMLInputElement>(null)
 
   // Beginner mode forces minimum depth 3 if manual depth < 3 is selected
-  const finalDepth: 1 | 2 | 3 | 4 | 5 | 'adaptive' =
+  const finalDepth: TutorDepthLevel | 'adaptive' =
     selectedDepth === 'adaptive'
       ? 'adaptive'
       : (neverStudied && selectedDepth < 3 ? 3 : selectedDepth)
@@ -1160,7 +1161,7 @@ export default function SessionConfigModal({
                           : 'text-slate-400 dark:text-slate-500'
                       }`}
                     >
-                      Auto-scales dynamically based on your mastery & retention
+                      Calibrates from confirmed mastery, assessment history, and confidence
                     </span>
                   </div>
                 </div>

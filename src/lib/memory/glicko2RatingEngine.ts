@@ -13,7 +13,7 @@ export interface StudentRatingProfile {
 }
 
 export interface AssessmentOutcome {
-  itemDifficulty: number    // 1 to 5 scale (or mapped equivalent)
+  itemDifficulty: number    // 1 to 7 pedagogical-depth scale (or mapped equivalent)
   itemRating?: number       // Explicit opponent item rating (defaults to 900 + diff * 200)
   itemDeviation?: number    // Uncertainty of item calibration (default 50.0)
   score: number             // Normalized outcome in [0.0, 1.0] (1.0 = full correct, 0.0 = failure)
@@ -26,10 +26,13 @@ const DEFAULT_TAU = 0.5     // System volatility constraint
 const CONVERGENCE_EPSILON = 0.000001
 
 /**
- * Maps standard 1-5 difficulty levels to calibrated Glicko-2 opponent ratings.
+ * Maps pedagogical depth levels to calibrated Glicko-2 opponent ratings.
+ *
+ * Levels 6 and 7 deliberately extend the historical Professor ceiling so a
+ * consistently strong learner can be assessed on genuinely harder work.
  */
 export function difficultyToItemRating(difficulty: number): number {
-  const clamped = Math.max(1, Math.min(5, difficulty))
+  const clamped = Math.max(1, Math.min(7, difficulty))
   return 900 + clamped * 200 // 1 -> 1100, 2 -> 1300, 3 -> 1500, 4 -> 1700, 5 -> 1900
 }
 

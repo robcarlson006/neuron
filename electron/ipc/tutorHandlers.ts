@@ -14,6 +14,7 @@ import { retrieveTutorContext, formatTutorSourceContext } from '../services/tuto
 import { TutorTurnService } from '../services/tutorTurnService'
 import {
   buildCKRFMemoryBlock,
+  getDecayedTopicRating,
   recordTopicAssessment,
   recordMisconception,
   recordConceptSuccess,
@@ -35,7 +36,8 @@ import type {
   GapAnalysisItem,
   QuickReviewTopic,
   TutorSessionConfig,
-  TutorAssessmentEvidence
+  TutorAssessmentEvidence,
+  TutorDepthLevel
 } from '../../src/types'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 
@@ -85,7 +87,7 @@ function buildTimeContext(params: {
   timeElapsedSeconds?: number
   timeRemainingSeconds?: number
   pacingStatus?: PacingStatus
-  depthLevel?: number
+  depthLevel?: TutorDepthLevel
 }): string {
   if (params.durationMinutes === null || params.durationMinutes <= 0) return ''
 
@@ -94,7 +96,7 @@ function buildTimeContext(params: {
   const remainingSecs = params.timeRemainingSeconds !== undefined ? params.timeRemainingSeconds : params.durationMinutes * 60
   const total = params.durationMinutes
   const status = params.pacingStatus ?? 'ON_TRACK'
-  const depthNames: Record<number, string> = { 1: 'Beginner', 2: 'Intermediate', 3: 'Proficient', 4: 'Expert', 5: 'Professor' }
+  const depthNames: Record<number, string> = { 1: 'Beginner', 2: 'Intermediate', 3: 'Proficient', 4: 'Expert', 5: 'Professor', 6: 'Scholar', 7: 'Frontier' }
   const diffLabel = depthNames[params.depthLevel ?? 3] || 'Proficient'
 
   const lines = [
@@ -138,18 +140,20 @@ function buildTimeContext(params: {
 // ── Depth / beginner instruction builder ────────────────────────────────
 
 function buildDepthInstruction(
-  depthLevel: 1 | 2 | 3 | 4 | 5,
+  depthLevel: TutorDepthLevel,
   neverStudied: boolean,
   durationMinutes?: number | null,
   isAdaptive?: boolean
 ): string {
-  const depthNames: Record<number, string> = { 1: 'Beginner', 2: 'Intermediate', 3: 'Proficient', 4: 'Expert', 5: 'Professor' }
+  const depthNames: Record<number, string> = { 1: 'Beginner', 2: 'Intermediate', 3: 'Proficient', 4: 'Expert', 5: 'Professor', 6: 'Scholar', 7: 'Frontier' }
   const instructions: Record<number, string> = {
     1: 'Explain each concept like the student has never encountered it. Use everyday analogies. Ask basic recall and comprehension questions. After each correct answer, add one small layer of complexity. If you have TIME available, cover more topics rather than going deeper on any single one. Keep the pace moving — introduce new subtopics regularly.',
     2: 'Provide guided walkthroughs. Expect basic familiarity with terminology after 2-3 rounds. Ask comprehension and simple application questions. Use remaining time to introduce related topics and show how concepts connect.',
     3: 'Build solid understanding with mechanisms and processes. Ask application and analysis questions. After the student demonstrates understanding of a topic, pivot to a new angle or related subtopic. Use time to diversify coverage at moderate depth — alternate between new content and deeper exploration.',
     4: 'Push hard. Ask "why" and "how" questions that require synthesis. Challenge with edge cases, counterexamples, and cross-topic connections. When you\'ve exhausted one angle on a topic, approach it from a completely different perspective — historical context, practical application, theoretical foundation, or opposing viewpoint.',
-    5: 'Maximum depth. Require teach-back — ask the student to explain concepts as if teaching someone else. Probe with novel scenarios they haven\'t seen before. When the student masters one angle, immediately pivot to another: challenge assumptions, present edge cases, connect to adjacent fields. Exhaust every possible lens on the topic. Keep going until time runs out.'
+    5: 'Maximum depth. Require teach-back — ask the student to explain concepts as if teaching someone else. Probe with novel scenarios they haven\'t seen before. When the student masters one angle, immediately pivot to another: challenge assumptions, present edge cases, connect to adjacent fields. Exhaust every possible lens on the topic. Keep going until time runs out.',
+    6: 'Scholar depth. Require the student to defend a method, compare competing models, identify assumptions and failure modes, and solve unfamiliar variants. Do not reward fluent restatement: ask for justified transfer and critique.',
+    7: 'Frontier depth. Treat the student as a research collaborator. Require original problem formulation, falsifiable predictions, rigorous counterexamples, trade-off analysis, and a defence of methodological choices. Keep claims bounded by the supplied evidence; never manufacture unsupported facts.'
   }
 
   const diffLabel = depthNames[depthLevel] || 'Proficient'
@@ -207,13 +211,29 @@ export function resolveAdaptiveDepth(
   subjectId: number,
   userId?: number,
   targetTopic?: string
-): 1 | 2 | 3 | 4 | 5 {
+): TutorDepthLevel {
   if (!userId) return 3
 
   try {
-    // 1. If target topic is specified, look for exact or partial topic memory / concept mastery
+    // 1. A calibrated competency rating is the strongest signal. Its uncertainty
+    // and observation count prevent one lucky answer from unlocking the two
+    // research-level tiers.
     if (targetTopic) {
       const cleanTopic = targetTopic.trim().toLowerCase()
+
+      const rating = getDecayedTopicRating(database, userId, subjectId, targetTopic.trim())
+      if (!rating.isNew) {
+        // Decay widens the RD before this point, so old success appropriately
+        // becomes less decisive until the learner demonstrates it again.
+        const confidenceAdjustedRating = rating.profile.rating - Math.min(rating.profile.ratingDeviation, 250) * 0.35
+        if (rating.observationsCount >= 8 && rating.profile.ratingDeviation <= 120 && confidenceAdjustedRating >= 2150) return 7
+        if (rating.observationsCount >= 5 && rating.profile.ratingDeviation <= 150 && confidenceAdjustedRating >= 1950) return 6
+        if (confidenceAdjustedRating >= 1800) return 5
+        if (confidenceAdjustedRating >= 1650) return 4
+        if (confidenceAdjustedRating >= 1450) return 3
+        if (confidenceAdjustedRating >= 1250) return 2
+        return 1
+      }
 
       const cmRow = database.prepare(`
         SELECT mastery_prob FROM concept_mastery
@@ -243,7 +263,9 @@ export function resolveAdaptiveDepth(
       }
     }
 
-    // 2. Aggregate BKT concept mastery for this subject
+    // 2. Aggregate BKT concept mastery for this subject. BKT can support the
+    // established 1–5 scale, but never independently promotes a learner beyond
+    // Professor because it does not encode item difficulty or confidence.
     const avgCm = database.prepare(`
       SELECT AVG(mastery_prob) as avg_p, COUNT(*) as cnt
       FROM concept_mastery
@@ -717,6 +739,11 @@ export async function evaluateAndSaveSessionMemory(
 ): Promise<(TutorSessionEvaluation & { updatedTopics?: import('../../src/lib/memory/topicSrsEngine').TopicRetentionMetrics[] }) | null> {
   const session = database.prepare('SELECT * FROM tutor_sessions WHERE id = ?').get(sessionId) as TutorSession | undefined
   if (!session || !session.subject_id) return null
+  // Preserve the actual challenge served for psychometric updates. Adaptive
+  // sessions persist their initial resolved tier, while manual sessions retain
+  // the learner's explicit choice. Never let malformed legacy data escape the
+  // supported calibration ladder.
+  const assessedDifficulty = Math.max(1, Math.min(7, Math.round(session.depth_level ?? 3)))
 
   let actualUserId = session.user_id
   if (!actualUserId) {
@@ -979,7 +1006,7 @@ Return STRICT JSON ONLY, no extra text, in this format:
     // Update CKRF Rating & advance concept remediation
     try {
       recordTopicAssessment(database, actualUserId, session.subject_id, cleanTopic, {
-        itemDifficulty: 3,
+        itemDifficulty: assessedDifficulty,
         score: 1.0
       })
       recordConceptSuccess(database, actualUserId, session.subject_id, cleanTopic)
@@ -1016,7 +1043,7 @@ Return STRICT JSON ONLY, no extra text, in this format:
     // Update CKRF Rating for struggle
     try {
       recordTopicAssessment(database, actualUserId, session.subject_id, cleanTopic, {
-        itemDifficulty: 3,
+        itemDifficulty: assessedDifficulty,
         score: 0.25
       })
     } catch (ckrfErr) {
@@ -1275,6 +1302,11 @@ export function registerTutorHandlers(): void {
     const actualUserId = userId > 0 ? userId : null
     const neverStudiedVal = config?.never_studied ? 1 : 0
     const initialTitle = config?.title || null
+    const persistedDepth: TutorDepthLevel = typeof config?.depth_level === 'number'
+      ? Math.max(1, Math.min(7, Math.round(config.depth_level))) as TutorDepthLevel
+      : config?.depth_level === 'adaptive'
+        ? resolveAdaptiveDepth(db, subjectId, userId, config.target_topic || config.target_topics?.[0])
+        : 3
     const result = db.prepare(`
       INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase, module_id, started_at, duration_minutes, depth_level, never_studied, title, last_message_at, is_pinned, config_json, finalization_status)
       VALUES (?, ?, ?, 'structured_qa', ?, ?, ?, ?, ?, ?, ?, 0, ?, 'open')
@@ -1285,7 +1317,7 @@ export function registerTutorHandlers(): void {
       moduleId || null,
       now,
       config?.duration_minutes ?? null,
-      typeof config?.depth_level === 'number' ? config.depth_level : 3,
+      persistedDepth,
       neverStudiedVal,
       initialTitle,
       nowMs,
@@ -1834,7 +1866,7 @@ Output your response strictly as valid JSON in this exact structure:
 
     // Resolve adaptive difficulty if selected or unset
     const isAdaptive = params.depthLevel === 'adaptive' || !params.depthLevel
-    const concreteDepth: 1 | 2 | 3 | 4 | 5 = params.depthLevel && params.depthLevel !== 'adaptive'
+    const concreteDepth: TutorDepthLevel = params.depthLevel && params.depthLevel !== 'adaptive'
       ? params.depthLevel
       : resolveAdaptiveDepth(db, params.subjectId, userId, params.targetTopic || params.targetTopics?.[0])
 

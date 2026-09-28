@@ -19,9 +19,11 @@ describe('Glicko-2 Rating Engine', () => {
     expect(difficultyToItemRating(3)).toBe(1500)
     expect(difficultyToItemRating(4)).toBe(1700)
     expect(difficultyToItemRating(5)).toBe(1900)
+    expect(difficultyToItemRating(6)).toBe(2100)
+    expect(difficultyToItemRating(7)).toBe(2300)
     // Clamping checks
     expect(difficultyToItemRating(0)).toBe(1100)
-    expect(difficultyToItemRating(10)).toBe(1900)
+    expect(difficultyToItemRating(10)).toBe(2300)
   })
 
   it('correctly updates rating and narrows deviation after a win on an equal-level item', () => {

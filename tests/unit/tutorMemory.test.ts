@@ -212,6 +212,42 @@ describe('Tutor Memory & Gap Analysis Engine', () => {
       expect(depth).toBe(5)
     })
 
+    it('unlocks Scholar only after enough precise high-difficulty evidence', () => {
+      insert(
+        db,
+        `INSERT INTO topic_competency_ratings
+          (user_id, subject_id, topic, rating, rating_deviation, volatility, highest_rating, lowest_rating, observations_count, last_assessed_at, decayed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        userId, subjectId, 'Abstract Algebra', 2050, 100, 0.06, 2050, 1500, 5
+      )
+
+      expect(resolveAdaptiveDepth(db, subjectId, userId, 'Abstract Algebra')).toBe(6)
+    })
+
+    it('unlocks Frontier only after extensive, confident evidence', () => {
+      insert(
+        db,
+        `INSERT INTO topic_competency_ratings
+          (user_id, subject_id, topic, rating, rating_deviation, volatility, highest_rating, lowest_rating, observations_count, last_assessed_at, decayed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        userId, subjectId, 'Measure Theory', 2250, 80, 0.06, 2250, 1500, 8
+      )
+
+      expect(resolveAdaptiveDepth(db, subjectId, userId, 'Measure Theory')).toBe(7)
+    })
+
+    it('does not promote to research tiers from uncertain or sparse evidence', () => {
+      insert(
+        db,
+        `INSERT INTO topic_competency_ratings
+          (user_id, subject_id, topic, rating, rating_deviation, volatility, highest_rating, lowest_rating, observations_count, last_assessed_at, decayed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        userId, subjectId, 'Topology', 2300, 300, 0.06, 2300, 1500, 1
+      )
+
+      expect(resolveAdaptiveDepth(db, subjectId, userId, 'Topology')).toBeLessThanOrEqual(5)
+    })
+
     it('scales depth based on concept_mastery probability', () => {
       insert(
         db,

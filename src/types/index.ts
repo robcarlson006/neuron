@@ -781,7 +781,7 @@ export interface TutorStreamParams {
   }
   attachedContent?: string
   durationMinutes?: number | null
-  depthLevel?: 1 | 2 | 3 | 4 | 5 | 'adaptive'
+  depthLevel?: TutorDepthLevel | 'adaptive'
   neverStudied?: boolean
   timeElapsedSeconds?: number
   timeRemainingSeconds?: number
@@ -828,7 +828,7 @@ export interface TutorMaterialTarget {
 
 export interface TutorSessionConfig {
   duration_minutes: number | null
-  depth_level: 1 | 2 | 3 | 4 | 5 | 'adaptive'
+  depth_level: TutorDepthLevel | 'adaptive'
   never_studied: boolean
   material_id?: number
   material_name?: string
@@ -869,15 +869,24 @@ export interface TutorSessionRuntime {
 
 export type PacingStatus = 'AHEAD' | 'ON_TRACK' | 'BEHIND' | 'UNLIMITED'
 
+/**
+ * Pedagogical depth is deliberately separate from a user's app/Xp level. The
+ * adaptive controller reserves levels 6 and 7 for learners with enough reliable
+ * evidence; it never infers them from a single easy recall success.
+ */
+export type TutorDepthLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7
+
 export const DEPTH_LEVELS = [
   { level: 1, name: 'Beginner', icon: '🌱', description: 'No assumed knowledge. Build from absolute basics.' },
   { level: 2, name: 'Intermediate', icon: '📗', description: 'Core concepts with guided practice.' },
   { level: 3, name: 'Proficient', icon: '🛠️', description: 'Solid understanding with application and analysis.' },
   { level: 4, name: 'Expert', icon: '📚', description: 'Deep connections, edge cases, and critical thinking.' },
   { level: 5, name: 'Professor', icon: '🎓', description: 'Teach-back, novel synthesis, and full mastery.' },
+  { level: 6, name: 'Scholar', icon: '🔬', description: 'Defend methods, compare models, and solve unfamiliar variants.' },
+  { level: 7, name: 'Frontier', icon: '🚀', description: 'Research-level synthesis, critique, and novel problem formulation.' },
 ] as const
 
-export const DIFFICULTY_LABELS = ['', 'Beginner', 'Intermediate', 'Proficient', 'Expert', 'Professor'] as const
+export const DIFFICULTY_LABELS = ['', 'Beginner', 'Intermediate', 'Proficient', 'Expert', 'Professor', 'Scholar', 'Frontier'] as const
 
 export const TIME_PRESETS = [
   { label: '15 min', minutes: 15 },
