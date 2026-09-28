@@ -672,16 +672,11 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       })
     } catch (err) {
       if (streamingRef.current) {
-        // Partial response was received — save it
+        // The main process persists partial assistant output with terminal metadata.
+        // Keep the optimistic renderer copy only; never create a second durable row.
         clearTimeout(timeoutId)
         const partial = streamingRef.current
         if (partial) {
-          await window.electronAPI.tutorSaveMessage({
-            session_id: convId,
-            role: 'assistant',
-            content: partial,
-            content_type: 'text'
-          })
           setMessages(prev => [...prev, {
             id: Date.now().toString(),
             conversation_id: convId,
@@ -940,21 +935,13 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             ? finalContent.replace(/\[SESSION_END\]/g, '').trim()
             : finalContent
 
-          // Save assistant message
-          window.electronAPI.tutorSaveMessage({
-            session_id: activeSessionId,
-            role: 'assistant',
-            content: displayContent,
-            content_type: 'text'
-          }).catch(console.error)
-
           setMessages(prev => [...prev, {
-            id: Date.now().toString(),
+            id: chunk.assistantMessage?.id || Date.now().toString(),
             conversation_id: activeSessionId,
             role: 'assistant',
-            content: displayContent,
-            content_type: 'text',
-            created_at: new Date().toISOString()
+            content: chunk.assistantMessage?.content || displayContent,
+            content_type: chunk.assistantMessage?.content_type || 'text',
+            created_at: chunk.assistantMessage?.created_at || new Date().toISOString()
           }])
 
           // Extract [TOPIC: ...] markers for memory tracking

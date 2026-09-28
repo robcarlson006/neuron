@@ -400,8 +400,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getSubjectModuleStats', subjectId, userId),
   tutorGetSubjectCurriculumTopics: (subjectId: number): Promise<QuickReviewTopic[]> =>
     ipcRenderer.invoke('tutor:getSubjectCurriculumTopics', subjectId),
-  onTutorChunk: (cb: (chunk: { conversationId: number; requestId?: string; content: string; type: string }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; requestId?: string; content: string; type: string }): void => cb(data)
+  onTutorChunk: (cb: (chunk: { conversationId: number; requestId?: string; content: string; type: string; terminalReason?: string; assistantMessage?: Message; assistantMessageId?: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; requestId?: string; content: string; type: string; terminalReason?: string; assistantMessage?: Message; assistantMessageId?: string }): void => cb(data)
     ipcRenderer.on('tutor:chunk', handler)
     return () => { ipcRenderer.removeListener('tutor:chunk', handler) }
   },
