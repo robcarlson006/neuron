@@ -3,11 +3,29 @@ import type { MaterialCurriculumPlan } from '../../types'
 
 export default function MaterialCurriculumView({ subjectId }: { subjectId: number }): React.JSX.Element {
   const [plan, setPlan] = useState<MaterialCurriculumPlan | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [editing, setEditing] = useState<number | null>(null)
   const [title, setTitle] = useState('')
-  const load = async () => setPlan(await window.electronAPI.syllabusGetMaterialPlan(subjectId))
+  const load = async () => {
+    try {
+      setError(null)
+      setPlan(await window.electronAPI.syllabusGetMaterialPlan(subjectId))
+    } catch (err: any) {
+      console.error('Failed to load material plan:', err)
+      setError(err?.message || 'Failed to load class order.')
+    }
+  }
   useEffect(() => { void load() }, [subjectId])
+  if (error) {
+    return (
+      <div className="p-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 text-sm">
+        <p className="font-semibold mb-1">Error loading curriculum</p>
+        <p>{error}</p>
+        <button type="button" onClick={() => void load()} className="mt-2 text-red-700 dark:text-red-300 underline text-xs font-medium">Try again</button>
+      </div>
+    )
+  }
   if (!plan) return <p className="text-sm text-slate-400 py-8">Loading class order…</p>
   const moveGroup = async (id: number, direction: -1 | 1) => {
     const ids = plan.groups.map(group => group.id); const index = ids.indexOf(id); const target = index + direction

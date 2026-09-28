@@ -725,7 +725,25 @@ Return ONLY valid JSON. No markdown.`
     }
   })
 
+  const ensureCurriculumTables = () => {
+    db.prepare(`CREATE TABLE IF NOT EXISTS curriculum_material_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+    )`).run()
+    db.prepare(`CREATE TABLE IF NOT EXISTS curriculum_material_group_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL, material_id INTEGER NOT NULL UNIQUE,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (group_id) REFERENCES curriculum_material_groups(id) ON DELETE CASCADE,
+      FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
+    )`).run()
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_curriculum_material_groups_subject_order ON curriculum_material_groups(subject_id, sort_order)").run()
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_curriculum_material_items_group_order ON curriculum_material_group_items(group_id, sort_order)").run()
+  }
+
   const getMaterialPlan = (subjectId: number) => {
+    ensureCurriculumTables()
     const groups = db.prepare('SELECT * FROM curriculum_material_groups WHERE subject_id = ? ORDER BY sort_order, id').all(subjectId) as any[]
     const rows = db.prepare(`SELECT i.group_id, i.sort_order, m.id, m.subject_id, m.filename, m.file_type, m.uploaded_at, m.file_mtime, m.file_size, m.relative_path
       FROM curriculum_material_group_items i JOIN materials m ON m.id = i.material_id
