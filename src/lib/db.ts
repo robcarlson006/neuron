@@ -501,6 +501,70 @@ export const DB_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_tutor_messages_session ON tutor_messages(session_id, created_at);
 
+  CREATE TABLE IF NOT EXISTS tutor_answer_evidence (
+    id TEXT PRIMARY KEY,
+    session_id INTEGER NOT NULL,
+    topic_id INTEGER NOT NULL,
+    question_message_id TEXT NOT NULL,
+    answer_message_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('correct','partial','incorrect','unassessed')),
+    assistance_level TEXT NOT NULL CHECK(assistance_level IN ('independent','hinted','worked_example','unknown')),
+    evidence TEXT,
+    confidence REAL,
+    policy_version TEXT NOT NULL DEFAULT 'tutor-evidence-v1',
+    occurred_at TEXT NOT NULL,
+    supersedes_id TEXT,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (question_message_id) REFERENCES tutor_messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (answer_message_id) REFERENCES tutor_messages(id) ON DELETE CASCADE,
+    UNIQUE(session_id, topic_id, answer_message_id, policy_version)
+  );
+  CREATE INDEX IF NOT EXISTS idx_tutor_answer_evidence_session ON tutor_answer_evidence(session_id, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS tutor_finalizations (
+    operation_id TEXT PRIMARY KEY,
+    session_id INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    sealed_message_id TEXT,
+    requested_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','applied','failed')),
+    outcome_json TEXT,
+    error TEXT,
+    completed_at TEXT,
+    UNIQUE(session_id, revision),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (sealed_message_id) REFERENCES tutor_messages(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tutor_finalizations_session ON tutor_finalizations(session_id, revision);
+
+  CREATE TABLE IF NOT EXISTS focus_block_runs (
+    run_id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    plan_date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','paused','completed','abandoned')),
+    active_step INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 0,
+    active_started_at TEXT,
+    active_elapsed_seconds INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS focus_block_run_steps (
+    run_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    source_plan_item_id INTEGER,
+    activity_json TEXT NOT NULL,
+    tutor_session_id INTEGER,
+    budget_seconds INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('pending','active','paused','completed','skipped')),
+    elapsed_seconds INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, ordinal),
+    FOREIGN KEY (run_id) REFERENCES focus_block_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (tutor_session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  );
+
   CREATE TABLE IF NOT EXISTS calendar_sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -769,6 +833,45 @@ export const MIGRATIONS_SQL = [
     FOREIGN KEY (assistant_message_id) REFERENCES tutor_messages(id) ON DELETE SET NULL
   )`,
   "CREATE INDEX IF NOT EXISTS idx_tutor_turns_session_created ON tutor_turns(session_id, created_at)",
+  `CREATE TABLE IF NOT EXISTS tutor_answer_evidence (
+    id TEXT PRIMARY KEY, session_id INTEGER NOT NULL, topic_id INTEGER NOT NULL,
+    question_message_id TEXT NOT NULL, answer_message_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('correct','partial','incorrect','unassessed')),
+    assistance_level TEXT NOT NULL CHECK(assistance_level IN ('independent','hinted','worked_example','unknown')),
+    evidence TEXT, confidence REAL, policy_version TEXT NOT NULL DEFAULT 'tutor-evidence-v1',
+    occurred_at TEXT NOT NULL, supersedes_id TEXT,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (question_message_id) REFERENCES tutor_messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (answer_message_id) REFERENCES tutor_messages(id) ON DELETE CASCADE,
+    UNIQUE(session_id, topic_id, answer_message_id, policy_version)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_tutor_answer_evidence_session ON tutor_answer_evidence(session_id, occurred_at)",
+  `CREATE TABLE IF NOT EXISTS tutor_finalizations (
+    operation_id TEXT PRIMARY KEY, session_id INTEGER NOT NULL, revision INTEGER NOT NULL,
+    sealed_message_id TEXT, requested_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','applied','failed')),
+    outcome_json TEXT, error TEXT, completed_at TEXT, UNIQUE(session_id, revision),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (sealed_message_id) REFERENCES tutor_messages(id) ON DELETE SET NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_tutor_finalizations_session ON tutor_finalizations(session_id, revision)",
+  `CREATE TABLE IF NOT EXISTS focus_block_runs (
+    run_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, plan_date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','paused','completed','abandoned')),
+    active_step INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
+    active_started_at TEXT, active_elapsed_seconds INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS focus_block_run_steps (
+    run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, source_plan_item_id INTEGER,
+    activity_json TEXT NOT NULL, tutor_session_id INTEGER, budget_seconds INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('pending','active','paused','completed','skipped')),
+    elapsed_seconds INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (run_id, ordinal),
+    FOREIGN KEY (run_id) REFERENCES focus_block_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (tutor_session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  )`,
   "ALTER TABLE materials ADD COLUMN file_size INTEGER",
   "ALTER TABLE materials ADD COLUMN file_path TEXT",
   "ALTER TABLE materials ADD COLUMN tags TEXT DEFAULT ''",
