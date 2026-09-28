@@ -7,6 +7,7 @@ import ChatWelcome from '../../components/tutor/ChatWelcome'
 import SaveCardsModal from '../../components/tutor/SaveCardsModal'
 import TutorChatSidebar from './TutorChatSidebar'
 import type { Message, LibraryFile } from '../../types'
+import CalculatorWidget from '../../components/calculator/CalculatorWidget'
 
 export default function GeneralChat(): React.JSX.Element {
   const { user, subjects, addToast } = useAppStore()
@@ -33,6 +34,7 @@ export default function GeneralChat(): React.JSX.Element {
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isNearBottom = useRef(true)
   const [focusKey, setFocusKey] = useState(0)
+  const [showCalculator, setShowCalculator] = useState(false)
 
   const activeSubjects = subjects.filter(s => s.status !== 'archived')
   sessionIdRef.current = sessionId
@@ -469,18 +471,26 @@ export default function GeneralChat(): React.JSX.Element {
 
       {/* Input */}
       <div className="flex-shrink-0">
-        <ChatInput
-          onSend={handleSend}
-          onStop={sending ? handleStopResponse : undefined}
-          onAttachFile={handleAttachFile}
-          onSelectFromLibrary={handleSelectFromLibrary}
-          disabled={sending}
-          draftKey={sessionId ? `general:${sessionId}` : 'general:new'}
-          attachedFile={attachedFile?.name || null}
-          onClearAttachment={() => setAttachedFile(null)}
-          refocusKey={focusKey}
-          placeholder={selectedSubjectId ? `Ask about ${subjects.find(s => s.id === selectedSubjectId)?.name}...` : 'Ask anything...'}
-        />
+        <div className="relative">
+          {showCalculator && (
+            <div className="absolute bottom-full right-4 z-20 mb-2">
+              <CalculatorWidget isFloating onClose={() => setShowCalculator(false)} />
+            </div>
+          )}
+          <ChatInput
+            onSend={handleSend}
+            onStop={sending ? handleStopResponse : undefined}
+            onAttachFile={handleAttachFile}
+            onSelectFromLibrary={handleSelectFromLibrary}
+            onToggleCalculator={() => setShowCalculator(prev => !prev)}
+            disabled={sending}
+            draftKey={sessionId ? `general:${sessionId}` : 'general:new'}
+            attachedFile={attachedFile?.name || null}
+            onClearAttachment={() => setAttachedFile(null)}
+            refocusKey={focusKey}
+            placeholder={selectedSubjectId ? `Ask about ${subjects.find(s => s.id === selectedSubjectId)?.name}...` : 'Ask anything...'}
+          />
+        </div>
       </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore'
 import PomodoroWidget from '../components/PomodoroWidget'
 import CardBrowser from '../components/CardBrowser'
 import LatexText from '../components/LatexText'
+import MathInput from '../components/MathInput'
 import CurriculumView from '../components/classes/CurriculumView'
 import MaterialCurriculumView from '../components/classes/MaterialCurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
@@ -2094,13 +2095,13 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                 <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
                   {newCardType === 'flashcard' ? 'Term / Concept' : 'Question'}
                 </label>
-                <input type="text" className="input" placeholder={newCardType === 'flashcard' ? 'Enter the term or concept' : 'Enter the question'} value={newCardFront} onChange={e => setNewCardFront(e.target.value)} autoFocus />
+                <MathInput multiline={false} className="input" placeholder={newCardType === 'flashcard' ? 'Enter the term or concept' : 'Enter the question'} value={newCardFront} onChange={setNewCardFront} autoFocus />
               </div>
               <div>
                 <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
                   {newCardType === 'flashcard' ? 'Definition / Explanation' : 'Model Answer'}
                 </label>
-                <textarea className="input min-h-[100px] resize-none" placeholder={newCardType === 'flashcard' ? 'Enter the definition' : 'Enter the model answer'} value={newCardBack} onChange={e => setNewCardBack(e.target.value)} />
+                <MathInput className="input min-h-[100px] resize-none" placeholder={newCardType === 'flashcard' ? 'Enter the definition' : 'Enter the model answer'} value={newCardBack} onChange={setNewCardBack} />
               </div>
               <div>
                 <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1">Image URL (optional)</label>

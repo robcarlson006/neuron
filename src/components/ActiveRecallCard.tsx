@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Card } from '../types'
-import LatexText from './LatexText'
 import MarkdownRenderer from './MarkdownRenderer'
 import AutoGradeFeedback from './AutoGradeFeedback'
 import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEvaluator'
-import { hasMathInput } from '../lib/mathFormatter'
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
+import MathInput from './MathInput'
 
 import { useAppStore } from '../store/appStore'
 
@@ -184,27 +183,15 @@ export default function ActiveRecallCard({
               </div>
             )}
 
-            <textarea
-              ref={textareaRef}
+            <MathInput
+              inputRef={textareaRef}
               className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/50 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-colors text-sm font-mono resize-none min-h-[120px]"
               placeholder="Type your answer here (use standard text or LaTeX math)..."
               value={answer}
-              onChange={e => setAnswer(e.target.value)}
+              onChange={setAnswer}
               autoFocus
               data-testid="answer-input"
             />
-
-            {/* Live LaTeX Preview if user used math symbols */}
-            {hasMathInput(answer) && (
-              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-left">
-                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block mb-1">
-                  Live Math Preview:
-                </span>
-                <div className="text-sm text-slate-800 dark:text-slate-200">
-                  <LatexText>{answer}</LatexText>
-                </div>
-              </div>
-            )}
 
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
               <kbd>Enter</kbd> to reveal · <kbd>Shift</kbd>+<kbd>Enter</kbd> for new line

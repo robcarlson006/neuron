@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore'
 import PomodoroWidget from '../components/PomodoroWidget'
 import CardBrowser from '../components/CardBrowser'
 import LatexText from '../components/LatexText'
+import MathInput from '../components/MathInput'
 import CardImportModal from '../components/CardImportModal'
 import type { Card, CardFolder, CardSchedule, Deadline, Material, ModuleTopic, SyllabusModule } from '../types'
 
@@ -614,12 +615,12 @@ export default function SubjectDetail(): React.JSX.Element {
                 <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
                   {newCardType === 'flashcard' ? 'Term / Concept' : 'Question'}
                 </label>
-                <input
-                  type="text"
+                <MathInput
+                  multiline={false}
                   className="input"
                   placeholder={newCardType === 'flashcard' ? 'Enter the term or concept' : 'Enter the question'}
                   value={newCardFront}
-                  onChange={e => setNewCardFront(e.target.value)}
+                  onChange={setNewCardFront}
                   autoFocus
                 />
               </div>
@@ -627,11 +628,11 @@ export default function SubjectDetail(): React.JSX.Element {
                 <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
                   {newCardType === 'flashcard' ? 'Definition / Explanation' : 'Model Answer'}
                 </label>
-                <textarea
+                <MathInput
                   className="input min-h-[100px] resize-none"
                   placeholder={newCardType === 'flashcard' ? 'Enter the definition' : 'Enter the model answer'}
                   value={newCardBack}
-                  onChange={e => setNewCardBack(e.target.value)}
+                  onChange={setNewCardBack}
                 />
               </div>
               <div className="mb-2">

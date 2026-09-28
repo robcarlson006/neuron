@@ -8,6 +8,7 @@ import QuickCardModal, { type QuickCardCandidate } from '../../components/tutor/
 import TutorChatSidebar from './TutorChatSidebar'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
+import CalculatorWidget from '../../components/calculator/CalculatorWidget'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
@@ -45,6 +46,7 @@ export default function TutorSession(): React.JSX.Element {
   const [focusKey, setFocusKey] = useState(0)
   const [quickApiKey, setQuickApiKey] = useState('')
   const [savingQuickKey, setSavingQuickKey] = useState(false)
+  const [showCalculator, setShowCalculator] = useState(false)
 
   // Syllabus context
   const [currentModule, setCurrentModule] = useState<SyllabusModule | null>(null)
@@ -2173,23 +2175,31 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               </div>
             </div>
           ) : (
-            <ChatInput
-              onSend={handleSend}
-              onStop={sending ? handleStopResponse : undefined}
-              onAttachFile={handleAttachFile}
-              onSelectFromLibrary={handleSelectFromLibrary}
-              disabled={sending || sessionEnded}
-              draftKey={sessionId ? `session:${sessionId}` : `subject:${subjectId}`}
-              refocusKey={focusKey}
-              attachedFile={attachedFile?.name || null}
-              onClearAttachment={() => setAttachedFile(null)}
-              placeholder={
-                sending ? 'Waiting for tutor...' :
-                sessionPhase === 'structured_qa' ? 'Type your answer...' :
-                sessionPhase === 'socratic' ? 'Share your thoughts...' :
-                'Any final questions?'
-              }
-            />
+            <div className="relative">
+              {showCalculator && (
+                <div className="absolute bottom-full right-4 z-20 mb-2">
+                  <CalculatorWidget isFloating onClose={() => setShowCalculator(false)} />
+                </div>
+              )}
+              <ChatInput
+                onSend={handleSend}
+                onStop={sending ? handleStopResponse : undefined}
+                onAttachFile={handleAttachFile}
+                onSelectFromLibrary={handleSelectFromLibrary}
+                onToggleCalculator={() => setShowCalculator(prev => !prev)}
+                disabled={sending || sessionEnded}
+                draftKey={sessionId ? `session:${sessionId}` : `subject:${subjectId}`}
+                refocusKey={focusKey}
+                attachedFile={attachedFile?.name || null}
+                onClearAttachment={() => setAttachedFile(null)}
+                placeholder={
+                  sending ? 'Waiting for tutor...' :
+                  sessionPhase === 'structured_qa' ? 'Type your answer...' :
+                  sessionPhase === 'socratic' ? 'Share your thoughts...' :
+                  'Any final questions?'
+                }
+              />
+            </div>
           )}
         </div>
       )}

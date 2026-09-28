@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import MathInput from '../MathInput'
 
 export interface QuickCardCandidate {
   type: 'flashcard' | 'active_recall'
@@ -168,10 +169,9 @@ export default function QuickCardModal({
                   <span>Front (Prompt / Question / Term)</span>
                   <span className="text-[10px] text-slate-400 font-normal">Keep under 15 words</span>
                 </label>
-                <textarea
+                <MathInput
                   value={front}
-                  onChange={e => setFront(e.target.value)}
-                  rows={2}
+                  onChange={setFront}
                   placeholder="e.g. Internal vs External Rotation: Which muscle is responsible for internal rotation?"
                   className="w-full text-xs p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500 resize-none"
                 />
@@ -183,10 +183,9 @@ export default function QuickCardModal({
                   <span>Back (Target Answer / Definition)</span>
                   <span className="text-[10px] text-slate-400 font-normal">Concise, single breath (&lt;15 words)</span>
                 </label>
-                <textarea
+                <MathInput
                   value={back}
-                  onChange={e => setBack(e.target.value)}
-                  rows={2}
+                  onChange={setBack}
                   placeholder="e.g. Subscapularis (whereas Infraspinatus and Teres Minor produce external rotation)."
                   className="w-full text-xs p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500 resize-none"
                 />
