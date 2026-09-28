@@ -14,6 +14,7 @@ import {
   GapAnalysisResult,
   QuickReviewTopic
 } from '../../types'
+import type { MaterialCurriculumPlan, QuickReviewScope, TutorMaterialTarget } from '../../types'
 
 interface SessionConfigModalProps {
   subjectId: number
@@ -61,6 +62,9 @@ export default function SessionConfigModal({
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(propMaterialId || null)
   const [customTopic, setCustomTopic] = useState(initialTopic || '')
   const [quickReviewTopics, setQuickReviewTopics] = useState<QuickReviewTopic[]>([])
+  const [quickReviewScope, setQuickReviewScope] = useState<QuickReviewScope>('topics')
+  const [materialPlan, setMaterialPlan] = useState<MaterialCurriculumPlan | null>(null)
+  const [selectedQuickReviewMaterialIds, setSelectedQuickReviewMaterialIds] = useState<number[]>([])
 
   // ── Config State ──
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
@@ -111,6 +115,13 @@ export default function SessionConfigModal({
         } catch (qrErr) {
           console.warn('Failed to load Quick Review topics:', qrErr)
         }
+        try {
+          const plan = await window.electronAPI.syllabusGetMaterialPlan(subjectId)
+          if (isMounted) {
+            setMaterialPlan(plan)
+            setSelectedQuickReviewMaterialIds([...plan.groups.flatMap(group => group.materials.map(material => material.id)), ...plan.unscheduled.map(material => material.id)])
+          }
+        } catch (planErr) { console.warn('Failed to load class-order materials:', planErr) }
         if (isMounted) {
           setModules(modsWithTopics)
 
@@ -254,9 +265,21 @@ export default function SessionConfigModal({
 
     if (studyMode === 'quick_review') {
       isQuickReview = true
-      qrTopics = quickReviewTopics
-      chosenTopics = quickReviewTopics.map(t => t.title)
-      chosenTopic = `Quick Review: ${subjectName} (${quickReviewTopics.length} topics)`
+      if (quickReviewScope === 'materials') {
+        const allTargets: TutorMaterialTarget[] = [
+          ...(materialPlan?.groups.flatMap(group => group.materials.map((material, index) => ({ id: material.id, filename: material.filename, group_id: group.id, group_title: group.title, sort_order: index }))) || []),
+          ...(materialPlan?.unscheduled.map((material, index) => ({ id: material.id, filename: material.filename, sort_order: index })) || [])
+        ]
+        const selected = allTargets.filter(target => selectedQuickReviewMaterialIds.includes(target.id))
+        if (!selected.length) { setStarting(false); return }
+        chosenTopics = selected.map(target => target.filename)
+        chosenTopic = `Guided material review: ${subjectName} (${selected.length} materials)`
+        ;(qrTopics as any) = selected
+      } else {
+        qrTopics = quickReviewTopics
+        chosenTopics = quickReviewTopics.map(t => t.title)
+        chosenTopic = `Quick Review: ${subjectName} (${quickReviewTopics.length} topics)`
+      }
     } else if (studyMode === 'new_content') {
       if (selectedTopics.length > 0) {
         chosenTopics = selectedTopics
@@ -304,6 +327,24 @@ export default function SessionConfigModal({
       ? selectedTime
       : (studyMode === 'fill_gaps' && gapAnalysis?.recommendedEstimatedMinutes ? gapAnalysis.recommendedEstimatedMinutes : null)
 
+    const chosenTopicNames = new Set([...chosenTopics, ...gapTopics, chosenTopic].filter(Boolean).map(topic => topic.trim().toLowerCase()))
+    const candidateTopics = modules
+      .filter(module => !chosenModuleId || module.id === chosenModuleId)
+      .flatMap(module => module.topics || [])
+    const titleCounts = new Map<string, number>()
+    for (const topic of candidateTopics) {
+      const key = topic.title.trim().toLowerCase()
+      titleCounts.set(key, (titleCounts.get(key) || 0) + 1)
+    }
+    const chosenTopicIds = isQuickReview
+      ? quickReviewTopics.map(topic => topic.id).filter(id => id > 0)
+      : candidateTopics
+          .filter(topic => {
+            const key = topic.title.trim().toLowerCase()
+            return chosenTopicNames.has(key) && (Boolean(chosenModuleId) || titleCounts.get(key) === 1)
+          })
+          .map(topic => topic.id)
+
     const config: TutorSessionConfig = {
       duration_minutes: finalDuration,
       depth_level: finalDepth,
@@ -314,12 +355,14 @@ export default function SessionConfigModal({
       module_name: chosenModuleName,
       target_topic: chosenTopic,
       target_topics: chosenTopics.length > 0 ? chosenTopics : undefined,
-      target_topic_ids: isQuickReview ? quickReviewTopics.map(t => t.id).filter(id => id > 0) : undefined,
+      target_topic_ids: chosenTopicIds.length > 0 ? Array.from(new Set(chosenTopicIds)) : undefined,
       is_fill_gaps: isFillGaps,
       gap_topics: gapTopics,
       is_active_recall: isActiveRecall,
       is_quick_review: isQuickReview,
-      quick_review_topics: isQuickReview ? qrTopics : undefined
+      quick_review_topics: isQuickReview && quickReviewScope === 'topics' ? qrTopics : undefined,
+      quick_review_scope: isQuickReview ? quickReviewScope : undefined,
+      quick_review_materials: isQuickReview && quickReviewScope === 'materials' ? (qrTopics as unknown as TutorMaterialTarget[]) : undefined
     }
 
     const encoded = encodeURIComponent(JSON.stringify(config))
@@ -664,23 +707,30 @@ export default function SessionConfigModal({
             {/* ── Mode: Quick Review Box ── */}
             {studyMode === 'quick_review' && (
               <div className="p-4 rounded-xl bg-gradient-to-br from-amber-50/90 via-violet-50/40 to-amber-50/80 dark:from-amber-950/40 dark:via-violet-950/20 dark:to-amber-950/30 border border-amber-300/80 dark:border-amber-700/60 space-y-3">
+                <div className="flex rounded-lg border border-amber-300 p-0.5 text-xs w-fit">
+                  <button type="button" onClick={() => setQuickReviewScope('topics')} className={`px-3 py-1 rounded ${quickReviewScope === 'topics' ? 'bg-amber-600 text-white' : ''}`}>Topics</button>
+                  <button type="button" onClick={() => setQuickReviewScope('materials')} className={`px-3 py-1 rounded ${quickReviewScope === 'materials' ? 'bg-amber-600 text-white' : ''}`}>Materials</button>
+                </div>
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
                       <span>⚡</span> Quick Review — Full Subject Coverage
                     </h3>
                     <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
-                      Neuron will systematically progress through every topic in your subject, asking 1–3 core questions per topic (math problem, Socratic reasoning, or active recall based on what's most effective).
+                      {quickReviewScope === 'topics' ? 'Neuron will systematically progress through every topic in your subject, asking 1–3 core questions per topic.' : 'Neuron will guide a full tutor session through each selected material, one document at a time.'}
                     </p>
                   </div>
                   <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 flex-shrink-0">
-                    {quickReviewTopics.length} topic{quickReviewTopics.length === 1 ? '' : 's'}
+                    {quickReviewScope === 'topics' ? `${quickReviewTopics.length} topics` : `${selectedQuickReviewMaterialIds.length} materials`}
                   </span>
                 </div>
 
                 {/* Curriculum topics list preview */}
                 <div className="bg-white/80 dark:bg-slate-800/80 rounded-lg p-2.5 border border-amber-200/80 dark:border-amber-800/50 max-h-48 overflow-y-auto space-y-1.5">
-                  {quickReviewTopics.length === 0 ? (
+                  {quickReviewScope === 'materials' ? <>
+                    <div className="flex justify-end gap-2 mb-2"><button type="button" onClick={() => setSelectedQuickReviewMaterialIds([...(materialPlan?.groups.flatMap(g => g.materials.map(m => m.id)) || []), ...(materialPlan?.unscheduled.map(m => m.id) || [])])}>Select all</button><button type="button" onClick={() => setSelectedQuickReviewMaterialIds([])}>Clear</button></div>
+                    {[...(materialPlan?.groups.map(g => ({ title: g.title, materials: g.materials })) || []), { title: 'Unscheduled', materials: materialPlan?.unscheduled || [] }].map(group => <div key={group.title} className="mb-2"><p className="text-[10px] font-bold text-slate-500">{group.title}</p>{group.materials.map(material => <label key={material.id} className="flex gap-2 py-1"><input type="checkbox" checked={selectedQuickReviewMaterialIds.includes(material.id)} onChange={() => setSelectedQuickReviewMaterialIds(ids => ids.includes(material.id) ? ids.filter(id => id !== material.id) : [...ids, material.id])}/><span>{material.filename}</span></label>)}</div>)}
+                  </> : quickReviewTopics.length === 0 ? (
                     <p className="text-xs text-slate-400 italic py-2 text-center">
                       No syllabus topics found for this class yet. Upload materials or generate a syllabus to unlock structured Quick Review.
                     </p>

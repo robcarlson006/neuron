@@ -2667,6 +2667,49 @@ Rules:
     `).all(subjectId)
   })
 
+  ipcMain.handle('syllabus:getCurriculumTree', (_event, subjectId: number, userId?: number) => {
+    const actualUserId = userId || (db.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined)?.id || 1
+    const modules = db.prepare(`
+      SELECT sm.*, COUNT(mt.id) as topic_count
+      FROM syllabus_modules sm LEFT JOIN module_topics mt ON mt.module_id = sm.id
+      WHERE sm.subject_id = ? GROUP BY sm.id ORDER BY sm.sort_order ASC
+    `).all(subjectId) as (SyllabusModule & { topic_count: number })[]
+    if (modules.length === 0) return []
+    const retention = getTopicsRetention(db, actualUserId, subjectId)
+    const rows = db.prepare(`
+      SELECT mt.*,
+        CASE WHEN EXISTS (SELECT 1 FROM module_topic_study_log sl WHERE sl.topic_id = mt.id AND sl.user_id = ?) THEN 1 ELSE 0 END AS completed,
+        (SELECT COUNT(*) FROM cards c WHERE c.subject_id = ? AND (
+          c.topic_id = mt.id OR LOWER(TRIM(c.concept)) = LOWER(TRIM(mt.title))
+          OR LOWER(c.concept) LIKE '%' || LOWER(mt.title) || '%'
+          OR LOWER(mt.title) LIKE '%' || LOWER(c.concept) || '%'
+        )) AS card_count
+      FROM module_topics mt JOIN syllabus_modules sm ON sm.id = mt.module_id
+      WHERE sm.subject_id = ? ORDER BY sm.sort_order ASC, mt.sort_order ASC
+    `).all(actualUserId, subjectId, subjectId) as (Omit<ModuleTopic, 'completed' | 'studied'> & { completed: number; card_count: number })[]
+    const byModule = new Map<number, ModuleTopic[]>()
+    for (const row of rows) {
+      const srs = retention.get(row.id)
+      const topic: ModuleTopic = {
+        ...row,
+        completed: Boolean(row.completed),
+        studied: Boolean(row.completed),
+        has_new_material: Boolean(row.has_new_material && !row.completed),
+        is_gap: Boolean(row.is_gap && !row.completed),
+        retrievability: srs?.retrievability,
+        retention_status: srs?.retentionStatus,
+        next_review_due: srs?.nextReviewDue,
+        stability: srs?.stability,
+        days_overdue: srs?.daysOverdue,
+        card_count: Number(row.card_count) || 0
+      }
+      const topics = byModule.get(row.module_id) ?? []
+      topics.push(topic)
+      byModule.set(row.module_id, topics)
+    }
+    return modules.map(module => ({ ...module, topics: byModule.get(module.id) ?? [] }))
+  })
+
   ipcMain.handle('syllabus:listTopics', (_event, moduleId: number, userId?: number) => {
     let actualUserId = userId
     if (!actualUserId) {

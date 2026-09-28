@@ -91,11 +91,22 @@ export default function ClassOverview(): React.JSX.Element {
 
   function handleStartSpacedReview(moduleId?: number, selectedTopics?: string[]): void {
     if (subject) {
+      const selectedNames = new Set((selectedTopics || []).map(topic => topic.trim().toLowerCase()))
+      const candidates = modules
+        .filter(module => !moduleId || module.id === moduleId)
+        .flatMap(module => module.topics || [])
+      const counts = new Map<string, number>()
+      candidates.forEach(topic => counts.set(topic.title.trim().toLowerCase(), (counts.get(topic.title.trim().toLowerCase()) || 0) + 1))
+      const targetTopicIds = candidates
+        .filter(topic => selectedNames.has(topic.title.trim().toLowerCase()) && (Boolean(moduleId) || counts.get(topic.title.trim().toLowerCase()) === 1))
+        .map(topic => topic.id)
       const config: import('../../types').TutorSessionConfig = {
         duration_minutes: 15,
         depth_level: 3,
         never_studied: false,
         module_id: moduleId,
+        target_topic_ids: targetTopicIds.length ? targetTopicIds : undefined,
+        target_topics: selectedTopics,
         is_spaced_review: true,
         spaced_review_topics: selectedTopics
       }

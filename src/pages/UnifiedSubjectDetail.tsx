@@ -5,6 +5,7 @@ import PomodoroWidget from '../components/PomodoroWidget'
 import CardBrowser from '../components/CardBrowser'
 import LatexText from '../components/LatexText'
 import CurriculumView from '../components/classes/CurriculumView'
+import MaterialCurriculumView from '../components/classes/MaterialCurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
 import CardImportModal from '../components/CardImportModal'
@@ -27,7 +28,12 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
   const subjectId = Number(id)
   const navigate = useNavigate()
-  const { user, subjects, updateSubject, removeSubject, addToast, calculatorSkin } = useAppStore()
+  const user = useAppStore(state => state.user)
+  const subjects = useAppStore(state => state.subjects)
+  const updateSubject = useAppStore(state => state.updateSubject)
+  const removeSubject = useAppStore(state => state.removeSubject)
+  const addToast = useAppStore(state => state.addToast)
+  const calculatorSkin = useAppStore(state => state.calculatorSkin)
 
   const subject = subjects.find(s => s.id === subjectId)
 
@@ -76,6 +82,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
   // ── Curriculum state (from ClassOverview) ──
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
+  const [curriculumView, setCurriculumView] = useState<'topics' | 'materials'>('topics')
   const [moduleTutorStats, setModuleTutorStats] = useState<Record<number, ModuleTutorStats>>({})
   const [loadingCards, setLoadingCards] = useState<Record<number, boolean>>({})
   const [, setStudyLog] = useState<Record<number, boolean>>({})
@@ -215,13 +222,23 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
       if (window.electronAPI.syllabusListModules) {
         try {
-          const mods = (await window.electronAPI.syllabusListModules(subjectId)) as (SyllabusModule & { topic_count?: number })[]
-          const modsWithTopics: (SyllabusModule & { topics?: ModuleTopic[] })[] = []
-          for (const mod of (mods || [])) {
-            const topList = window.electronAPI.syllabusListTopics
-              ? ((await window.electronAPI.syllabusListTopics(mod.id, user?.id)) as ModuleTopic[])
-              : []
-            modsWithTopics.push({ ...mod, topics: topList || [] })
+          let modsWithTopics: (SyllabusModule & { topics?: ModuleTopic[] })[] = []
+          let curriculumTreeLoaded = false
+          if (window.electronAPI.syllabusGetCurriculumTree) {
+            const tree = await window.electronAPI.syllabusGetCurriculumTree(subjectId, user?.id)
+            if (Array.isArray(tree)) {
+              modsWithTopics = tree
+              curriculumTreeLoaded = true
+            }
+          }
+          if (!curriculumTreeLoaded) {
+            const mods = (await window.electronAPI.syllabusListModules(subjectId)) as (SyllabusModule & { topic_count?: number })[]
+            modsWithTopics = await Promise.all((mods || []).map(async mod => ({
+              ...mod,
+              topics: window.electronAPI.syllabusListTopics
+                ? await window.electronAPI.syllabusListTopics(mod.id, user?.id) as ModuleTopic[]
+                : []
+            })))
           }
           setModules(modsWithTopics)
 
@@ -383,11 +400,22 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
   function handleStartSpacedReview(moduleId?: number, selectedTopics?: string[]): void {
     if (subject) {
+      const selectedNames = new Set((selectedTopics || []).map(topic => topic.trim().toLowerCase()))
+      const candidates = modules
+        .filter(module => !moduleId || module.id === moduleId)
+        .flatMap(module => module.topics || [])
+      const counts = new Map<string, number>()
+      candidates.forEach(topic => counts.set(topic.title.trim().toLowerCase(), (counts.get(topic.title.trim().toLowerCase()) || 0) + 1))
+      const targetTopicIds = candidates
+        .filter(topic => selectedNames.has(topic.title.trim().toLowerCase()) && (Boolean(moduleId) || counts.get(topic.title.trim().toLowerCase()) === 1))
+        .map(topic => topic.id)
       const config: import('../types').TutorSessionConfig = {
         duration_minutes: 15,
         depth_level: 3,
         never_studied: false,
         module_id: moduleId,
+        target_topic_ids: targetTopicIds.length ? targetTopicIds : undefined,
+        target_topics: selectedTopics,
         is_spaced_review: true,
         spaced_review_topics: selectedTopics
       }
@@ -1211,12 +1239,20 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Curriculum</h2>
-            {modules.length > 0 && (
+            <div className="flex items-center gap-3">
+              <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 text-xs">
+                <button type="button" onClick={() => setCurriculumView('topics')} className={`px-2.5 py-1 rounded ${curriculumView === 'topics' ? 'bg-violet-600 text-white' : ''}`}>By Topic</button>
+                <button type="button" onClick={() => setCurriculumView('materials')} className={`px-2.5 py-1 rounded ${curriculumView === 'materials' ? 'bg-violet-600 text-white' : ''}`}>Class Order</button>
+              </div>
+            {modules.length > 0 && curriculumView === 'topics' && (
               <span className="text-xs text-slate-400">
                 {completedModules}/{modules.length} modules completed
               </span>
             )}
+            </div>
           </div>
+
+          {curriculumView === 'materials' ? <MaterialCurriculumView subjectId={subjectId} /> : <>
 
           {/* Syllabus Regeneration Loading Bar */}
           {isRegeneratingSyllabus && (
@@ -1340,6 +1376,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               </button>
             </div>
           )}
+          </>}
         </div>
       )}
 

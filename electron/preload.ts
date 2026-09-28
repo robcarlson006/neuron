@@ -433,6 +433,8 @@ const electronAPI = {
   // ── Syllabus / Modules ──
   syllabusListModules: (subjectId: number): Promise<import('../src/types').SyllabusModule[]> =>
     ipcRenderer.invoke('syllabus:listModules', subjectId),
+  syllabusGetCurriculumTree: (subjectId: number, userId?: number): Promise<(import('../src/types').SyllabusModule & { topics: import('../src/types').ModuleTopic[] })[]> =>
+    ipcRenderer.invoke('syllabus:getCurriculumTree', subjectId, userId),
   syllabusCreateModule: (module: { subject_id: number; title: string; description?: string; week_number?: number; hours_estimated?: number; sort_order?: number }): Promise<import('../src/types').SyllabusModule> =>
     ipcRenderer.invoke('syllabus:createModule', module),
   syllabusUpdateModule: (moduleId: number, updates: Partial<import('../src/types').SyllabusModule>): Promise<{ success: boolean }> =>
@@ -449,6 +451,18 @@ const electronAPI = {
     ipcRenderer.invoke('syllabus:updateTopic', topicId, updates),
   syllabusDeleteTopic: (topicId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('syllabus:deleteTopic', topicId),
+  syllabusGetMaterialPlan: (subjectId: number): Promise<import('../src/types').MaterialCurriculumPlan> =>
+    ipcRenderer.invoke('syllabus:getMaterialPlan', subjectId),
+  syllabusCreateMaterialGroup: (input: { subjectId: number; title: string }): Promise<import('../src/types').CurriculumMaterialGroup> =>
+    ipcRenderer.invoke('syllabus:createMaterialGroup', input),
+  syllabusRenameMaterialGroup: (input: { subjectId: number; groupId: number; title: string }): Promise<import('../src/types').CurriculumMaterialGroup> =>
+    ipcRenderer.invoke('syllabus:renameMaterialGroup', input),
+  syllabusDeleteMaterialGroup: (input: { subjectId: number; groupId: number }): Promise<import('../src/types').MaterialCurriculumPlan> =>
+    ipcRenderer.invoke('syllabus:deleteMaterialGroup', input),
+  syllabusReorderMaterialGroups: (input: { subjectId: number; groupIds: number[] }): Promise<import('../src/types').MaterialCurriculumPlan> =>
+    ipcRenderer.invoke('syllabus:reorderMaterialGroups', input),
+  syllabusMoveMaterial: (input: { subjectId: number; materialId: number; targetGroupId: number | null; targetIndex: number }): Promise<import('../src/types').MaterialCurriculumPlan> =>
+    ipcRenderer.invoke('syllabus:moveMaterial', input),
 
   // ── Library (file attachment for tutor) ──
   libraryOpenFileDialog: (): Promise<string | null> => ipcRenderer.invoke('library:openFileDialog'),

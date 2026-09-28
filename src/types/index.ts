@@ -26,7 +26,7 @@ export interface Material {
   id: number
   subject_id: number
   filename: string
-  file_type: 'pdf' | 'docx' | 'pptx'
+  file_type: string
   content_text: string
   uploaded_at: string
   file_mtime?: number | null
@@ -37,6 +37,29 @@ export interface Material {
   syllabus_processed?: number
   /** Syllabus module this material's content was assigned to, if any. */
   module_id?: number | null
+}
+
+/** A metadata-only material used by the class-order view and tutor selectors. */
+export type MaterialSummary = Omit<Material, 'content_text'>
+
+export interface CurriculumMaterialItem extends MaterialSummary {
+  group_id: number
+  sort_order: number
+}
+
+export interface CurriculumMaterialGroup {
+  id: number
+  subject_id: number
+  title: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+  materials: CurriculumMaterialItem[]
+}
+
+export interface MaterialCurriculumPlan {
+  groups: CurriculumMaterialGroup[]
+  unscheduled: MaterialSummary[]
 }
 
 export type LectureStatus = 'recording' | 'recorded' | 'transcribing' | 'ready' | 'failed'
@@ -750,6 +773,9 @@ export interface TutorStreamParams {
   isActiveRecall?: boolean
   isQuickReview?: boolean
   quickReviewTopics?: QuickReviewTopic[]
+  quickReviewScope?: QuickReviewScope
+  quickReviewMaterials?: TutorMaterialTarget[]
+  quickReviewIndex?: number
 }
 
 export interface QuickReviewTopic {
@@ -758,6 +784,16 @@ export interface QuickReviewTopic {
   module_title: string
   title: string
   description?: string
+  sort_order: number
+}
+
+export type QuickReviewScope = 'topics' | 'materials'
+
+export interface TutorMaterialTarget {
+  id: number
+  filename: string
+  group_id?: number
+  group_title?: string
   sort_order: number
 }
 
@@ -780,6 +816,9 @@ export interface TutorSessionConfig {
   is_active_recall?: boolean
   is_quick_review?: boolean
   quick_review_topics?: QuickReviewTopic[]
+  quick_review_scope?: QuickReviewScope
+  quick_review_materials?: TutorMaterialTarget[]
+  quick_review_index?: number
 }
 
 export interface TutorSessionRuntime {
