@@ -6,6 +6,7 @@ import { safeParseAIJson } from '../../src/lib/jsonRepair'
 import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 import { syncModuleCompletionStatus } from './tutorHandlers'
+import { MaterialCurriculumService } from '../services/materialCurriculumService'
 
 let db: Database.Database
 
@@ -725,81 +726,23 @@ Return ONLY valid JSON. No markdown.`
     }
   })
 
-  const ensureCurriculumTables = () => {
-    db.prepare(`CREATE TABLE IF NOT EXISTS curriculum_material_groups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL,
-      sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
-    )`).run()
-    db.prepare(`CREATE TABLE IF NOT EXISTS curriculum_material_group_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL, material_id INTEGER NOT NULL UNIQUE,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      FOREIGN KEY (group_id) REFERENCES curriculum_material_groups(id) ON DELETE CASCADE,
-      FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
-    )`).run()
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_curriculum_material_groups_subject_order ON curriculum_material_groups(subject_id, sort_order)").run()
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_curriculum_material_items_group_order ON curriculum_material_group_items(group_id, sort_order)").run()
-  }
+  const materialCurriculum = new MaterialCurriculumService(db)
 
-  const getMaterialPlan = (subjectId: number) => {
-    ensureCurriculumTables()
-    const groups = db.prepare('SELECT * FROM curriculum_material_groups WHERE subject_id = ? ORDER BY sort_order, id').all(subjectId) as any[]
-    const rows = db.prepare(`SELECT i.group_id, i.sort_order, m.id, m.subject_id, m.filename, m.file_type, m.uploaded_at, m.file_mtime, m.file_size, m.relative_path
-      FROM curriculum_material_group_items i JOIN materials m ON m.id = i.material_id
-      WHERE m.subject_id = ? ORDER BY i.group_id, i.sort_order, i.id`).all(subjectId) as any[]
-    const assigned = new Set(rows.map(row => row.id))
-    const unscheduled = (db.prepare('SELECT id, subject_id, filename, file_type, uploaded_at, file_mtime, file_size, relative_path, syllabus_processed, module_id FROM materials WHERE subject_id = ? ORDER BY uploaded_at ASC, id ASC').all(subjectId) as any[])
-      .filter(material => !assigned.has(material.id))
-    return { groups: groups.map(group => ({ ...group, materials: rows.filter(row => row.group_id === group.id) })), unscheduled }
-  }
-
-  ipcMain.handle('syllabus:getMaterialPlan', (_event, subjectId: number) => getMaterialPlan(subjectId))
+  ipcMain.handle('syllabus:getMaterialPlan', (_event, subjectId: number) => materialCurriculum.getPlan(subjectId))
   ipcMain.handle('syllabus:createMaterialGroup', (_event, input: { subjectId: number; title: string }) => {
-    ensureCurriculumTables()
-    const title = input.title?.trim()
-    if (!title) throw new Error('A group title is required')
-    const max = db.prepare('SELECT MAX(sort_order) AS value FROM curriculum_material_groups WHERE subject_id = ?').get(input.subjectId) as { value: number | null }
-    const now = new Date().toISOString()
-    const result = db.prepare('INSERT INTO curriculum_material_groups (subject_id, title, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(input.subjectId, title, (max.value ?? -1) + 1, now, now)
-    return db.prepare('SELECT * FROM curriculum_material_groups WHERE id = ?').get(result.lastInsertRowid)
+    return materialCurriculum.createGroup(input.subjectId, input.title)
   })
   ipcMain.handle('syllabus:renameMaterialGroup', (_event, input: { subjectId: number; groupId: number; title: string }) => {
-    ensureCurriculumTables()
-    const title = input.title?.trim()
-    if (!title) throw new Error('A group title is required')
-    const result = db.prepare('UPDATE curriculum_material_groups SET title = ?, updated_at = ? WHERE id = ? AND subject_id = ?').run(title, new Date().toISOString(), input.groupId, input.subjectId)
-    if (!result.changes) throw new Error('Material group not found')
-    return db.prepare('SELECT * FROM curriculum_material_groups WHERE id = ?').get(input.groupId)
+    return materialCurriculum.renameGroup(input)
   })
   ipcMain.handle('syllabus:deleteMaterialGroup', (_event, input: { subjectId: number; groupId: number }) => {
-    ensureCurriculumTables()
-    db.prepare('DELETE FROM curriculum_material_groups WHERE id = ? AND subject_id = ?').run(input.groupId, input.subjectId)
-    return getMaterialPlan(input.subjectId)
+    return materialCurriculum.deleteGroup(input.subjectId, input.groupId)
   })
   ipcMain.handle('syllabus:reorderMaterialGroups', (_event, input: { subjectId: number; groupIds: number[] }) => {
-    ensureCurriculumTables()
-    const ids = [...new Set(input.groupIds.filter(Number.isSafeInteger))]
-    const actual = db.prepare('SELECT id FROM curriculum_material_groups WHERE subject_id = ?').all(input.subjectId) as { id: number }[]
-    if (ids.length !== actual.length || ids.some(id => !actual.some(group => group.id === id))) throw new Error('Invalid material group order')
-    db.transaction(() => ids.forEach((id, index) => db.prepare('UPDATE curriculum_material_groups SET sort_order = ? WHERE id = ?').run(index, id)))()
-    return getMaterialPlan(input.subjectId)
+    return materialCurriculum.reorderGroups(input.subjectId, input.groupIds)
   })
   ipcMain.handle('syllabus:moveMaterial', (_event, input: { subjectId: number; materialId: number; targetGroupId: number | null; targetIndex: number }) => {
-    ensureCurriculumTables()
-    const material = db.prepare('SELECT id FROM materials WHERE id = ? AND subject_id = ?').get(input.materialId, input.subjectId)
-    if (!material) throw new Error('Material not found')
-    if (input.targetGroupId && !db.prepare('SELECT id FROM curriculum_material_groups WHERE id = ? AND subject_id = ?').get(input.targetGroupId, input.subjectId)) throw new Error('Material group not found')
-    db.transaction(() => {
-      db.prepare('DELETE FROM curriculum_material_group_items WHERE material_id = ?').run(input.materialId)
-      if (input.targetGroupId) {
-        const items = db.prepare('SELECT material_id FROM curriculum_material_group_items WHERE group_id = ? ORDER BY sort_order, id').all(input.targetGroupId) as { material_id: number }[]
-        const ids = items.map(item => item.material_id)
-        ids.splice(Math.max(0, Math.min(input.targetIndex, ids.length)), 0, input.materialId)
-        ids.forEach((id, index) => db.prepare('INSERT INTO curriculum_material_group_items (group_id, material_id, sort_order) VALUES (?, ?, ?) ON CONFLICT(material_id) DO UPDATE SET group_id = excluded.group_id, sort_order = excluded.sort_order').run(input.targetGroupId, id, index))
-      }
-    })()
-    return getMaterialPlan(input.subjectId)
+    return materialCurriculum.moveMaterial(input)
   })
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { MaterialCurriculumPlan } from '../../types'
 
 interface MaterialCurriculumViewProps {
@@ -12,7 +12,6 @@ interface MaterialCurriculumViewProps {
 
 export default function MaterialCurriculumView({
   subjectId,
-  subjectName,
   onStartTutor,
   onStartSpacedReview,
   onGenerateCards,
@@ -26,6 +25,7 @@ export default function MaterialCurriculumView({
   const [dragOverTarget, setDragOverTarget] = useState<number | 'unscheduled' | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
   const [selectedMaterialsByGroup, setSelectedMaterialsByGroup] = useState<Record<string, Set<number>>>({})
+  const renameInFlight = useRef(false)
 
   const getSelectedIds = (groupId: number | 'unscheduled', materials: { id: number }[]): number[] => {
     const key = String(groupId)
@@ -61,6 +61,21 @@ export default function MaterialCurriculumView({
       ...prev,
       [key]: new Set()
     }))
+  }
+
+  const renameGroup = async (groupId: number, nextTitle: string) => {
+    const normalized = nextTitle.trim()
+    if (!normalized || renameInFlight.current) return
+    renameInFlight.current = true
+    try {
+      await window.electronAPI.syllabusRenameMaterialGroup({ subjectId, groupId, title: normalized })
+      await load()
+    } catch (err: any) {
+      console.error('Failed to rename material group:', err)
+      setError(err?.message || 'Failed to rename class unit.')
+    } finally {
+      renameInFlight.current = false
+    }
   }
 
   const load = async () => {
@@ -347,20 +362,14 @@ export default function MaterialCurriculumView({
                     onChange={e => setTitle(e.target.value)}
                     onKeyDown={async e => {
                       if (e.key === 'Enter') {
-                        if (title.trim()) {
-                          await window.electronAPI.syllabusRenameMaterialGroup({ subjectId, groupId: group.id, title: title.trim() })
-                          await load()
-                        }
+                        await renameGroup(group.id, title)
                         setEditing(null)
                       } else if (e.key === 'Escape') {
                         setEditing(null)
                       }
                     }}
                     onBlur={async () => {
-                      if (title.trim()) {
-                        await window.electronAPI.syllabusRenameMaterialGroup({ subjectId, groupId: group.id, title: title.trim() })
-                        await load()
-                      }
+                      await renameGroup(group.id, title)
                       setEditing(null)
                     }}
                     className="text-sm font-semibold flex-1 px-2 py-1 rounded border border-violet-400 bg-white dark:bg-slate-800"
@@ -456,11 +465,11 @@ export default function MaterialCurriculumView({
                       {onStartTutor && (
                         <button
                           type="button"
+                          disabled={selectedGroupIds.length === 0}
                           onClick={() => {
-                            const chosen = selectedGroupIds.length > 0 ? selectedGroupIds : group.materials.map(m => m.id)
-                            onStartTutor(group.id, chosen, group.title, 'material')
+                            if (selectedGroupIds.length > 0) onStartTutor(group.id, selectedGroupIds, group.title, 'material')
                           }}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
                           title={`Study all selected materials in ${group.title} with AI Tutor`}
                         >
                           <span>🎓</span>
@@ -475,11 +484,11 @@ export default function MaterialCurriculumView({
                       {onStartSpacedReview && (
                         <button
                           type="button"
+                          disabled={selectedGroupIds.length === 0}
                           onClick={() => {
-                            const chosen = selectedGroupIds.length > 0 ? selectedGroupIds : group.materials.map(m => m.id)
-                            onStartSpacedReview(group.id, chosen, group.title)
+                            if (selectedGroupIds.length > 0) onStartSpacedReview(group.id, selectedGroupIds, group.title)
                           }}
-                          className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                          className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
                           title="Launch focused spaced repetition review on this unit"
                         >
                           <span>⚡</span>
@@ -491,8 +500,7 @@ export default function MaterialCurriculumView({
                         <button
                           type="button"
                           onClick={() => {
-                            const chosen = selectedGroupIds.length > 0 ? selectedGroupIds : group.materials.map(m => m.id)
-                            onGenerateCards(group.id, chosen)
+                            if (selectedGroupIds.length > 0) onGenerateCards(group.id, selectedGroupIds)
                           }}
                           disabled={loadingCards?.[group.id] || selectedGroupIds.length === 0}
                           className="px-3 py-1.5 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
@@ -588,11 +596,11 @@ export default function MaterialCurriculumView({
                 {onStartTutor && (
                   <button
                     type="button"
+                    disabled={selectedUnscheduledIds.length === 0}
                     onClick={() => {
-                      const chosen = selectedUnscheduledIds.length > 0 ? selectedUnscheduledIds : plan.unscheduled.map(m => m.id)
-                      onStartTutor(undefined, chosen, 'Unscheduled Materials', 'material')
+                      if (selectedUnscheduledIds.length > 0) onStartTutor(undefined, selectedUnscheduledIds, 'Unscheduled Materials', 'material')
                     }}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
                     title="Study all selected unscheduled materials with AI Tutor"
                   >
                     <span>🎓</span>
@@ -608,8 +616,7 @@ export default function MaterialCurriculumView({
                   <button
                     type="button"
                     onClick={() => {
-                      const chosen = selectedUnscheduledIds.length > 0 ? selectedUnscheduledIds : plan.unscheduled.map(m => m.id)
-                      onGenerateCards(0, chosen)
+                      if (selectedUnscheduledIds.length > 0) onGenerateCards(0, selectedUnscheduledIds)
                     }}
                     disabled={loadingCards?.[0] || selectedUnscheduledIds.length === 0}
                     className="px-3 py-1.5 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
