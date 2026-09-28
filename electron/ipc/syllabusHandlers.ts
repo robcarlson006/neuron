@@ -756,6 +756,7 @@ Return ONLY valid JSON. No markdown.`
 
   ipcMain.handle('syllabus:getMaterialPlan', (_event, subjectId: number) => getMaterialPlan(subjectId))
   ipcMain.handle('syllabus:createMaterialGroup', (_event, input: { subjectId: number; title: string }) => {
+    ensureCurriculumTables()
     const title = input.title?.trim()
     if (!title) throw new Error('A group title is required')
     const max = db.prepare('SELECT MAX(sort_order) AS value FROM curriculum_material_groups WHERE subject_id = ?').get(input.subjectId) as { value: number | null }
@@ -764,6 +765,7 @@ Return ONLY valid JSON. No markdown.`
     return db.prepare('SELECT * FROM curriculum_material_groups WHERE id = ?').get(result.lastInsertRowid)
   })
   ipcMain.handle('syllabus:renameMaterialGroup', (_event, input: { subjectId: number; groupId: number; title: string }) => {
+    ensureCurriculumTables()
     const title = input.title?.trim()
     if (!title) throw new Error('A group title is required')
     const result = db.prepare('UPDATE curriculum_material_groups SET title = ?, updated_at = ? WHERE id = ? AND subject_id = ?').run(title, new Date().toISOString(), input.groupId, input.subjectId)
@@ -771,10 +773,12 @@ Return ONLY valid JSON. No markdown.`
     return db.prepare('SELECT * FROM curriculum_material_groups WHERE id = ?').get(input.groupId)
   })
   ipcMain.handle('syllabus:deleteMaterialGroup', (_event, input: { subjectId: number; groupId: number }) => {
+    ensureCurriculumTables()
     db.prepare('DELETE FROM curriculum_material_groups WHERE id = ? AND subject_id = ?').run(input.groupId, input.subjectId)
     return getMaterialPlan(input.subjectId)
   })
   ipcMain.handle('syllabus:reorderMaterialGroups', (_event, input: { subjectId: number; groupIds: number[] }) => {
+    ensureCurriculumTables()
     const ids = [...new Set(input.groupIds.filter(Number.isSafeInteger))]
     const actual = db.prepare('SELECT id FROM curriculum_material_groups WHERE subject_id = ?').all(input.subjectId) as { id: number }[]
     if (ids.length !== actual.length || ids.some(id => !actual.some(group => group.id === id))) throw new Error('Invalid material group order')
@@ -782,6 +786,7 @@ Return ONLY valid JSON. No markdown.`
     return getMaterialPlan(input.subjectId)
   })
   ipcMain.handle('syllabus:moveMaterial', (_event, input: { subjectId: number; materialId: number; targetGroupId: number | null; targetIndex: number }) => {
+    ensureCurriculumTables()
     const material = db.prepare('SELECT id FROM materials WHERE id = ? AND subject_id = ?').get(input.materialId, input.subjectId)
     if (!material) throw new Error('Material not found')
     if (input.targetGroupId && !db.prepare('SELECT id FROM curriculum_material_groups WHERE id = ? AND subject_id = ?').get(input.targetGroupId, input.subjectId)) throw new Error('Material group not found')
