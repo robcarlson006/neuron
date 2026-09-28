@@ -99,8 +99,8 @@ function todayISO(): string {
   return new Date().toISOString().split('T')[0]
 }
 
-function addDaysISO(days: number): string {
-  const d = new Date()
+function addDaysISO(days: number, nowISO: string = todayISO()): string {
+  const d = new Date(`${nowISO.slice(0, 10)}T12:00:00`)
   d.setDate(d.getDate() + days)
   return d.toISOString().split('T')[0]
 }
@@ -134,7 +134,7 @@ export function fsrsNext(
       lapses: rating === 1 ? 1 : 0,
       lastReview: nowISO,
       interval,
-      dueDate: addDaysISO(interval)
+      dueDate: addDaysISO(interval, nowISO)
     }
   }
 
@@ -162,7 +162,7 @@ export function fsrsNext(
     lapses,
     lastReview: nowISO,
     interval,
-    dueDate: addDaysISO(interval)
+    dueDate: addDaysISO(interval, nowISO)
   }
 }
 
@@ -170,10 +170,9 @@ export function fsrsNext(
  * Map legacy SM-2 quality (0-5) to FSRS rating (1-4).
  */
 export function qualityToRating(quality: number): FSRSRating {
-  if (quality <= 1) return 1          // Again
-  if (quality === 2) return 2         // Hard
-  if (quality <= 4) return 3          // Good
-  return 4                             // Easy
+  if (quality <= 3) return 1          // Again, including partial recall
+  if (quality === 4) return 2         // Hard, correct with hesitation
+  return 3                             // Good, correct without hesitation
 }
 
 /**
@@ -216,7 +215,6 @@ export function adjustRatingByResponseTime(
   if (rating !== 3) return rating
   const ratio = responseTimeMs / userAvgMs
   if (ratio > 2.2) return 2          // slow "Good" → Hard
-  if (ratio < 0.45) return 4          // fast "Good" → Easy
   return rating
 }
 

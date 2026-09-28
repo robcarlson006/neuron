@@ -50,8 +50,11 @@ export default function StudySession(): React.JSX.Element {
   const isLearnMode = searchParams.get('mode') === 'learn'
   const typeFilter = searchParams.get('type') as 'flashcard' | 'active_recall' | null
   const folderIdParam = searchParams.get('folderId')
+  const topicIdParam = searchParams.get('topicId')
+  const conceptParam = searchParams.get('concept')
   const isFolderMode = folderIdParam != null
-  const { user, calculatorSkin } = useAppStore()
+  const user = useAppStore(state => state.user)
+  const calculatorSkin = useAppStore(state => state.calculatorSkin)
   const navigate = useNavigate()
 
   const [showCalculator, setShowCalculator] = useState<boolean>(false)
@@ -76,7 +79,10 @@ export default function StudySession(): React.JSX.Element {
   })
 
   const [undoVisible, setUndoVisible] = useState(false)
-  const [lastReviewParams, setLastReviewParams] = useState<{ cardId: number; cardIndex: number } | null>(null)
+  const [lastReviewParams, setLastReviewParams] = useState<{
+    cardId: number; cardIndex: number; previousSummary: SessionSummary;
+    previousPhase: 'studying' | 'skipped' | 'done'
+  } | null>(null)
   const cardContainerRef = useRef<HTMLDivElement>(null)
 
   const [sessionId, setSessionId] = useState<number | null>(null)
@@ -113,7 +119,16 @@ export default function StudySession(): React.JSX.Element {
   }
 
   const learnStorageKey = `${user?.id ?? 0}-${subjectId ?? 'all'}`
-  const sessionProgressKey = `study-session-progress-${user?.id ?? 0}-${subjectId ?? 'all'}-${folderIdParam ?? 'all'}-${isMCMode ? 'mc' : 'study'}`
+  const studyScopeKey = topicIdParam ? `topic-${topicIdParam}` : conceptParam ? `concept-${conceptParam.trim().toLowerCase()}` : 'all'
+  const sessionProgressKey = `study-session-progress-${user?.id ?? 0}-${subjectId ?? 'all'}-${folderIdParam ?? 'all'}-${studyScopeKey}-${typeFilter ?? 'any'}-${isMCMode ? 'mc' : 'study'}`
+
+  const matchesStudyScope = (card: StudyCard): boolean => {
+    if (topicIdParam) return card.topic_id === Number(topicIdParam)
+    if (!conceptParam) return true
+    const target = conceptParam.trim().toLowerCase().replace(/\s+/g, ' ')
+    if ((card.concept || '').trim().toLowerCase().replace(/\s+/g, ' ') === target) return true
+    return (card.tags || '').split(',').some(tag => tag.trim().toLowerCase().replace(/\s+/g, ' ') === target)
+  }
 
   const handleLearnRestart = useCallback(() => {
     localStorage.removeItem(`learn-progress-${learnStorageKey}`)
@@ -222,7 +237,7 @@ export default function StudySession(): React.JSX.Element {
 
   useEffect(() => {
     if (user) loadCards()
-  }, [user, subjectId, isMCMode, isLearnMode, typeFilter, folderIdParam])
+  }, [user, subjectId, isMCMode, isLearnMode, typeFilter, folderIdParam, topicIdParam, conceptParam])
 
   async function loadCards(studyAll = false, forceRestart = false): Promise<void> {
     if (!user) return
@@ -269,9 +284,10 @@ export default function StudySession(): React.JSX.Element {
       if (isMCMode || isLearnMode) {
         // MC and Learn modes always use all cards as the pool
         const allCardsPool = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum) as StudyCard[]
+        const scopedPool = allCardsPool.filter(matchesStudyScope)
         const filtered = isFolderMode
-          ? allCardsPool.filter(c => c.folder_id === Number(folderIdParam))
-          : allCardsPool
+          ? scopedPool.filter(c => c.folder_id === Number(folderIdParam))
+          : scopedPool
         if (filtered.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
@@ -292,7 +308,7 @@ export default function StudySession(): React.JSX.Element {
       if (isFolderMode) {
         const fid = Number(folderIdParam)
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        const folderCards = (all as StudyCard[]).filter(c => c.folder_id === fid)
+        const folderCards = (all as StudyCard[]).filter(c => c.folder_id === fid && matchesStudyScope(c))
         if (folderCards.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
@@ -309,7 +325,7 @@ export default function StudySession(): React.JSX.Element {
 
       if (studyAll) {
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        const filtered = typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[]
+        const filtered = (all as StudyCard[]).filter(c => matchesStudyScope(c) && (!typeFilter || c.type === typeFilter))
         setCards(filtered)
         if (filtered.length > 0) {
           await ensureDbSession(subjectIdNum)
@@ -327,11 +343,11 @@ export default function StudySession(): React.JSX.Element {
       const due = useInterleave
         ? await window.electronAPI.getInterleavedDueCards(user.id, subjectIdNum)
         : await window.electronAPI.getDueCards(user.id, subjectIdNum)
-      const filteredDue = typeFilter ? (due as StudyCard[]).filter(c => c.type === typeFilter) : due as StudyCard[]
+      const filteredDue = (due as StudyCard[]).filter(c => matchesStudyScope(c) && (!typeFilter || c.type === typeFilter))
 
       if (filteredDue.length === 0) {
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        const filteredAll = typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[]
+        const filteredAll = (all as StudyCard[]).filter(c => matchesStudyScope(c) && (!typeFilter || c.type === typeFilter))
         if (filteredAll.length === 0) {
           setEmptyReason('no-cards')
         } else {
@@ -412,19 +428,19 @@ export default function StudySession(): React.JSX.Element {
       cardId: currentCard.id,
       userId: user.id,
       quality,
-      wasCorrect: quality >= 3,
+      wasCorrect: quality >= 4,
       responseTimeMs,
       currentSchedule: schedule
     })
 
     const newSummary: SessionSummary = {
       ...summary,
-      correct: quality >= 3 ? summary.correct + 1 : summary.correct,
-      incorrect: quality < 3 ? summary.incorrect + 1 : summary.incorrect,
+      correct: quality >= 4 ? summary.correct + 1 : summary.correct,
+      incorrect: quality <= 3 ? summary.incorrect + 1 : summary.incorrect,
       cardsReviewed: [...summary.cardsReviewed, {
         cardId: currentCard.id,
         quality,
-        wasCorrect: quality >= 3
+        wasCorrect: quality >= 4
       }]
     }
     setSummary(newSummary)
@@ -438,7 +454,7 @@ export default function StudySession(): React.JSX.Element {
       ).catch(() => {})
     }
 
-    setLastReviewParams({ cardId: currentCard.id, cardIndex: currentIdx })
+    setLastReviewParams({ cardId: currentCard.id, cardIndex: currentIdx, previousSummary: summary, previousPhase: phase })
     setUndoVisible(true)
 
     advance(newSummary)
@@ -522,7 +538,20 @@ export default function StudySession(): React.JSX.Element {
     try {
       const result = await window.electronAPI.undoLastReview(user.id)
       if (result.success) {
-        loadCards()
+        const { previousSummary, previousPhase, cardIndex } = lastReviewParams
+        setSummary(previousSummary)
+        setCurrentIdx(cardIndex)
+        setPhase(previousPhase)
+        setUndoVisible(false)
+        setLastReviewParams(null)
+        if (sessionIdRef.current) {
+          window.electronAPI.endStudySession(
+            sessionIdRef.current,
+            previousSummary.cardsReviewed.length,
+            previousSummary.correct
+          ).catch(() => {})
+        }
+        try { localStorage.removeItem(sessionProgressKey) } catch {}
       }
     } catch (err) {
       console.error('Undo failed:', err)

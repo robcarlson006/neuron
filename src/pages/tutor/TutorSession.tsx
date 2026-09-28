@@ -7,6 +7,7 @@ import TutorCardReviewModal from '../../components/tutor/TutorCardReviewModal'
 import QuickCardModal, { type QuickCardCandidate } from '../../components/tutor/QuickCardModal'
 import TutorChatSidebar from './TutorChatSidebar'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
+import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
@@ -16,7 +17,13 @@ export default function TutorSession(): React.JSX.Element {
   const { classId, sessionId: routeSessionId } = useParams<{ classId: string; sessionId?: string }>()
   const subjectId = Number(classId)
   const navigate = useNavigate()
-  const { user, subjects, addToast, focusBlock, endFocusBlock } = useAppStore()
+  const user = useAppStore(state => state.user)
+  const subjects = useAppStore(state => state.subjects)
+  const addToast = useAppStore(state => state.addToast)
+  const focusBlock = useAppStore(state => state.focusBlock)
+  const focusBlockRunning = focusBlock?.isRunning ?? false
+  const endFocusBlock = useAppStore(state => state.endFocusBlock)
+  const nextFocusBlockStep = useAppStore(state => state.nextFocusBlockStep)
   const subject = subjects.find(s => s.id === subjectId)
 
   // ── State ──
@@ -149,9 +156,23 @@ export default function TutorSession(): React.JSX.Element {
   const sessionIdRef = useRef<number | null>(null)
   const sessionPhaseRef = useRef<SessionPhase>('structured_qa')
   const createdSessionIdRef = useRef<number | null>(null)
+  const activeRequestIdRef = useRef<string | null>(null)
+  const runtimeRef = useRef(runtime)
+  const messagesRef = useRef(messages)
+  const sessionConfigRef = useRef(sessionConfig)
+  const currentModuleRef = useRef(currentModule)
+  const pendingFocusAdvanceRef = useRef<{ isLastStep: boolean } | null>(null)
+  const isPausedRef = useRef(isPaused)
+  const sendingRef = useRef(sending)
 
   sessionIdRef.current = sessionId
   sessionPhaseRef.current = sessionPhase
+  runtimeRef.current = runtime
+  messagesRef.current = messages
+  sessionConfigRef.current = sessionConfig
+  currentModuleRef.current = currentModule
+  isPausedRef.current = isPaused
+  sendingRef.current = sending
 
   // ── Smart scroll ──
   useEffect(() => {
@@ -173,12 +194,19 @@ export default function TutorSession(): React.JSX.Element {
 
   // ── Focus Block Next/Finish prompt listener ──
   useEffect(() => {
-    function onFocusBlockEndRequested() {
-      setShowEndModal(true)
+    function onFocusBlockEndRequested(event: Event) {
+      pendingFocusAdvanceRef.current = (event as CustomEvent<{ isLastStep?: boolean }>).detail
+        ? { isLastStep: Boolean((event as CustomEvent<{ isLastStep?: boolean }>).detail.isLastStep) }
+        : null
+      if (!sendingRef.current) setShowEndModal(true)
     }
     window.addEventListener('focus-block:prompt-end-session', onFocusBlockEndRequested)
     return () => window.removeEventListener('focus-block:prompt-end-session', onFocusBlockEndRequested)
   }, [])
+
+  useEffect(() => {
+    if (!sending && pendingFocusAdvanceRef.current) setShowEndModal(true)
+  }, [sending])
 
   // ── Keyboard shortcut to toggle sidebar (Cmd+H / Ctrl+H) ──
   useEffect(() => {
@@ -250,9 +278,15 @@ export default function TutorSession(): React.JSX.Element {
     let config: TutorSessionConfig
     if (configParam) {
       try {
-        config = JSON.parse(decodeURIComponent(configParam))
+        // URLSearchParams already decodes query values. Parsing it directly preserves
+        // literal percent signs and other valid topic text.
+        config = JSON.parse(configParam)
       } catch {
-        config = { duration_minutes: null, depth_level: 3, never_studied: false }
+        try {
+          config = JSON.parse(decodeURIComponent(configParam))
+        } catch {
+          config = { duration_minutes: null, depth_level: 3, never_studied: false }
+        }
       }
     } else {
       config = { duration_minutes: null, depth_level: 3, never_studied: false }
@@ -276,13 +310,22 @@ export default function TutorSession(): React.JSX.Element {
         const sessionData = await window.electronAPI.tutorGetSession(targetId)
         if (sessionData && sessionData.session) {
           const s = sessionData.session
+          let persistedConfig: TutorSessionConfig | null = null
+          if (s.config_json) {
+            try {
+              persistedConfig = JSON.parse(s.config_json) as TutorSessionConfig
+            } catch {
+              persistedConfig = null
+            }
+          }
+          const resumeConfig = persistedConfig || config
           setSessionId(s.id)
           sessionIdRef.current = s.id
           setSessionPhase(s.phase as SessionPhase)
           sessionPhaseRef.current = s.phase as SessionPhase
 
-          let restoredQrTopics = config.quick_review_topics
-          const isQuickReviewSession = Boolean(config.is_quick_review || s.title?.startsWith('⚡ Quick Review:'))
+          let restoredQrTopics = resumeConfig.quick_review_topics
+          const isQuickReviewSession = Boolean(resumeConfig.is_quick_review || s.title?.startsWith('⚡ Quick Review:'))
           if (isQuickReviewSession && (!restoredQrTopics || restoredQrTopics.length === 0)) {
             try {
               restoredQrTopics = await window.electronAPI.tutorGetSubjectCurriculumTopics(subjectId)
@@ -290,24 +333,27 @@ export default function TutorSession(): React.JSX.Element {
           }
 
           const restoredConfig: TutorSessionConfig = {
-            duration_minutes: s.duration_minutes ?? config.duration_minutes ?? null,
-            depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5 | 'adaptive') ?? config.depth_level ?? 'adaptive'),
-            never_studied: Boolean(s.never_studied ?? config.never_studied),
-            module_id: s.module_id || config.module_id || undefined,
-            target_topic: config.target_topic,
-            target_topics: config.target_topics,
-            target_topic_id: config.target_topic_id,
-            target_topic_ids: config.target_topic_ids,
-            is_spaced_review: config.is_spaced_review,
-            spaced_review_topics: config.spaced_review_topics,
-            is_fill_gaps: config.is_fill_gaps,
-            gap_topics: config.gap_topics,
+            duration_minutes: s.duration_minutes ?? resumeConfig.duration_minutes ?? null,
+            depth_level: (resumeConfig.depth_level ?? s.depth_level ?? 'adaptive'),
+            never_studied: Boolean(s.never_studied ?? resumeConfig.never_studied),
+            module_id: s.module_id || resumeConfig.module_id || undefined,
+            target_topic: resumeConfig.target_topic,
+            target_topics: resumeConfig.target_topics,
+            target_topic_id: resumeConfig.target_topic_id,
+            target_topic_ids: resumeConfig.target_topic_ids,
+            is_spaced_review: resumeConfig.is_spaced_review,
+            spaced_review_topics: resumeConfig.spaced_review_topics,
+            is_fill_gaps: resumeConfig.is_fill_gaps,
+            gap_topics: resumeConfig.gap_topics,
+            is_active_recall: resumeConfig.is_active_recall,
             is_quick_review: isQuickReviewSession,
             quick_review_topics: restoredQrTopics,
-            material_id: config.material_id,
-            material_name: config.material_name
+            quick_review_index: resumeConfig.quick_review_index,
+            material_id: resumeConfig.material_id,
+            material_name: resumeConfig.material_name
           }
           setSessionConfig(restoredConfig)
+          setQuickReviewTopicIndex(Math.max(1, restoredConfig.quick_review_index || 1))
 
           if (s.module_id) {
             const targetMod = mods.find(m => m.id === s.module_id)
@@ -328,7 +374,6 @@ export default function TutorSession(): React.JSX.Element {
           setMessages(hydrated)
 
           // Restore timer state
-          const startedAt = new Date(s.started_at).getTime()
           const now = Date.now()
           const durationMins = s.duration_minutes ?? null
           const totalSecs = durationMins ? durationMins * 60 : 0
@@ -336,18 +381,13 @@ export default function TutorSession(): React.JSX.Element {
           let remainingSecs = 0
 
           if (durationMins !== null) {
-            const wallElapsed = Math.max(0, Math.round((now - startedAt) / 1000))
+            const storedElapsed = Math.max(0, Number(s.active_elapsed_seconds) || 0)
             if (s.phase === 'complete') {
-              elapsedSecs = totalSecs
-              remainingSecs = 0
-            } else if (wallElapsed < totalSecs) {
-              elapsedSecs = wallElapsed
-              remainingSecs = totalSecs - wallElapsed
+              elapsedSecs = storedElapsed
+              remainingSecs = Math.max(0, totalSecs - storedElapsed)
             } else {
-              // Resumed an incomplete session after elapsed time expired:
-              // Give them fresh durationMins so student can continue learning without being locked out
-              elapsedSecs = 0
-              remainingSecs = durationMins * 60
+              elapsedSecs = storedElapsed
+              remainingSecs = Math.max(0, totalSecs - storedElapsed)
             }
           }
 
@@ -356,12 +396,13 @@ export default function TutorSession(): React.JSX.Element {
             started_at: now - (elapsedSecs * 1000),
             time_elapsed_seconds: elapsedSecs,
             time_remaining_seconds: remainingSecs,
-            is_time_up: s.phase === 'complete',
+            is_time_up: s.phase === 'complete' || (durationMins !== null && remainingSecs <= 0),
             topics_covered: [],
             questions_asked: [],
             topics_mastered: [],
             weak_topics: []
           })
+          setIsPaused(Boolean(s.paused_at) && s.phase !== 'complete')
 
           if (s.phase === 'complete') {
             setSessionEnded(true)
@@ -414,12 +455,7 @@ export default function TutorSession(): React.JSX.Element {
 
       const session = await window.electronAPI.tutorCreateSession(
         subjectId, user.id, 'tutor', inProgressMod?.id,
-        {
-          duration_minutes: config.duration_minutes !== null ? config.duration_minutes : null,
-          depth_level: config.depth_level === 'adaptive' ? 3 : config.depth_level,
-          never_studied: config.never_studied ? 1 : 0,
-          title: sessionTitle
-        }
+        { ...config, title: sessionTitle }
       ) as { id: number; phase: string }
 
       createdSessionIdRef.current = session.id
@@ -445,6 +481,11 @@ export default function TutorSession(): React.JSX.Element {
 
       let initialMsg = ''
       if (config.is_quick_review) {
+        if (config.quick_review_scope === 'materials') {
+          const materials = config.quick_review_materials || []
+          const first = materials[0]?.filename || 'the first material'
+          initialMsg = `Welcome to a guided tutor session for ${subject?.name || 'this subject'}. Start teaching and checking my understanding using material 1/${materials.length}: "${first}". Focus only on that document, use its source evidence, and do not move to another material until I ask.`
+        } else {
         const qrTopics = config.quick_review_topics || []
         const totalCount = qrTopics.length || (config.target_topics?.length || 1)
         const firstTopic = qrTopics[0]?.title || config.target_topics?.[0] || 'the first topic'
@@ -459,6 +500,7 @@ Mode: QUICK REVIEW (Full Subject Coverage: ${totalCount} topics)
 Subject: ${subject?.name || 'this subject'}
 Difficulty: ${difficultyLabel}
 ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'Comprehensive full-subject review (untimed)'}`
+        }
       } else if (config.is_spaced_review) {
         const reviewTopics = config.spaced_review_topics?.length ? config.spaced_review_topics.join(', ') : 'decaying curriculum concepts'
         initialMsg = `Greet me and launch immediately into a rapid active recall question in this exact format:
@@ -476,8 +518,20 @@ ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : '15 min
 Mode: FILL IN GAPS (Target: ${gapSummary})
 Subject: ${subject?.name || 'this subject'}
 Difficulty: ${difficultyLabel}
+${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}`
+      } else if (config.group_title || (config.target_material_ids && config.target_material_ids.length > 1)) {
+        const groupLabel = config.group_title || 'Class Unit'
+        const matList = config.target_topics && config.target_topics.length > 0
+          ? config.target_topics.join(', ')
+          : (config.target_topic || 'all materials in this unit')
+        initialMsg = `Greet me and ask your first question in this exact format:
+"Welcome! Today we'll study ${groupLabel} (${matList}) from ${subject?.name || 'this class'}. Let's dive in. [Specific question introducing the core concepts]?"
+
+Unit / Group: ${groupLabel}
+Materials to study: ${matList}
+Difficulty: ${difficultyLabel}
 ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
-${config.never_studied ? 'The student has never studied this material before. Start from absolute basics.' : ''}`
+${config.never_studied ? 'The student has never studied these materials before. Start from absolute basics.' : ''}`
       } else if (config.material_name) {
         initialMsg = `Greet me and ask your first question in this exact format:
 "Welcome! Let's dive into ${config.material_name}. [Specific question about this material]?"
@@ -526,7 +580,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
       // Start streaming the AI's first response
       setPageState('streaming')
-      await streamMessage(session.id, initialMsg, 'structured_qa', [])
+      await streamMessage(session.id, initialMsg, 'structured_qa', [], undefined, config, inProgressMod)
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error('Session init error:', errMsg)
@@ -547,8 +601,15 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     message: string,
     phase: SessionPhase,
     history: { role: 'user' | 'assistant'; content: string }[],
-    attached?: { name: string; content: string }
+    attached?: { name: string; content: string },
+    configOverride?: TutorSessionConfig,
+    moduleOverride?: SyllabusModule | null
   ): Promise<void> {
+    const requestId = `${convId}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    activeRequestIdRef.current = requestId
+    const activeRuntime = runtimeRef.current
+    const activeConfig = configOverride || sessionConfigRef.current || activeRuntime.config
+    const activeModule = moduleOverride === undefined ? currentModuleRef.current : moduleOverride
     setSending(true)
     setPageState('streaming')
     streamingRef.current = ''
@@ -556,48 +617,58 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     streamDoneRef.current = false
 
     const timeoutId = setTimeout(() => {
+      window.electronAPI.tutorCancelStream(convId, requestId).catch(console.error)
       setSending(false)
       streamingRef.current = ''
       setStreamingContent('')
       addToast({ type: 'error', title: 'Request timed out', message: 'The AI took too long to respond.' })
       setError('Connection timed out. The AI server did not respond in time. Check your internet connection or AI configuration in Settings.')
       setPageState('error')
+      if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null
     }, 120000)
 
     try {
       await window.electronAPI.tutorStreamChat({
         sessionId: convId,
+        requestId,
         subjectId,
         message,
         sessionType: 'tutor',
         phase: phase as 'structured_qa' | 'socratic' | 'summary',
         conversationHistory: history,
-        moduleContext: currentModule ? {
-          moduleTitle: currentModule.title,
-          currentTopic: currentModule.title,
+        moduleContext: activeModule ? {
+          moduleTitle: activeModule.title,
+          currentTopic: activeModule.title,
           masteredTopics,
           weakTopics
         } : undefined,
         attachedContent: attached?.content,
-        durationMinutes: runtime.config.duration_minutes,
-        depthLevel: runtime.config.depth_level,
-        neverStudied: runtime.config.never_studied,
-        materialId: sessionConfig?.material_id || runtime.config.material_id,
-        targetTopic: sessionConfig?.target_topic || runtime.config.target_topic,
-        targetTopics: sessionConfig?.target_topics || runtime.config.target_topics,
-        isFillGaps: sessionConfig?.is_fill_gaps || runtime.config.is_fill_gaps,
-        gapTopics: sessionConfig?.gap_topics || runtime.config.gap_topics,
-        isSpacedReview: sessionConfig?.is_spaced_review || runtime.config.is_spaced_review,
-        spacedReviewTopics: sessionConfig?.spaced_review_topics || runtime.config.spaced_review_topics,
-        isQuickReview: sessionConfig?.is_quick_review || runtime.config.is_quick_review,
-        quickReviewTopics: sessionConfig?.quick_review_topics || runtime.config.quick_review_topics,
-        timeElapsedSeconds: runtime.time_elapsed_seconds,
-        timeRemainingSeconds: runtime.time_remaining_seconds,
-        pacingStatus: calcPacingStatus(runtime),
-        topicsCovered: runtime.topics_covered,
-        questionsAsked: runtime.questions_asked,
-        topicsMastered: runtime.topics_mastered,
-        weakTopicsConcerns: runtime.weak_topics,
+        durationMinutes: activeConfig.duration_minutes,
+        depthLevel: activeConfig.depth_level,
+        neverStudied: activeConfig.never_studied,
+        targetTopic: activeConfig.target_topic,
+        targetTopics: activeConfig.target_topics,
+        isFillGaps: activeConfig.is_fill_gaps,
+        gapTopics: activeConfig.gap_topics,
+        isSpacedReview: activeConfig.is_spaced_review,
+        spacedReviewTopics: activeConfig.spaced_review_topics,
+        isActiveRecall: activeConfig.is_active_recall,
+        isQuickReview: activeConfig.is_quick_review,
+        quickReviewTopics: activeConfig.quick_review_topics,
+        quickReviewScope: activeConfig.quick_review_scope,
+        quickReviewMaterials: activeConfig.quick_review_materials,
+        quickReviewIndex: quickReviewTopicIndex,
+        targetMaterialIds: activeConfig.target_material_ids || (activeConfig.quick_review_materials ? activeConfig.quick_review_materials.map(m => m.id) : undefined),
+        materialId: activeConfig.quick_review_scope === 'materials'
+          ? activeConfig.quick_review_materials?.[Math.max(0, quickReviewTopicIndex - 1)]?.id
+          : activeConfig.material_id,
+        timeElapsedSeconds: activeRuntime.time_elapsed_seconds,
+        timeRemainingSeconds: activeRuntime.time_remaining_seconds,
+        pacingStatus: calcPacingStatus(activeRuntime),
+        topicsCovered: activeRuntime.topics_covered,
+        questionsAsked: activeRuntime.questions_asked,
+        topicsMastered: activeRuntime.topics_mastered,
+        weakTopicsConcerns: activeRuntime.weak_topics,
       })
     } catch (err) {
       if (streamingRef.current) {
@@ -641,6 +712,13 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     }
   }
 
+  async function handleStopResponse(): Promise<void> {
+    const requestId = activeRequestIdRef.current
+    const activeSessionId = sessionIdRef.current
+    if (!requestId || !activeSessionId) return
+    await window.electronAPI.tutorCancelStream(activeSessionId, requestId)
+  }
+
   // ── Wall-clock timer ──
   useEffect(() => {
     if (runtime.config.duration_minutes === null) return
@@ -671,6 +749,23 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     return () => clearInterval(interval)
   }, [runtime.config.duration_minutes, runtime.is_time_up, isPaused])
 
+  // Checkpoint active study time without counting time spent away from the session.
+  useEffect(() => {
+    if (!sessionId) return
+    const saveTiming = (): void => {
+      window.electronAPI.tutorUpdateSessionTiming(
+        sessionId,
+        runtimeRef.current.time_elapsed_seconds,
+        isPausedRef.current
+      ).catch(console.error)
+    }
+    const interval = window.setInterval(saveTiming, 10000)
+    return () => {
+      window.clearInterval(interval)
+      saveTiming()
+    }
+  }, [sessionId])
+
   // ── Break timer when paused ──
   useEffect(() => {
     if (!isPaused) {
@@ -691,21 +786,25 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       if (!next) {
         setFocusKey(f => f + 1)
       }
+      if (sessionId) {
+        window.electronAPI.tutorUpdateSessionTiming(sessionId, runtimeRef.current.time_elapsed_seconds, next).catch(console.error)
+      }
       return next
     })
   }
 
   function handleResume(): void {
     setIsPaused(false)
+    if (sessionId) window.electronAPI.tutorUpdateSessionTiming(sessionId, runtimeRef.current.time_elapsed_seconds, false).catch(console.error)
     setFocusKey(f => f + 1)
   }
 
   // ── Time-up handler ──
   useEffect(() => {
-    if (focusBlock?.isRunning) return
+    if (focusBlockRunning) return
     if (!runtime.is_time_up || pageState !== 'awaiting_input') return
     setShowTimeUp(true)
-  }, [runtime.is_time_up, pageState, focusBlock?.isRunning])
+  }, [runtime.is_time_up, pageState, focusBlockRunning])
 
   async function handleAdjustTime(deltaMinutes: number): Promise<void> {
     const currentDuration = runtime.config.duration_minutes ?? 15
@@ -733,7 +832,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
     if (sessionId) {
       try {
-        await window.electronAPI.tutorUpdateSessionDuration(sessionId, newDuration)
+        await window.electronAPI.tutorUpdateSessionConfig(sessionId, updatedConfig)
       } catch (err) {
         console.error('Failed to update session duration:', err)
       }
@@ -767,7 +866,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
     if (sessionId) {
       try {
-        await window.electronAPI.tutorUpdateSessionDuration(sessionId, durationMinutes)
+        await window.electronAPI.tutorUpdateSessionConfig(sessionId, updatedConfig)
       } catch (err) {
         console.error('Failed to update session duration:', err)
       }
@@ -789,7 +888,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     setShowTimeUp(false)
     setPageState('awaiting_input')
     if (sessionId) {
-      window.electronAPI.tutorUpdateSessionDuration(sessionId, newDuration).catch(() => {})
+      window.electronAPI.tutorUpdateSessionConfig(sessionId, updatedConfig).catch(() => {})
     }
   }
 
@@ -817,6 +916,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   // ── Chunk listener (stable, bound once on mount) ──
   useEffect(() => {
     const cleanup = window.electronAPI.onTutorChunk((chunk) => {
+      if (chunk.conversationId && chunk.conversationId !== sessionIdRef.current) return
+      if (chunk.requestId && chunk.requestId !== activeRequestIdRef.current) return
       if (chunk.type === 'text') {
         streamingRef.current += chunk.content
         setStreamingContent(streamingRef.current)
@@ -833,7 +934,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         const activeSessionId = chunk.conversationId || sessionIdRef.current
         if (finalContent && activeSessionId) {
           // If session is timed and still has time remaining, strip premature [SESSION_END] tag
-          const hasTimeRemaining = runtime.config.duration_minutes !== null && runtime.time_remaining_seconds > 30 && !runtime.is_time_up
+          const activeRuntime = runtimeRef.current
+          const hasTimeRemaining = activeRuntime.config.duration_minutes !== null && activeRuntime.time_remaining_seconds > 30 && !activeRuntime.is_time_up
           const displayContent = hasTimeRemaining
             ? finalContent.replace(/\[SESSION_END\]/g, '').trim()
             : finalContent
@@ -864,10 +966,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           }
 
           // Extract questions from the AI's response
-          const sentences = displayContent.split(/[.?!\n]+/)
-          const newQuestions = sentences
-            .filter(s => s.trim().endsWith('?') && s.trim().length > 10)
-            .map(s => s.trim())
+          const newQuestions = (displayContent.match(/[^?\n]{10,}\?/g) || []).map(question => question.trim())
 
           if (newTopics.length > 0 || newQuestions.length > 0) {
             setRuntime(prev => ({
@@ -878,7 +977,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           }
 
           // Count how many assistant messages exist (guard against false triggers on early messages)
-          const assistantCount = messages.filter(m => m.role === 'assistant').length
+          const assistantCount = messagesRef.current.filter(m => m.role === 'assistant').length
 
           // Check if AI suggested phase transition (require 2+ assistant messages to avoid first-message false triggers)
           const lower = displayContent.toLowerCase()
@@ -886,9 +985,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           const suggestsSummary = assistantCount >= 2 && (lower.includes('session summary') || lower.includes('wrap up'))
 
           // Only honor transition suggestions if remaining time is under 30s or duration is unlimited
-          const isNearTimeUp = runtime.config.duration_minutes === null ||
-            runtime.time_remaining_seconds <= 30 ||
-            runtime.is_time_up
+          const isNearTimeUp = activeRuntime.config.duration_minutes === null ||
+            activeRuntime.time_remaining_seconds <= 30 ||
+            activeRuntime.is_time_up
 
           const curPhase = sessionPhaseRef.current
           if (curPhase === 'structured_qa' && suggestsDeepDive && isNearTimeUp) {
@@ -900,9 +999,11 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             return
           }
         }
+        activeRequestIdRef.current = null
         setFocusKey(prev => prev + 1)
         setPageState('awaiting_input')
       } else if (chunk.type === 'error') {
+        activeRequestIdRef.current = null
         setSending(false)
         streamingRef.current = ''
         setStreamingContent('')
@@ -917,49 +1018,57 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   // ── Send message ──
   async function handleSend(message: string): Promise<void> {
     if (!sessionId || !message.trim() || sending) return
+    setSending(true)
     if (isPaused) {
       setIsPaused(false)
     }
 
-    // Save user message
-    const userMsg = await window.electronAPI.tutorSaveMessage({
-      session_id: sessionId,
-      role: 'user',
-      content: attachedFile
-        ? `[Attached: ${attachedFile.name}]\n\n${message}`
-        : message,
-      content_type: 'text'
-    }) as Message
+    try {
+      const userMsg = await window.electronAPI.tutorSaveMessage({
+        session_id: sessionId,
+        role: 'user',
+        content: attachedFile
+          ? `[Attached: ${attachedFile.name}]\n\n${message}`
+          : message,
+        content_type: 'text'
+      }) as Message
 
-    setMessages(prev => [...prev, userMsg])
+      setMessages(prev => [...prev, userMsg])
+      const history = messages
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-    // Build conversation history for context
-    const history = [...messages, userMsg]
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-
-    await streamMessage(sessionId, message, sessionPhase, history, attachedFile || undefined)
-
-    // Clear attachment after sending
-    setAttachedFile(null)
+      await streamMessage(sessionId, message, sessionPhase, history, attachedFile || undefined)
+      setAttachedFile(null)
+    } catch (error) {
+      setSending(false)
+      throw error
+    }
   }
 
   // ── Quick Review advance to next topic ──
   async function handleAdvanceToNextTopic(): Promise<void> {
     if (!sessionId || sending) return
+    const isMaterialReview = sessionConfig?.quick_review_scope === 'materials'
     const qrTopics = sessionConfig?.quick_review_topics || []
-    const totalCount = qrTopics.length || sessionConfig?.target_topics?.length || 1
+    const qrMaterials = sessionConfig?.quick_review_materials || []
+    const totalCount = isMaterialReview ? qrMaterials.length : (qrTopics.length || sessionConfig?.target_topics?.length || 1)
     const nextIdx = quickReviewTopicIndex + 1
-    const nextTopic = qrTopics[nextIdx - 1]?.title || (sessionConfig?.target_topics && sessionConfig.target_topics[nextIdx - 1])
+    const nextTopic = isMaterialReview ? qrMaterials[nextIdx - 1]?.filename : (qrTopics[nextIdx - 1]?.title || (sessionConfig?.target_topics && sessionConfig.target_topics[nextIdx - 1]))
 
     let prompt = ''
     if (nextIdx <= totalCount && nextTopic) {
-      prompt = `I'm ready to advance to the next topic in our Quick Review: Topic ${nextIdx}/${totalCount}: "${nextTopic}". Please confirm the previous topic in one sentence and ask your core question for "${nextTopic}".`
+      prompt = isMaterialReview ? `I'm ready to move to material ${nextIdx}/${totalCount}: "${nextTopic}". Teach and check me on this document now.` : `I'm ready to advance to the next topic in our Quick Review: Topic ${nextIdx}/${totalCount}: "${nextTopic}". Please confirm the previous topic in one sentence and ask your core question for "${nextTopic}".`
     } else {
       prompt = `I've finished all the topics in this subject! Let's conclude our full-subject Quick Review and present the final subject mastery summary scorecard.`
     }
 
     setQuickReviewTopicIndex(nextIdx)
+    if (sessionConfig) {
+      const updatedConfig = { ...sessionConfig, quick_review_index: nextIdx }
+      setSessionConfig(updatedConfig)
+      await window.electronAPI.tutorUpdateSessionConfig(sessionId, updatedConfig)
+    }
     await handleSend(prompt)
   }
 
@@ -973,6 +1082,11 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
     setShowRoadmapModal(false)
     setQuickReviewTopicIndex(targetIndex)
+    if (sessionConfig) {
+      const updatedConfig = { ...sessionConfig, quick_review_index: targetIndex }
+      setSessionConfig(updatedConfig)
+      await window.electronAPI.tutorUpdateSessionConfig(sessionId, updatedConfig)
+    }
     const prompt = `Let's switch our focus to Topic ${targetIndex}/${totalCount}: "${targetTopic}". Please give a 1-sentence transition and then ask your core question for "${targetTopic}".`
     await handleSend(prompt)
   }
@@ -1029,12 +1143,16 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   }
 
   function handleOpenEndModal(): void {
+    if (sending) {
+      addToast({ type: 'info', title: 'Tutor is responding', message: 'Wait for the current response to finish before ending the session.' })
+      return
+    }
     setShowTimeUp(false)
     setShowEndModal(true)
   }
 
   async function executeEndSession(options: { generateCards: boolean }): Promise<void> {
-    if (!sessionId || endingSession) return
+    if (!sessionId || endingSession || sending) return
     setEndingSession(true)
     setShowTimeUp(false)
     setShowEndModal(false)
@@ -1069,6 +1187,14 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           moduleId: currentModule?.id || sessionConfig?.module_id
         }
       )
+      if (!res?.success) throw new Error((res as { error?: string }).error || 'Session finalization failed')
+      if ((res as { pending?: boolean }).pending) {
+        addToast({
+          type: 'info',
+          title: 'Session Saved',
+          message: 'Assessment is still processing. Your transcript is safe and learning credit has not been applied twice.'
+        })
+      }
       if (res && (res as { evaluation?: TutorSessionEvaluation }).evaluation) {
         const evalData = (res as { evaluation: TutorSessionEvaluation }).evaluation
         setSessionEvaluation(evalData)
@@ -1076,7 +1202,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           addToast({
             type: 'success',
             title: 'Retention Refreshed',
-            message: `Topic retention updated to 100% for ${evalData.updatedTopics.map(t => t.topicTitle).join(', ')}!`
+            message: `Recorded an independent review for ${evalData.updatedTopics.map(t => t.topicTitle).join(', ')}. See Review due for the next scheduled check.`
           })
         }
       }
@@ -1084,11 +1210,23 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       setSessionEnded(true)
       if (options.generateCards) {
         setShowCardReview(true)
+      } else if (pendingFocusAdvanceRef.current && focusBlock) {
+        const { isLastStep } = pendingFocusAdvanceRef.current
+        pendingFocusAdvanceRef.current = null
+        if (isLastStep) {
+          endFocusBlock(true)
+          navigate('/tutor')
+        } else {
+          const nextItem = focusBlock.items[focusBlock.activeIndex + 1]
+          nextFocusBlockStep()
+          if (nextItem) await navigateToFocusBlockItem(nextItem, navigate, user?.id)
+        }
       }
     } catch (err) {
       console.error('Error ending tutor session:', err)
-      addToast({ type: 'error', title: 'Session Error', message: 'Failed to record session completion.' })
-      setSessionEnded(true)
+      addToast({ type: 'error', title: 'Session Not Finished', message: 'Your transcript is still available. Retry to save the session outcome.' })
+      setSessionEnded(false)
+      setShowEndModal(true)
     } finally {
       setEndingSession(false)
     }
@@ -1264,7 +1402,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   if (sessionEnded && !showCardReview && !viewTranscript) {
     return (
       <div className="flex h-full w-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
-        {!focusBlock?.isRunning && (
+        {!focusBlockRunning && (
           <TutorChatSidebar
             subjectId={subjectId}
             currentSessionId={sessionId}
@@ -1389,7 +1527,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 </button>
                 <button
                   onClick={() => {
-                    if (focusBlock?.isRunning) {
+                    if (focusBlockRunning) {
                       endFocusBlock(true)
                     }
                     navigate('/tutor')
@@ -1448,7 +1586,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   return (
     <div className="flex h-full w-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
       {/* Collapsible Chat History Sidebar */}
-      {!focusBlock?.isRunning && (
+      {!focusBlockRunning && (
         <TutorChatSidebar
           subjectId={subjectId}
           currentSessionId={sessionId}
@@ -1472,7 +1610,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       {/* Main Content Area */}
       <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
         {/* Top bar - hidden when in Focus Block */}
-        {!focusBlock?.isRunning && (
+        {!focusBlockRunning && (
           <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <button
@@ -2050,9 +2188,11 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           ) : (
             <ChatInput
               onSend={handleSend}
+              onStop={sending ? handleStopResponse : undefined}
               onAttachFile={handleAttachFile}
               onSelectFromLibrary={handleSelectFromLibrary}
               disabled={sending || sessionEnded}
+              draftKey={sessionId ? `session:${sessionId}` : `subject:${subjectId}`}
               refocusKey={focusKey}
               attachedFile={attachedFile?.name || null}
               onClearAttachment={() => setAttachedFile(null)}

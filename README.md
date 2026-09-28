@@ -100,13 +100,13 @@ Tests cover:
 
 ### Run E2E tests
 
-First build the app, then run:
+Run the isolated end-to-end suite with:
 
 ```bash
 npm run test:e2e
 ```
 
-E2E tests use Playwright and simulate:
+The suite builds the app and launches each run with a temporary Neuron data profile, separate from your normal study data. Playwright simulates:
 - Completing onboarding
 - Creating a subject
 - Verifying dashboard renders

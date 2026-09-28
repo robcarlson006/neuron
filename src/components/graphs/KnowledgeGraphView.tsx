@@ -90,6 +90,7 @@ export default function KnowledgeGraphView({
 
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
+  const graphTransformRef = useRef<SVGGElement>(null)
   const [canvasDim, setCanvasDim] = useState({ width: 900, height: 600 })
 
   useEffect(() => {
@@ -103,8 +104,16 @@ export default function KnowledgeGraphView({
       }
     }
     updateDimensions()
+    const element = containerRef.current
+    const observer = element && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updateDimensions)
+      : null
+    if (element && observer) observer.observe(element)
     window.addEventListener('resize', updateDimensions)
-    return () => window.removeEventListener('resize', updateDimensions)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', updateDimensions)
+    }
   }, [])
 
   // Animation step loop (exponential ease lerp for silky smooth 60fps transitions)
@@ -124,6 +133,7 @@ export default function KnowledgeGraphView({
         currentPanRef.current = { ...targetPanRef.current }
         setZoom(currentZoomRef.current)
         setPan(currentPanRef.current)
+        graphTransformRef.current?.setAttribute('transform', `translate(${currentPanRef.current.x}, ${currentPanRef.current.y}) scale(${currentZoomRef.current})`)
         animFrameRef.current = null
         return
       }
@@ -134,8 +144,7 @@ export default function KnowledgeGraphView({
         y: currentPanRef.current.y + diffPy * 0.22
       }
 
-      setZoom(currentZoomRef.current)
-      setPan({ ...currentPanRef.current })
+      graphTransformRef.current?.setAttribute('transform', `translate(${currentPanRef.current.x}, ${currentPanRef.current.y}) scale(${currentZoomRef.current})`)
 
       animFrameRef.current = requestAnimationFrame(step)
     }
@@ -165,11 +174,13 @@ export default function KnowledgeGraphView({
     })
   }, [subjectId, dependencies, concepts, modules, cards, canvasDim.width, canvasDim.height, layoutMode])
 
+  const nodeById = useMemo(() => new Map(graphData.nodes.map(node => [node.id, node])), [graphData.nodes])
+
   const getNodePos = useCallback((nodeId: string): { x: number; y: number } => {
     if (draggedPositions[nodeId]) return draggedPositions[nodeId]
-    const n = graphData.nodes.find(node => node.id === nodeId)
+    const n = nodeById.get(nodeId)
     return { x: n?.x ?? 0, y: n?.y ?? 0 }
-  }, [draggedPositions, graphData.nodes])
+  }, [draggedPositions, nodeById])
 
   // Fit to screen calculation
   const handleFitView = useCallback(() => {
@@ -204,13 +215,17 @@ export default function KnowledgeGraphView({
   }, [graphData.nodes, getNodePos, canvasDim, startAnimation])
 
   // Auto-fit on graph load or layout switch
+  const autoFitKeyRef = useRef('')
   useEffect(() => {
     if (graphData.nodes.length === 0) return undefined
+    const fitKey = `${subjectId}:${layoutMode}:${canvasDim.width}x${canvasDim.height}:${graphData.nodes.map(node => node.id).join('|')}`
+    if (autoFitKeyRef.current === fitKey) return undefined
+    autoFitKeyRef.current = fitKey
     const timer = setTimeout(() => {
       handleFitView()
     }, 50)
     return () => clearTimeout(timer)
-  }, [graphData.nodes.length, layoutMode, handleFitView])
+  }, [subjectId, graphData.nodes, layoutMode, canvasDim.width, canvasDim.height, handleFitView])
 
   // Smooth Zoom By Factor relative to coordinate
   const zoomByFactor = useCallback((factor: number, centerX?: number, centerY?: number) => {
@@ -510,7 +525,11 @@ export default function KnowledgeGraphView({
 
   // Study Concept Cards action
   const handleStudyConcept = (conceptLabel: string) => {
-    navigate(`/study/${subjectId}?concept=${encodeURIComponent(conceptLabel)}`)
+    const selectedNode = selectedNodeId ? nodeById.get(selectedNodeId) : undefined
+    const scope = selectedNode?.topicId
+      ? `topicId=${encodeURIComponent(String(selectedNode.topicId))}`
+      : `concept=${encodeURIComponent(conceptLabel)}`
+    navigate(`/study/${subjectId}?${scope}`)
   }
 
   // Node status colors and styles
@@ -767,7 +786,7 @@ export default function KnowledgeGraphView({
           </defs>
 
           {/* Graph Content Group with Pan and Zoom */}
-          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} style={{ willChange: 'transform' }}>
+          <g ref={graphTransformRef} transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} style={{ willChange: 'transform' }}>
             {/* 0. Render Category Clusters / Module Hulls */}
             {categoryClusters.map(cluster => (
               <g key={cluster.name} className="pointer-events-none select-none">
@@ -808,11 +827,15 @@ export default function KnowledgeGraphView({
 
               const strokeColor = isConnectedToSelected
                 ? '#8b5cf6'
+                : edge.relationship !== 'prerequisite'
+                ? '#94a3b8'
                 : edge.isPrerequisiteMet
                 ? '#10b981'
                 : '#f43f5e'
 
-              const markerEnd = isConnectedToSelected
+              const markerEnd = edge.relationship !== 'prerequisite'
+                ? undefined
+                : isConnectedToSelected
                 ? 'url(#arrow-selected)'
                 : edge.isPrerequisiteMet
                 ? 'url(#arrow-met)'
@@ -824,8 +847,8 @@ export default function KnowledgeGraphView({
                     d={`M ${srcPos.x} ${srcPos.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${tgtPos.x} ${tgtPos.y}`}
                     fill="none"
                     stroke={strokeColor}
-                    strokeWidth={isConnectedToSelected ? 3 : 1.75}
-                    strokeDasharray={edge.isPrerequisiteMet ? undefined : '4 3'}
+                    strokeWidth={isConnectedToSelected ? 3 : edge.relationship === 'contains' ? 1 : 1.75}
+                    strokeDasharray={edge.relationship !== 'prerequisite' || !edge.isPrerequisiteMet ? '4 3' : undefined}
                     strokeOpacity={isConnectedToSelected ? 0.95 : 0.6}
                     markerEnd={markerEnd}
                   />

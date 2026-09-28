@@ -7,12 +7,12 @@ import type {
   FocusModeSettings, PublishedDeck, StudyGroup, StudyGroupMember,
   AnkiConnectNote, PluginEndpoint, AccessibilitySettings, OnboardingData,
   ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult,
-  TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
+  TutorSession, TutorSessionConfig, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
   HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus,
   FolderSyncResult, FolderSyncEvent, Lecture,
   PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult,
   AutonomousPracticeGenOptions, AutonomousPracticeGenResult,
-  MultiKeyVault, QuickReviewTopic, ConceptDependency
+  MultiKeyVault, QuickReviewTopic, ConceptDependency, DashboardAggregate
 } from '../src/types'
 
 const electronAPI = {
@@ -38,6 +38,8 @@ const electronAPI = {
     ipcRenderer.invoke('db:updateSchedule', cardId, userId, sm2Result),
   getDueCards: (userId: number, subjectId?: number): Promise<(Card & CardSchedule)[]> =>
     ipcRenderer.invoke('db:getDueCards', userId, subjectId),
+  getDashboardAggregate: (userId: number): Promise<DashboardAggregate> =>
+    ipcRenderer.invoke('db:getDashboardAggregate', userId),
   getAllCardsWithSchedule: (userId: number, subjectId?: number): Promise<(Card & CardSchedule)[]> =>
     ipcRenderer.invoke('db:getAllCardsWithSchedule', userId, subjectId),
   getAllSchedules: (userId: number, subjectId?: number): Promise<CardSchedule[]> =>
@@ -339,9 +341,7 @@ const electronAPI = {
     ipcRenderer.invoke('rag:deleteIndex', materialId),
 
   // ── Tutor Sessions ──
-  tutorCreateSession: (subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: {
-    duration_minutes: number | null; depth_level: number; never_studied: number; title?: string
-  }): Promise<TutorSession> =>
+  tutorCreateSession: (subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: TutorSessionConfig & { title?: string }): Promise<TutorSession> =>
     ipcRenderer.invoke('tutor:createSession', subjectId, userId, sessionType, moduleId, config),
   tutorGetSession: (sessionId: number): Promise<{ session: TutorSession; messages: Message[] } | null> =>
     ipcRenderer.invoke('tutor:getSession', sessionId),
@@ -355,6 +355,10 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:updateSessionPhase', sessionId, phase),
   tutorUpdateSessionDuration: (sessionId: number, durationMinutes: number | null): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:updateSessionDuration', sessionId, durationMinutes),
+  tutorUpdateSessionConfig: (sessionId: number, config: TutorSessionConfig): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('tutor:updateSessionConfig', sessionId, config),
+  tutorUpdateSessionTiming: (sessionId: number, activeElapsedSeconds: number, isPaused: boolean): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('tutor:updateSessionTiming', sessionId, activeElapsedSeconds, isPaused),
   tutorEndSession: (sessionId: number, summary?: string, options?: { targetTopics?: string[]; targetTopicIds?: number[]; moduleId?: number }): Promise<{ success: boolean; evaluation?: import('../src/types').TutorSessionEvaluation | null }> =>
     ipcRenderer.invoke('tutor:endSession', sessionId, summary, options),
   tutorGetGapAnalysis: (subjectId: number, userId: number): Promise<import('../src/types').GapAnalysisResult> =>
@@ -386,6 +390,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:updateMastery', userId, subjectId, topic, score),
   tutorStreamChat: (params: TutorStreamParams) =>
     ipcRenderer.invoke('tutor:streamTutorChat', params),
+  tutorCancelStream: (sessionId: number, requestId: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('tutor:cancelStream', sessionId, requestId),
   tutorGetSubjectRetentionSummary: (userId: number, subjectId: number): Promise<import('../src/lib/memory/topicSrsEngine').SubjectRetentionSummary> =>
     ipcRenderer.invoke('tutor:getSubjectRetentionSummary', userId, subjectId),
   tutorGetTopDueMaintenanceTopics: (userId: number, limit?: number): Promise<import('../src/lib/memory/topicSrsEngine').TopicRetentionMetrics[]> =>
@@ -394,8 +400,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getSubjectModuleStats', subjectId, userId),
   tutorGetSubjectCurriculumTopics: (subjectId: number): Promise<QuickReviewTopic[]> =>
     ipcRenderer.invoke('tutor:getSubjectCurriculumTopics', subjectId),
-  onTutorChunk: (cb: (chunk: { conversationId: number; content: string; type: string }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; content: string; type: string }): void => cb(data)
+  onTutorChunk: (cb: (chunk: { conversationId: number; requestId?: string; content: string; type: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; requestId?: string; content: string; type: string }): void => cb(data)
     ipcRenderer.on('tutor:chunk', handler)
     return () => { ipcRenderer.removeListener('tutor:chunk', handler) }
   },

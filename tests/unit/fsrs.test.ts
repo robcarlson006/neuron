@@ -119,13 +119,13 @@ describe('FSRS-5 scheduler', () => {
   })
 
   describe('qualityToRating', () => {
-    it('maps legacy SM-2 quality to FSRS rating', () => {
+    it('maps incorrect and partial recall to Again, correct hesitation to Hard, and correct recall to Good', () => {
       expect(qualityToRating(0)).toBe(1)
       expect(qualityToRating(1)).toBe(1)
-      expect(qualityToRating(2)).toBe(2)
-      expect(qualityToRating(3)).toBe(3)
-      expect(qualityToRating(4)).toBe(3)
-      expect(qualityToRating(5)).toBe(4)
+      expect(qualityToRating(2)).toBe(1)
+      expect(qualityToRating(3)).toBe(1)
+      expect(qualityToRating(4)).toBe(2)
+      expect(qualityToRating(5)).toBe(3)
     })
   })
 
@@ -174,8 +174,8 @@ describe('FSRS-5 scheduler', () => {
       expect(adjustRatingByResponseTime(3, 300, 100)).toBe(2)
     })
 
-    it('promotes fast "Good" to Easy', () => {
-      expect(adjustRatingByResponseTime(3, 10, 100)).toBe(4)
+    it('does not promote a fast answer to Easy without an explicit learner rating', () => {
+      expect(adjustRatingByResponseTime(3, 10, 100)).toBe(3)
     })
 
     it('keeps "Good" within normal range', () => {
@@ -185,6 +185,13 @@ describe('FSRS-5 scheduler', () => {
     it('ignores extreme response times (> 2 minutes) caused by idle background app', () => {
       expect(adjustRatingByResponseTime(3, 300000, 1000)).toBe(3)
     })
+  })
+
+  it('anchors due dates to the supplied review date across a month boundary', () => {
+    const result = fsrsNext(newMemory({ lastReview: undefined, state: 0 }), 3, DEFAULT_FSRS_PARAMS, '2026-01-30')
+    const expected = new Date('2026-01-30T12:00:00')
+    expected.setDate(expected.getDate() + result.interval)
+    expect(result.dueDate).toBe(expected.toISOString().slice(0, 10))
   })
 
   describe('boostForExam', () => {

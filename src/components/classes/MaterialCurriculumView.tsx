@@ -1,7 +1,23 @@
 import React, { useEffect, useState } from 'react'
 import type { MaterialCurriculumPlan } from '../../types'
 
-export default function MaterialCurriculumView({ subjectId }: { subjectId: number }): React.JSX.Element {
+interface MaterialCurriculumViewProps {
+  subjectId: number
+  subjectName?: string
+  onStartTutor?: (groupId?: number, materialIds?: number[], groupTitle?: string, mode?: string) => void
+  onStartSpacedReview?: (groupId?: number, materialIds?: number[], groupTitle?: string) => void
+  onGenerateCards?: (groupId: number, materialIds: number[]) => void
+  loadingCards?: Record<number, boolean>
+}
+
+export default function MaterialCurriculumView({
+  subjectId,
+  subjectName,
+  onStartTutor,
+  onStartSpacedReview,
+  onGenerateCards,
+  loadingCards
+}: MaterialCurriculumViewProps): React.JSX.Element {
   const [plan, setPlan] = useState<MaterialCurriculumPlan | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [newTitle, setNewTitle] = useState('')
@@ -9,6 +25,43 @@ export default function MaterialCurriculumView({ subjectId }: { subjectId: numbe
   const [title, setTitle] = useState('')
   const [dragOverTarget, setDragOverTarget] = useState<number | 'unscheduled' | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
+  const [selectedMaterialsByGroup, setSelectedMaterialsByGroup] = useState<Record<string, Set<number>>>({})
+
+  const getSelectedIds = (groupId: number | 'unscheduled', materials: { id: number }[]): number[] => {
+    const key = String(groupId)
+    const custom = selectedMaterialsByGroup[key]
+    if (custom) return materials.filter(m => custom.has(m.id)).map(m => m.id)
+    return materials.map(m => m.id)
+  }
+
+  const toggleMaterial = (groupId: number | 'unscheduled', materialId: number, materials: { id: number }[]) => {
+    const key = String(groupId)
+    setSelectedMaterialsByGroup(prev => {
+      const current = prev[key] ? new Set(prev[key]) : new Set(materials.map(m => m.id))
+      if (current.has(materialId)) {
+        current.delete(materialId)
+      } else {
+        current.add(materialId)
+      }
+      return { ...prev, [key]: current }
+    })
+  }
+
+  const selectAll = (groupId: number | 'unscheduled', materials: { id: number }[]) => {
+    const key = String(groupId)
+    setSelectedMaterialsByGroup(prev => ({
+      ...prev,
+      [key]: new Set(materials.map(m => m.id))
+    }))
+  }
+
+  const clearAll = (groupId: number | 'unscheduled') => {
+    const key = String(groupId)
+    setSelectedMaterialsByGroup(prev => ({
+      ...prev,
+      [key]: new Set()
+    }))
+  }
 
   const load = async () => {
     try {
@@ -61,82 +114,138 @@ export default function MaterialCurriculumView({ subjectId }: { subjectId: numbe
     }
   }
 
-  const file = (material: { id: number; filename: string }, groupId: number | null, index: number) => (
-    <li
-      key={material.id}
-      className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm text-xs cursor-grab active:cursor-grabbing hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
-      draggable
-      onDragStart={e => {
-        e.stopPropagation()
-        e.dataTransfer.setData('application/x-neuron-material', String(material.id))
-        e.dataTransfer.setData('text/plain', String(material.id))
-        e.dataTransfer.effectAllowed = 'move'
-      }}
-    >
-      <span aria-hidden="true" className="text-slate-400 text-sm">⠿</span>
-      <span aria-hidden="true" className="text-sm">📄</span>
-      <span className="flex-1 truncate font-medium text-slate-800 dark:text-slate-200" title={material.filename}>
-        {material.filename}
-      </span>
+  const file = (
+    material: { id: number; filename: string },
+    groupId: number | null,
+    index: number,
+    groupMaterials: { id: number; filename: string }[]
+  ) => {
+    const scope = groupId ?? 'unscheduled'
+    const selectedIds = getSelectedIds(scope, groupMaterials)
+    const isSelected = selectedIds.includes(material.id)
 
-      {/* Quick Move Dropdown */}
-      <select
-        aria-label={`Move ${material.filename} to unit`}
-        value={groupId ?? 'unscheduled'}
-        onChange={e => {
-          const val = e.target.value
-          if (val === 'unscheduled') {
-            void moveMaterial(material.id, null, 0)
-          } else {
-            const targetG = plan.groups.find(g => g.id === Number(val))
-            void moveMaterial(material.id, Number(val), targetG?.materials.length ?? 0)
-          }
+    return (
+      <li
+        key={material.id}
+        className={`flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white dark:bg-slate-800 border transition-colors shadow-xs text-xs cursor-grab active:cursor-grabbing ${
+          isSelected
+            ? 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+            : 'border-slate-200/60 dark:border-slate-700/60 opacity-60'
+        }`}
+        draggable
+        onDragStart={e => {
+          e.stopPropagation()
+          e.dataTransfer.setData('application/x-neuron-material', String(material.id))
+          e.dataTransfer.setData('text/plain', String(material.id))
+          e.dataTransfer.effectAllowed = 'move'
         }}
-        className="text-[11px] bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-1 text-slate-600 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-violet-500"
       >
-        <option value="unscheduled">Unscheduled</option>
-        {plan.groups.map(g => (
-          <option key={g.id} value={g.id}>
-            {g.title}
-          </option>
-        ))}
-      </select>
+        <span aria-hidden="true" className="text-slate-400 text-sm">⠿</span>
 
-      {/* Up/Down reordering inside group */}
-      <div className="flex items-center gap-0.5 text-slate-400">
-        <button
-          type="button"
-          aria-label={`Move ${material.filename} up`}
-          onClick={() => void moveMaterial(material.id, groupId, Math.max(0, index - 1))}
-          className="p-1 hover:text-slate-700 dark:hover:text-slate-200 rounded"
-          title="Move up"
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          aria-label={`Move ${material.filename} down`}
-          onClick={() => void moveMaterial(material.id, groupId, index + 1)}
-          className="p-1 hover:text-slate-700 dark:hover:text-slate-200 rounded"
-          title="Move down"
-        >
-          ↓
-        </button>
-      </div>
+        {/* Selection Checkbox */}
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => toggleMaterial(scope, material.id, groupMaterials)}
+          aria-label={`Select ${material.filename}`}
+          className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 cursor-pointer"
+        />
 
-      {groupId !== null && (
-        <button
-          type="button"
-          aria-label={`Move ${material.filename} to unscheduled`}
-          onClick={() => void moveMaterial(material.id, null, 0)}
-          className="text-[11px] text-slate-400 hover:text-red-500 px-1 py-0.5 rounded transition-colors"
-          title="Remove from unit"
+        <span aria-hidden="true" className="text-sm">📄</span>
+        <span className="flex-1 truncate font-medium text-slate-800 dark:text-slate-200" title={material.filename}>
+          {material.filename}
+        </span>
+
+        {/* Individual Study & Card Action Buttons */}
+        {onStartTutor && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onStartTutor(groupId ?? undefined, [material.id], material.filename, 'material')
+            }}
+            title={`Study ${material.filename} with AI Tutor`}
+            className="px-2 py-1 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            <span>🎓</span>
+            <span className="hidden sm:inline">Study</span>
+          </button>
+        )}
+
+        {onGenerateCards && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onGenerateCards(groupId ?? 0, [material.id])
+            }}
+            title={`Generate flashcards from ${material.filename}`}
+            className="px-2 py-1 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            <span>🃏</span>
+            <span className="hidden sm:inline">Cards</span>
+          </button>
+        )}
+
+        {/* Quick Move Dropdown */}
+        <select
+          aria-label={`Move ${material.filename} to unit`}
+          value={groupId ?? 'unscheduled'}
+          onChange={e => {
+            const val = e.target.value
+            if (val === 'unscheduled') {
+              void moveMaterial(material.id, null, 0)
+            } else {
+              const targetG = plan.groups.find(g => g.id === Number(val))
+              void moveMaterial(material.id, Number(val), targetG?.materials.length ?? 0)
+            }
+          }}
+          className="text-[11px] bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-1 text-slate-600 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-violet-500"
         >
-          ✕
-        </button>
-      )}
-    </li>
-  )
+          <option value="unscheduled">Unscheduled</option>
+          {plan.groups.map(g => (
+            <option key={g.id} value={g.id}>
+              {g.title}
+            </option>
+          ))}
+        </select>
+
+        {/* Up/Down reordering inside group */}
+        <div className="flex items-center gap-0.5 text-slate-400">
+          <button
+            type="button"
+            aria-label={`Move ${material.filename} up`}
+            onClick={() => void moveMaterial(material.id, groupId, Math.max(0, index - 1))}
+            className="p-1 hover:text-slate-700 dark:hover:text-slate-200 rounded"
+            title="Move up"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            aria-label={`Move ${material.filename} down`}
+            onClick={() => void moveMaterial(material.id, groupId, index + 1)}
+            className="p-1 hover:text-slate-700 dark:hover:text-slate-200 rounded"
+            title="Move down"
+          >
+            ↓
+          </button>
+        </div>
+
+        {groupId !== null && (
+          <button
+            type="button"
+            aria-label={`Move ${material.filename} to unscheduled`}
+            onClick={() => void moveMaterial(material.id, null, 0)}
+            className="text-[11px] text-slate-400 hover:text-red-500 px-1 py-0.5 rounded transition-colors"
+            title="Remove from unit"
+          >
+            ✕
+          </button>
+        )}
+      </li>
+    )
+  }
 
   return (
     <div className={`space-y-4 ${isUpdating ? 'opacity-70 pointer-events-none transition-opacity' : ''}`}>
@@ -309,13 +418,94 @@ export default function MaterialCurriculumView({ subjectId }: { subjectId: numbe
 
               {/* Materials in Unit */}
               <ul className="space-y-1.5 min-h-[3rem] p-1 rounded-lg">
-                {group.materials.map((material, index) => file(material, group.id, index))}
+                {group.materials.map((material, index) => file(material, group.id, index, group.materials))}
                 {group.materials.length === 0 && (
                   <li className="flex items-center justify-center py-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-400 dark:text-slate-500 select-none">
                     Drop materials here or use the &quot;Move to...&quot; dropdown.
                   </li>
                 )}
               </ul>
+
+              {/* Unit Study Options Footer */}
+              {group.materials.length > 0 && (() => {
+                const selectedGroupIds = getSelectedIds(group.id, group.materials)
+                return (
+                  <div className="mt-3 pt-3 flex items-center justify-between gap-2 border-t border-slate-100 dark:border-slate-700 flex-wrap">
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => selectAll(group.id, group.materials)}
+                        className="text-violet-600 dark:text-violet-400 hover:underline font-medium text-[11px]"
+                      >
+                        Select all
+                      </button>
+                      <span className="text-slate-300 dark:text-slate-600">·</span>
+                      <button
+                        type="button"
+                        onClick={() => clearAll(group.id)}
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[11px]"
+                      >
+                        Clear
+                      </button>
+                      <span className="text-slate-400 text-[11px] ml-1">
+                        ({selectedGroupIds.length}/{group.materials.length} selected)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {onStartTutor && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const chosen = selectedGroupIds.length > 0 ? selectedGroupIds : group.materials.map(m => m.id)
+                            onStartTutor(group.id, chosen, group.title, 'material')
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                          title={`Study all selected materials in ${group.title} with AI Tutor`}
+                        >
+                          <span>🎓</span>
+                          <span>
+                            {selectedGroupIds.length > 0 && selectedGroupIds.length < group.materials.length
+                              ? `Start Tutor (${selectedGroupIds.length} item${selectedGroupIds.length !== 1 ? 's' : ''})`
+                              : `Start Tutor (${group.title})`}
+                          </span>
+                        </button>
+                      )}
+
+                      {onStartSpacedReview && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const chosen = selectedGroupIds.length > 0 ? selectedGroupIds : group.materials.map(m => m.id)
+                            onStartSpacedReview(group.id, chosen, group.title)
+                          }}
+                          className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                          title="Launch focused spaced repetition review on this unit"
+                        >
+                          <span>⚡</span>
+                          <span>Spaced Review</span>
+                        </button>
+                      )}
+
+                      {onGenerateCards && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const chosen = selectedGroupIds.length > 0 ? selectedGroupIds : group.materials.map(m => m.id)
+                            onGenerateCards(group.id, chosen)
+                          }}
+                          disabled={loadingCards?.[group.id] || selectedGroupIds.length === 0}
+                          className="px-3 py-1.5 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                          title="Generate flashcards for all selected materials in this unit"
+                        >
+                          <span>🃏</span>
+                          <span>{loadingCards?.[group.id] ? 'Generating...' : 'Generate Cards'}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
               {groupIndex > 0 && <span className="sr-only">Group order {groupIndex + 1}</span>}
             </section>
           )
@@ -361,13 +551,78 @@ export default function MaterialCurriculumView({ subjectId }: { subjectId: numbe
           </span>
         </div>
         <ul className="space-y-1.5 min-h-[3rem] p-1 rounded-lg">
-          {plan.unscheduled.map((material, index) => file(material, null, index))}
+          {plan.unscheduled.map((material, index) => file(material, null, index, plan.unscheduled))}
           {plan.unscheduled.length === 0 && (
             <li className="flex items-center justify-center py-4 text-xs text-slate-400 dark:text-slate-500 select-none">
               All uploaded materials are organized into units.
             </li>
           )}
         </ul>
+
+        {plan.unscheduled.length > 0 && (() => {
+          const selectedUnscheduledIds = getSelectedIds('unscheduled', plan.unscheduled)
+          return (
+            <div className="mt-3 pt-3 flex items-center justify-between gap-2 border-t border-slate-200/60 dark:border-slate-700/60 flex-wrap">
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => selectAll('unscheduled', plan.unscheduled)}
+                  className="text-violet-600 dark:text-violet-400 hover:underline font-medium text-[11px]"
+                >
+                  Select all
+                </button>
+                <span className="text-slate-300 dark:text-slate-600">·</span>
+                <button
+                  type="button"
+                  onClick={() => clearAll('unscheduled')}
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[11px]"
+                >
+                  Clear
+                </button>
+                <span className="text-slate-400 text-[11px] ml-1">
+                  ({selectedUnscheduledIds.length}/{plan.unscheduled.length} selected)
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {onStartTutor && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const chosen = selectedUnscheduledIds.length > 0 ? selectedUnscheduledIds : plan.unscheduled.map(m => m.id)
+                      onStartTutor(undefined, chosen, 'Unscheduled Materials', 'material')
+                    }}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                    title="Study all selected unscheduled materials with AI Tutor"
+                  >
+                    <span>🎓</span>
+                    <span>
+                      {selectedUnscheduledIds.length > 0 && selectedUnscheduledIds.length < plan.unscheduled.length
+                        ? `Start Tutor (${selectedUnscheduledIds.length} item${selectedUnscheduledIds.length !== 1 ? 's' : ''})`
+                        : 'Start Tutor (Unscheduled)'}
+                    </span>
+                  </button>
+                )}
+
+                {onGenerateCards && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const chosen = selectedUnscheduledIds.length > 0 ? selectedUnscheduledIds : plan.unscheduled.map(m => m.id)
+                      onGenerateCards(0, chosen)
+                    }}
+                    disabled={loadingCards?.[0] || selectedUnscheduledIds.length === 0}
+                    className="px-3 py-1.5 bg-indigo-100 dark:bg-indigo-900/30 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 disabled:opacity-50 text-indigo-700 dark:text-indigo-300 text-xs font-medium rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                    title="Generate flashcards for all selected unscheduled materials"
+                  >
+                    <span>🃏</span>
+                    <span>{loadingCards?.[0] ? 'Generating...' : 'Generate Cards'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })()}
       </section>
     </div>
   )

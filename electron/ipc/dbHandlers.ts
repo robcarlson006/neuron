@@ -28,7 +28,8 @@ import type {
   Diagnostic,
   ConceptMastery,
   ConceptDependency,
-  SM2Result
+  SM2Result,
+  DashboardAggregate
 } from '../../src/types'
 
 let db: Database.Database
@@ -53,6 +54,37 @@ export function registerDbHandlers(): void {
   }
 
   // User handlers
+  ipcMain.handle('db:getDashboardAggregate', (_event, userId: number): DashboardAggregate => {
+    const today = new Date().toISOString().slice(0, 10)
+    const dueByType = db.prepare(`
+      SELECT c.type, COUNT(*) AS count
+      FROM cards c JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+      JOIN subjects s ON s.id = c.subject_id
+      WHERE s.user_id = ? AND s.status != 'archived' AND cs.due_date <= ?
+      GROUP BY c.type
+    `).all(userId, userId, today) as DashboardAggregate['dueByType']
+    const subjectTotals = db.prepare(`
+      SELECT c.subject_id, COUNT(*) AS total_cards,
+        SUM(CASE WHEN cs.card_id IS NOT NULL THEN 1 ELSE 0 END) AS scheduled_cards,
+        SUM(CASE WHEN cs.interval >= 21 THEN 1 ELSE 0 END) AS mastered_cards,
+        SUM(CASE WHEN cs.due_date <= ? THEN 1 ELSE 0 END) AS due_cards
+      FROM cards c JOIN subjects s ON s.id = c.subject_id
+      LEFT JOIN card_schedule cs ON cs.card_id = c.id AND cs.user_id = ?
+      WHERE s.user_id = ? AND s.status != 'archived'
+      GROUP BY c.subject_id
+    `).all(today, userId, userId) as DashboardAggregate['subjectTotals']
+    const deadlines = db.prepare(`
+      SELECT d.* FROM deadlines d JOIN subjects s ON s.id = d.subject_id
+      WHERE s.user_id = ? AND s.status != 'archived'
+      ORDER BY d.deadline_date ASC
+    `).all(userId) as DashboardAggregate['deadlines']
+    const streakDates = db.prepare(`
+      SELECT DATE(reviewed_at) AS date, COUNT(*) AS count FROM review_log
+      WHERE user_id = ? GROUP BY DATE(reviewed_at) ORDER BY date DESC LIMIT 90
+    `).all(userId) as DashboardAggregate['streakDates']
+    return { dueByType, subjectTotals, deadlines, streakDates }
+  })
+
   ipcMain.handle('db:getUser', () => {
     const user = db.prepare('SELECT * FROM users LIMIT 1').get() as User | undefined
     return user || null
@@ -568,7 +600,19 @@ export function registerDbHandlers(): void {
     const legacyReps = rating === 1 ? 0 : (sched.repetitions + 1)
     const legacyEase = Math.min(3.0, Math.max(1.3, 2.5 - (next.difficulty - 5) * 0.08))
 
-    // Snapshot the pre-review schedule so the review can be undone.
+    // Snapshot the schedule and mastery row so undo restores every review effect.
+    const reviewConceptName = cardRow
+      ? ((cardRow.concept && cardRow.concept.trim())
+        || (cardRow.folder_id
+          ? (db.prepare('SELECT name FROM card_folders WHERE id = ?').get(cardRow.folder_id) as { name: string } | undefined)?.name
+          : null)
+        || 'General')
+      : null
+    const previousMastery = cardRow && reviewConceptName
+      ? db.prepare(
+        'SELECT mastery_prob, observations, updated_at FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?'
+      ).get(userId, cardRow.subject_id, reviewConceptName) as { mastery_prob: number; observations: number; updated_at: string } | undefined
+      : undefined
     const previousScheduleJson = JSON.stringify({
       interval: sched.interval,
       repetitions: sched.repetitions,
@@ -578,7 +622,15 @@ export function registerDbHandlers(): void {
       stability: sched.stability ?? null,
       difficulty: sched.difficulty ?? null,
       state: sched.state ?? 0,
-      lapses: sched.lapses ?? 0
+      lapses: sched.lapses ?? 0,
+      mastery: cardRow && reviewConceptName ? {
+        subjectId: cardRow.subject_id,
+        concept: reviewConceptName,
+        existed: Boolean(previousMastery),
+        mastery_prob: previousMastery?.mastery_prob ?? null,
+        observations: previousMastery?.observations ?? null,
+        updated_at: previousMastery?.updated_at ?? null
+      } : null
     })
 
     // Persist the review atomically: schedule update + review log + undo entry
@@ -895,7 +947,7 @@ export function registerDbHandlers(): void {
         'UPDATE card_schedule SET interval = ?, repetitions = ?, ease_factor = ?, due_date = ?, last_reviewed_at = ?, stability = ?, difficulty = ?, state = ?, lapses = ? WHERE card_id = ? AND user_id = ?'
       ).run(
         prevSchedule.interval, prevSchedule.repetitions, prevSchedule.ease_factor,
-        prevSchedule.due_date, prevSchedule.last_reviewed_at || new Date().toISOString(),
+        prevSchedule.due_date, prevSchedule.last_reviewed_at ?? null,
         prevSchedule.stability || null, prevSchedule.difficulty || null,
         prevSchedule.state || 0, prevSchedule.lapses || 0,
         undo.card_id, userId
@@ -903,6 +955,25 @@ export function registerDbHandlers(): void {
       // Delete the last review log
       if (undo.review_log_id) {
         db.prepare('DELETE FROM review_log WHERE id = ?').run(undo.review_log_id)
+      }
+      if (prevSchedule.mastery) {
+        const mastery = prevSchedule.mastery as {
+          subjectId: number; concept: string; existed: boolean;
+          mastery_prob: number | null; observations: number | null; updated_at: string | null
+        }
+        if (mastery.existed) {
+          db.prepare(`
+            INSERT INTO concept_mastery (user_id, subject_id, concept, mastery_prob, observations, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, subject_id, concept) DO UPDATE SET
+              mastery_prob = excluded.mastery_prob,
+              observations = excluded.observations,
+              updated_at = excluded.updated_at
+          `).run(userId, mastery.subjectId, mastery.concept, mastery.mastery_prob, mastery.observations, mastery.updated_at)
+        } else {
+          db.prepare('DELETE FROM concept_mastery WHERE user_id = ? AND subject_id = ? AND concept = ?')
+            .run(userId, mastery.subjectId, mastery.concept)
+        }
       }
       // Remove the undo entry
       db.prepare('DELETE FROM review_undo_log WHERE id = ?').run(undo.id)

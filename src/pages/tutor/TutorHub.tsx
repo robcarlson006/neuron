@@ -173,6 +173,12 @@ export default function TutorHub(): React.JSX.Element {
     await navigateToFocusBlockItem(target, navigate, user?.id)
   }
 
+  async function handleResumeSprint(): Promise<void> {
+    const target = focusBlock?.items[focusBlock.activeIndex]
+    if (!target) return
+    await navigateToFocusBlockItem(target, navigate, user?.id)
+  }
+
   async function handleCompletePlan(planId: number): Promise<void> {
     await window.electronAPI.planCompleteAction(planId)
     setDailyPlans(prev => prev.map(p => p.id === planId ? { ...p, is_completed: 1 } : p))
@@ -481,7 +487,7 @@ export default function TutorHub(): React.JSX.Element {
               </div>
             </div>
             <button
-              onClick={() => handleStartSprint(focusBlock.activeIndex)}
+              onClick={handleResumeSprint}
               className="px-3 py-1 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 shadow-sm"
             >
               Resume Step →
@@ -676,10 +682,10 @@ export default function TutorHub(): React.JSX.Element {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-base">⏳</span>
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
-                  Curriculum Retention Maintenance Due
+                  Review due
                 </h2>
-                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-                  {dueMaintenanceTopics.length} topic{dueMaintenanceTopics.length > 1 ? 's' : ''} fading / due
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border border-violet-300 dark:border-violet-800">
+                  {dueMaintenanceTopics.length} topic{dueMaintenanceTopics.length > 1 ? 's' : ''} ready to revisit
                 </span>
               </div>
 

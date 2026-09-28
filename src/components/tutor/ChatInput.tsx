@@ -5,7 +5,8 @@ import { hasMathInput } from '../../lib/mathFormatter'
 import { Sigma, Calculator as CalcIcon } from '../icons'
 
 interface ChatInputProps {
-  onSend: (message: string) => void
+  onSend: (message: string) => void | Promise<void>
+  onStop?: () => void | Promise<void>
   onAttachFile?: () => void
   onSelectFromLibrary?: () => void
   onToggleCalculator?: () => void
@@ -14,10 +15,12 @@ interface ChatInputProps {
   attachedFile?: string | null
   onClearAttachment?: () => void
   refocusKey?: number
+  draftKey?: string
 }
 
 export default function ChatInput({
   onSend,
+  onStop,
   onAttachFile,
   onSelectFromLibrary,
   onToggleCalculator,
@@ -25,9 +28,12 @@ export default function ChatInput({
   placeholder,
   attachedFile,
   onClearAttachment,
-  refocusKey
+  refocusKey,
+  draftKey
 }: ChatInputProps): React.JSX.Element {
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(() => draftKey ? localStorage.getItem(`neuron_tutor_draft:${draftKey}`) || '' : '')
+  const [submitting, setSubmitting] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const [showMathPalette, setShowMathPalette] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -39,6 +45,18 @@ export default function ChatInput({
       el.style.height = Math.min(el.scrollHeight, 200) + 'px'
     }
   }, [input])
+
+  useEffect(() => {
+    if (!draftKey) return
+    const saved = localStorage.getItem(`neuron_tutor_draft:${draftKey}`) || ''
+    setInput(saved)
+  }, [draftKey])
+
+  useEffect(() => {
+    if (!draftKey) return
+    if (input) localStorage.setItem(`neuron_tutor_draft:${draftKey}`, input)
+    else localStorage.removeItem(`neuron_tutor_draft:${draftKey}`)
+  }, [draftKey, input])
 
   // Focus on mount
   useEffect(() => {
@@ -70,22 +88,28 @@ export default function ChatInput({
     }, 0)
   }
 
-  function handleSubmit(): void {
+  async function handleSubmit(): Promise<void> {
     const trimmed = input.trim()
-    if (!trimmed || disabled) return
-    onSend(trimmed)
-    setInput('')
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
+    if (!trimmed || disabled || submitting) return
+    setSubmitting(true)
+    setSendError(null)
+    try {
+      await onSend(trimmed)
+      setInput('')
+      if (textareaRef.current) textareaRef.current.style.height = 'auto'
+    } catch {
+      setSendError('Message was not sent. Your draft has been kept so you can retry.')
+    } finally {
+      setSubmitting(false)
     }
   }
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       handleSubmit()
     }
-  }, [input, disabled])
+  }, [input, disabled, submitting, onSend])
 
   return (
     <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 space-y-2">
@@ -99,6 +123,7 @@ export default function ChatInput({
           {onClearAttachment && (
             <button
               onClick={onClearAttachment}
+              aria-label="Remove attachment"
               className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -134,6 +159,7 @@ export default function ChatInput({
         {onAttachFile && (
           <button
             onClick={onAttachFile}
+            aria-label="Attach a file"
             className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
             title="Attach a file"
           >
@@ -148,6 +174,7 @@ export default function ChatInput({
         {onSelectFromLibrary && (
           <button
             onClick={onSelectFromLibrary}
+            aria-label="Select from library"
             className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
             title="Select from library"
           >
@@ -169,6 +196,7 @@ export default function ChatInput({
               : 'text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-200 dark:hover:bg-slate-700'
           }`}
           title="Toggle Math Keyboard Palette"
+          aria-label="Toggle math keyboard"
         >
           <Sigma size={16} />
         </button>
@@ -180,6 +208,7 @@ export default function ChatInput({
             onClick={onToggleCalculator}
             className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
             title="Open Scientific Calculator"
+            aria-label="Open scientific calculator"
           >
             <CalcIcon size={16} />
           </button>
@@ -198,20 +227,29 @@ export default function ChatInput({
         />
 
         {/* Send button */}
-        <button
-          onClick={handleSubmit}
-          disabled={!input.trim() || disabled}
-          className={`p-1.5 rounded-xl transition-colors flex-shrink-0 ${
-            input.trim() && !disabled
-              ? 'bg-violet-600 text-white hover:bg-violet-700'
-              : 'bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
-          }`}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M2 8l5-5 5 5M7 3v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
+        {disabled && onStop ? (
+          <button onClick={onStop} aria-label="Stop response" className="p-2 rounded-xl bg-slate-700 text-white hover:bg-slate-800 flex-shrink-0">
+            <span className="block w-3 h-3 rounded-sm bg-current" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={!input.trim() || disabled || submitting}
+            aria-label={submitting ? 'Sending message' : 'Send message'}
+            className={`p-1.5 rounded-xl transition-colors flex-shrink-0 ${
+              input.trim() && !disabled
+                ? 'bg-violet-600 text-white hover:bg-violet-700'
+                : 'bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
+            }`}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 8l5-5 5 5M7 3v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        )}
       </div>
+
+      {sendError && <p role="alert" className="text-xs text-red-600 dark:text-red-400 px-1">{sendError}</p>}
 
       {/* Helper text */}
       <p className="text-[10px] text-slate-400 dark:text-slate-500 text-center mt-1">

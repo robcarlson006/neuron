@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import type { ExamReadinessResult, CramOptimizationResult } from '../../types'
 import { generateCramOptimizationPlan, type CardWithSchedule } from '../../lib/readinessEngine'
-import { X, Flame, Clock, CheckCircle2, Play, Calendar, TrendingUp } from '../icons'
+import { X, Flame, Clock, CheckCircle2, Play, Calendar } from '../icons'
 
 interface CramOptimizerModalProps {
   isOpen: boolean
@@ -90,36 +90,11 @@ export default function CramOptimizerModal({
 
         {/* Modal Body */}
         <div className="p-5 sm:p-6 space-y-6 overflow-y-auto">
-          {/* Real-Time Boost Projection Card */}
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-pink-500/5 border border-indigo-200/50 dark:border-indigo-800/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="space-y-1 text-center sm:text-left">
-              <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 flex items-center justify-center sm:justify-start gap-1.5">
-                <TrendingUp size={13} />
-                Projected Score Boost
-              </span>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Studying {dailyMinutes} min/day over {cramPlan.daysCount} {cramPlan.daysCount === 1 ? 'day' : 'days'}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="text-center">
-                <div className="text-xs text-slate-400 font-medium">Current</div>
-                <div className="text-xl font-bold text-slate-600 dark:text-slate-300">
-                  {cramPlan.currentScore}%
-                </div>
-              </div>
-
-              <div className="text-indigo-400 font-bold text-lg">→</div>
-
-              <div className="text-center p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 shadow-sm">
-                <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold">
-                  +{cramPlan.scoreDelta}% Boost
-                </div>
-                <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400 leading-none">
-                  {cramPlan.projectedBoostedScore}%
-                </div>
-              </div>
+          <div className="rounded-2xl border border-indigo-200/50 bg-indigo-500/5 p-4 dark:border-indigo-800/50">
+            <div className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">Review plan estimate</div>
+            <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              About {dailyMinutes} minutes per day for {cramPlan.daysCount} {cramPlan.daysCount === 1 ? 'day' : 'days'}, covering {cramPlan.totalCardsToReview} cards.
+              This is a time and card schedule, not an exam score prediction.
             </div>
           </div>
 

@@ -19,3 +19,6 @@ seed/**/*.d.ts
 mempalace/
 *.traineddata
 *.traineddata.gz
+playwright-report/
+test-results/
+

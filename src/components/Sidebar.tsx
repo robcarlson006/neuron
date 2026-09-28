@@ -87,7 +87,11 @@ const settingsNavItems = [
 ]
 
 export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): React.JSX.Element {
-  const { user, subjects, toggleTheme, theme, focusBlock } = useAppStore()
+  const user = useAppStore(state => state.user)
+  const subjects = useAppStore(state => state.subjects)
+  const toggleTheme = useAppStore(state => state.toggleTheme)
+  const theme = useAppStore(state => state.theme)
+  const focusBlockRunning = useAppStore(state => state.focusBlock?.isRunning ?? false)
   const [showArchived, setShowArchived] = React.useState(false)
 
   const initials = user?.name
@@ -100,7 +104,7 @@ export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): Re
   return (
     <aside className="w-60 h-full bg-neuron-100 dark:bg-neuron-950 border-r border-neuron-200 dark:border-neuron-800 flex flex-col flex-shrink-0 overflow-hidden">
       {/* App branding */}
-      <div className={`px-5 ${focusBlock?.isRunning ? 'pt-4' : 'pt-10'} pb-5 border-b border-neuron-200 dark:border-neuron-800 flex-shrink-0`}>
+      <div className={`px-5 ${focusBlockRunning ? 'pt-4' : 'pt-10'} pb-5 border-b border-neuron-200 dark:border-neuron-800 flex-shrink-0`}>
         <div className="flex items-center gap-3">
           <NeuronLogo size={32} className="flex-shrink-0 rounded-lg" />
           <span className="font-semibold text-neuron-900 dark:text-neuron-100 text-base tracking-tight">Neuron</span>

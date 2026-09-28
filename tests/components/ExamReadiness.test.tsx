@@ -10,10 +10,7 @@ const mockReadiness: ExamReadinessResult = {
   deadlineLabel: 'Midterm Exam',
   examDate: '2026-05-15',
   daysRemaining: 10,
-  projectedScore: 78,
-  confidenceMargin: 4,
-  tier: 'proficient',
-  tierLabel: 'Proficient (Targeting Pass / B Grade)',
+  evidenceStatus: 'available',
   coveragePercent: 85,
   totalCards: 50,
   weakTopics: [
@@ -22,7 +19,6 @@ const mockReadiness: ExamReadinessResult = {
       cardCount: 5,
       masteredCount: 1,
       retrievability: 0.45,
-      projectedScore: 48,
       status: 'weak',
       priorityRank: 1
     }
@@ -46,7 +42,7 @@ const mockCards: CardWithSchedule[] = [
 ]
 
 describe('ExamReadinessCard & CramOptimizerModal', () => {
-  it('renders ExamReadinessCard with projected score and tier label', () => {
+  it('renders study evidence and review topics without claiming an exam score', () => {
     const mockOpen = jest.fn()
     render(
       <ExamReadinessCard
@@ -56,16 +52,16 @@ describe('ExamReadinessCard & CramOptimizerModal', () => {
       />
     )
 
-    expect(screen.getByText('78%')).toBeInTheDocument()
-    expect(screen.getByText(/Proficient/i)).toBeInTheDocument()
+    expect(screen.getByText('85%')).toBeInTheDocument()
+    expect(screen.queryByText(/projected score|confidence margin|targeting.*grade/i)).not.toBeInTheDocument()
     expect(screen.getByText(/Thermodynamics/i)).toBeInTheDocument()
 
-    const btn = screen.getByRole('button', { name: /launch cram optimizer/i })
+    const btn = screen.getByRole('button', { name: /build a review plan/i })
     fireEvent.click(btn)
     expect(mockOpen).toHaveBeenCalled()
   })
 
-  it('renders CramOptimizerModal and updates boost projection on slider change', () => {
+  it('renders CramOptimizerModal and updates the time estimate on slider change', () => {
     const mockClose = jest.fn()
     const mockStart = jest.fn()
     const mockApply = jest.fn()
@@ -83,12 +79,14 @@ describe('ExamReadinessCard & CramOptimizerModal', () => {
     )
 
     expect(screen.getByText(/Cram Schedule Optimizer/i)).toBeInTheDocument()
-    expect(screen.getByText(/45 minutes/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('How much time can you study per day?')).toHaveValue('45')
+    expect(screen.getByText(/not an exam score prediction/i)).toBeInTheDocument()
+    expect(screen.queryByText(/score boost/i)).not.toBeInTheDocument()
 
     // Adjust slider to 90 min
     const slider = screen.getByRole('slider')
     fireEvent.change(slider, { target: { value: '90' } })
-    expect(screen.getByText(/90 minutes/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('How much time can you study per day?')).toHaveValue('90')
 
     // Trigger start day 1 cram session
     const startBtn = screen.getByRole('button', { name: /start day 1 cram session/i })

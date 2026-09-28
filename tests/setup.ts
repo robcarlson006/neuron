@@ -16,6 +16,7 @@ const mockElectronAPI = {
   getSchedule: jest.fn().mockResolvedValue(null),
   updateSchedule: jest.fn().mockResolvedValue({ success: true }),
   getDueCards: jest.fn().mockResolvedValue([]),
+  getDashboardAggregate: jest.fn().mockResolvedValue({ dueByType: [], subjectTotals: [], deadlines: [], streakDates: [] }),
   getAllCardsWithSchedule: jest.fn().mockResolvedValue([]),
   getAllSchedules: jest.fn().mockResolvedValue([]),
   processReview: jest.fn().mockResolvedValue({ sm2Result: {}, success: true }),
@@ -86,6 +87,7 @@ const mockElectronAPI = {
 
   // Syllabus
   syllabusListModules: jest.fn().mockResolvedValue([]),
+  syllabusGetCurriculumTree: jest.fn().mockResolvedValue(undefined),
   syllabusCreateModule: jest.fn().mockResolvedValue({ id: 1 }),
   syllabusUpdateModule: jest.fn().mockResolvedValue({ success: true }),
   syllabusDeleteModule: jest.fn().mockResolvedValue({ success: true }),
@@ -93,6 +95,12 @@ const mockElectronAPI = {
   syllabusCreateTopic: jest.fn().mockResolvedValue({ id: 1 }),
   syllabusUpdateTopic: jest.fn().mockResolvedValue({ success: true }),
   syllabusDeleteTopic: jest.fn().mockResolvedValue({ success: true }),
+  syllabusGetMaterialPlan: jest.fn().mockResolvedValue({ groups: [], unscheduled: [] }),
+  syllabusCreateMaterialGroup: jest.fn().mockResolvedValue({ id: 1 }),
+  syllabusRenameMaterialGroup: jest.fn().mockResolvedValue({ id: 1 }),
+  syllabusDeleteMaterialGroup: jest.fn().mockResolvedValue({ groups: [], unscheduled: [] }),
+  syllabusReorderMaterialGroups: jest.fn().mockResolvedValue({ groups: [], unscheduled: [] }),
+  syllabusMoveMaterial: jest.fn().mockResolvedValue({ groups: [], unscheduled: [] }),
 
   // Library
   libraryOpenFileDialog: jest.fn().mockResolvedValue(null),

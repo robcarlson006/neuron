@@ -223,4 +223,33 @@ describe('CardBrowser - Material-Based Organization & Search', () => {
     const katexElements = container.querySelectorAll('.katex')
     expect(katexElements.length).toBeGreaterThanOrEqual(2)
   })
+
+  it('paginates grouped cards at 50 and keeps selections across pages', () => {
+    const cards: Card[] = Array.from({ length: 65 }, (_, index) => ({
+      id: index + 1,
+      subject_id: 10,
+      material_id: 101,
+      type: 'flashcard',
+      front: `Pagination card ${index + 1}`,
+      back: 'Answer',
+      is_manual: 1,
+      created_at: new Date(2026, 0, index + 1).toISOString()
+    }))
+    const onDeleteCards = jest.fn()
+    window.confirm = jest.fn(() => true)
+    render(<CardBrowser cards={cards} folders={[]} materials={mockMaterials} onDeleteCards={onDeleteCards} />)
+
+    expect(screen.getAllByLabelText(/^Select card/)).toHaveLength(50)
+    expect(screen.getByLabelText('Select card 65')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Select card 1')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Select card 65'))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getAllByLabelText(/^Select card/)).toHaveLength(15)
+    expect(screen.getByLabelText('Select card 15')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Select card 65')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Select card 15'))
+    fireEvent.click(screen.getByRole('button', { name: /delete selected/i }))
+    expect(onDeleteCards).toHaveBeenCalledWith(expect.arrayContaining([15, 65]))
+  })
 })

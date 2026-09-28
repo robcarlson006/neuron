@@ -18,7 +18,8 @@ describe('semanticEvaluator', () => {
 
     it('strips LaTeX delimiters and tags', () => {
       expect(normalizeText('$\\text{ATP}$ synthesis')).toBe('atp synthesis')
-      expect(normalizeText('$E = mc^2$')).toBe('e mc 2')
+      expect(normalizeText('$E = mc^2$')).toBe('e = mc 2')
+      expect(normalizeText('x = −5')).toBe('x = -5')
     })
   })
 
@@ -127,6 +128,17 @@ describe('semanticEvaluator', () => {
       expect(negated.quality).toBe(1)
       expect(negated.score).toBeLessThanOrEqual(0.30)
       expect(negated.feedback).toContain('Polarity conflict')
+    })
+
+    it('does not award exact or full credit when a numeric answer has the opposite sign', () => {
+      for (const result of [
+        evaluateSemantically('5', '-5'),
+        evaluateSemantically('x = 5', 'x = -5')
+      ]) {
+        expect(result.correct).toBe(false)
+        expect(result.quality).toBe(1)
+        expect(result.score).toBeLessThanOrEqual(0.30)
+      }
     })
   })
 

@@ -101,6 +101,27 @@ function loadPomodoroSettings(): { enabled: boolean; workMinutes: number; breakM
   }
 }
 
+function loadFocusBlock(): ActiveFocusBlockState | null {
+  try {
+    const raw = localStorage.getItem('neuron_focus_block')
+    if (!raw) return null
+    const value = JSON.parse(raw) as ActiveFocusBlockState
+    if (!Array.isArray(value.items) || value.items.length === 0) return null
+    if (!Number.isInteger(value.activeIndex) || value.activeIndex < 0 || value.activeIndex >= value.items.length) return null
+    return {
+      ...value,
+      remainingSeconds: Number(value.remainingSeconds) || 0,
+      totalSeconds: Math.max(1, Number(value.totalSeconds) || 1),
+      isRunning: Boolean(value.isRunning),
+      isPaused: Boolean(value.isPaused),
+      isOvertime: Boolean(value.isOvertime),
+      showTimeUpModal: Boolean(value.showTimeUpModal)
+    }
+  } catch {
+    return null
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => {
   const pom = loadPomodoroSettings()
 
@@ -269,7 +290,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     // Focus Block initial state & actions
-    focusBlock: null,
+    focusBlock: loadFocusBlock(),
 
     startFocusBlock: (items: FocusBlockItem[], startIndex = 0) => {
       if (!items || items.length === 0) return
@@ -406,5 +427,14 @@ export const useAppStore = create<AppState>((set, get) => {
         }
       })
     }
+  }
+})
+
+useAppStore.subscribe(state => {
+  try {
+    if (state.focusBlock) localStorage.setItem('neuron_focus_block', JSON.stringify(state.focusBlock))
+    else localStorage.removeItem('neuron_focus_block')
+  } catch {
+    // Persistence is best-effort; the live focus block remains usable.
   }
 })

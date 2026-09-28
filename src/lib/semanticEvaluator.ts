@@ -32,8 +32,15 @@ export function normalizeText(text: string): string {
     // Strip simple LaTeX tags and delimiters
     .replace(/\\(?:text|textbf|textit|mathbf|mathrm)\{([^}]+)\}/g, '$1')
     .replace(/[$]/g, '')
-    // Replace punctuation with spaces
-    .replace(/[^a-z0-9\s]/g, ' ')
+    // Preserve polarity and common mathematical operators for exact checks.
+    .replace(/−/g, '-')
+    .replace(/≤/g, '<=')
+    .replace(/≥/g, '>=')
+    .replace(/≠/g, '!=')
+    .replace(/×/g, '*')
+    .replace(/÷/g, '/')
+    .replace(/!(?!=)/g, ' ')
+    .replace(/[^a-z0-9\s+\-*/=<>!]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -100,6 +107,16 @@ export function detectNegationMismatch(student: string, model: string): boolean 
   return studentHasNeg !== modelHasNeg
 }
 
+function hasNumericPolarityMismatch(student: string, model: string): boolean {
+  const signedNumbers = (value: string): string[] =>
+    (value.replace(/−/g, '-').match(/(?:^|[^a-z])[-+]?\d+(?:\.\d+)?/gi) || [])
+      .map(token => token.trim())
+  const studentNumbers = signedNumbers(student)
+  const modelNumbers = signedNumbers(model)
+  return studentNumbers.length > 0 && modelNumbers.length > 0
+    && studentNumbers.join(',') !== modelNumbers.join(',')
+}
+
 export function scoreToQuality(score: number): { quality: number; diagnosticQuality: number } {
   // Diagnostic scale (0 - 4):
   // 0: Don't know it, 1: Know a little, 2: I'm okay at this, 3: Know it well, 4: Mastered
@@ -127,6 +144,7 @@ export function evaluateSemantically(
 ): AutoGradeResult {
   const normStudent = normalizeText(studentAnswer)
   const normModel = normalizeText(modelAnswer)
+  const numericPolarityMismatch = hasNumericPolarityMismatch(studentAnswer, modelAnswer)
 
   if (!normStudent) {
     return {
@@ -143,7 +161,8 @@ export function evaluateSemantically(
 
   // Exact or near-exact check
   const sim = stringSimilarity(normStudent, normModel)
-  if (normStudent === normModel || sim >= 0.92) {
+  const hasNegationMismatch = detectNegationMismatch(studentAnswer, modelAnswer)
+  if (!hasNegationMismatch && !numericPolarityMismatch && (normStudent === normModel || sim >= 0.92)) {
     const concepts = keyConcepts || extractKeyConcepts(modelAnswer)
     const { quality, diagnosticQuality } = scoreToQuality(1.0)
     return {
@@ -186,8 +205,7 @@ export function evaluateSemantically(
   let combined = wordOverlap * 0.4 + conceptScore * 0.6
 
   // Check for negation mismatch penalty - strict veto to prevent false positives
-  const hasNegationMismatch = detectNegationMismatch(studentAnswer, modelAnswer)
-  if (hasNegationMismatch) {
+  if (hasNegationMismatch || numericPolarityMismatch) {
     // If student contradicts the model answer polarity, hard-cap score at 0.30
     // so quality is strictly 1 ('Wrong') and correct is false
     combined = Math.min(0.30, Math.max(0, combined - 0.4))
@@ -197,7 +215,7 @@ export function evaluateSemantically(
   const { quality, diagnosticQuality } = scoreToQuality(roundedScore)
 
   let feedback = ''
-  if (hasNegationMismatch) {
+  if (hasNegationMismatch || numericPolarityMismatch) {
     feedback = 'Polarity conflict: your answer contradicts or negates the model answer.'
   } else if (roundedScore >= 0.85) {
     feedback = 'Excellent answer! You captured all essential points.'
@@ -269,7 +287,12 @@ export async function evaluateStudentAnswer(
   // Tier 1: Exact or high similarity check (< 1ms)
   const normStudent = normalizeText(trimmed)
   const normModel = normalizeText(modelAnswer)
-  if (normStudent === normModel || stringSimilarity(normStudent, normModel) >= 0.94) {
+  const polarityMismatch = detectNegationMismatch(trimmed, modelAnswer)
+    || hasNumericPolarityMismatch(trimmed, modelAnswer)
+  if (polarityMismatch) return evaluateSemantically(trimmed, modelAnswer)
+  if (!detectNegationMismatch(trimmed, modelAnswer)
+    && !hasNumericPolarityMismatch(trimmed, modelAnswer)
+    && (normStudent === normModel || stringSimilarity(normStudent, normModel) >= 0.94)) {
     const concepts = extractKeyConcepts(modelAnswer)
     const { quality, diagnosticQuality } = scoreToQuality(1.0)
     return {

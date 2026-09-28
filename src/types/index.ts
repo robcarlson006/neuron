@@ -231,6 +231,13 @@ export interface SubjectWithStats {
   totalCards: number
 }
 
+export interface DashboardAggregate {
+  dueByType: Array<{ type: Card['type']; count: number }>
+  subjectTotals: Array<{ subject_id: number; total_cards: number; scheduled_cards: number; mastered_cards: number; due_cards: number }>
+  deadlines: Deadline[]
+  streakDates: Array<{ date: string; count: number }>
+}
+
 export interface StudySessionCard {
   card: Card
   schedule: CardSchedule
@@ -685,6 +692,24 @@ export interface TutorSession {
   duration_minutes?: number
   depth_level?: number
   never_studied?: number
+  config_json?: string
+  active_elapsed_seconds?: number
+  paused_at?: string
+  finalization_status?: 'open' | 'pending' | 'applied' | 'unassessed' | 'failed'
+  finalization_revision?: number
+}
+
+export type TutorAssessmentOutcome = 'correct' | 'partial' | 'incorrect' | 'unassessed'
+export type TutorAssistanceLevel = 'independent' | 'hinted' | 'worked_example' | 'unknown'
+
+export interface TutorAssessmentEvidence {
+  topic_id: number
+  outcome: TutorAssessmentOutcome
+  assistance_level: TutorAssistanceLevel
+  question_message_id: string
+  answer_message_id: string
+  evidence?: string
+  confidence?: number
 }
 
 export interface TutorTopicMemory {
@@ -708,10 +733,12 @@ export interface TutorSessionEvaluation {
   struggles: string[]
   topics_covered: string[]
   misconceptions?: Array<{ concept: string; misconception_title?: string; description: string }>
-  breakthroughs?: string[]
+  breakthroughs?: Array<{ topic: string; summary: string; effective_intervention?: string; importance_score?: number }>
   summary?: string
   created_at: string
   updatedTopics?: import('../lib/memory/topicSrsEngine').TopicRetentionMetrics[]
+  assessments?: TutorAssessmentEvidence[]
+  assessment_status?: 'applied' | 'unassessed' | 'pending' | 'failed'
 }
 
 export interface GapAnalysisItem {
@@ -740,6 +767,7 @@ export interface GapAnalysisResult {
 
 export interface TutorStreamParams {
   sessionId: number
+  requestId?: string
   subjectId: number
   message: string
   sessionType: 'tutor' | 'general'
@@ -764,6 +792,7 @@ export interface TutorStreamParams {
   weakTopicsConcerns?: string[]
   materialId?: number
   materialContent?: string
+  targetMaterialIds?: number[]
   targetTopic?: string
   targetTopics?: string[]
   isFillGaps?: boolean
@@ -803,6 +832,10 @@ export interface TutorSessionConfig {
   never_studied: boolean
   material_id?: number
   material_name?: string
+  target_material_ids?: number[]
+  material_ids?: number[]
+  group_id?: number
+  group_title?: string
   module_id?: number
   module_name?: string
   target_topic?: string
@@ -1276,7 +1309,6 @@ export interface TopicReadinessBreakdown {
   cardCount: number
   masteredCount: number
   retrievability: number // 0 - 1
-  projectedScore: number // 0 - 100
   status: 'strong' | 'moderate' | 'weak' | 'gap'
   priorityRank: number
 }
@@ -1287,11 +1319,8 @@ export interface ExamReadinessResult {
   deadlineLabel: string
   examDate: string
   daysRemaining: number
-  projectedScore: number // 0 - 100
-  confidenceMargin: number // e.g. ±4%
-  tier: 'ready' | 'proficient' | 'borderline' | 'critical'
-  tierLabel: string
-  coveragePercent: number
+  evidenceStatus: 'available' | 'no_evidence'
+  coveragePercent?: number
   totalCards: number
   weakTopics: TopicReadinessBreakdown[]
   allTopics: TopicReadinessBreakdown[]
@@ -1312,9 +1341,6 @@ export interface CramOptimizationResult {
   dailyMinutes: number
   daysCount: number
   totalCardsToReview: number
-  currentScore: number
-  projectedBoostedScore: number
-  scoreDelta: number
   dailyPlan: CramPlanDay[]
 }
 
@@ -1358,6 +1384,8 @@ export interface ConceptGraphEdge {
   target: string
   weight: number
   isPrerequisiteMet: boolean
+  relationship: 'prerequisite' | 'contains' | 'related'
+  origin: 'saved' | 'inferred'
 }
 
 export interface ConceptGraphData {
@@ -1382,5 +1410,3 @@ export interface ConceptGraphData {
     height: number
   }
 }
-
-

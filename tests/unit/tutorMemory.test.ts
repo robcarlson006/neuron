@@ -153,7 +153,7 @@ describe('Tutor Memory & Gap Analysis Engine', () => {
   })
 
   describe('evaluateAndSaveSessionMemory', () => {
-    it('persists session evaluations and updates topic memories using fallback topic markers', async () => {
+    it('persists an unassessed evaluation without crediting fallback topic markers', async () => {
       const sessionId = insert(
         db,
         'INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase) VALUES (?, ?, ?, ?)',
@@ -174,12 +174,13 @@ describe('Tutor Memory & Gap Analysis Engine', () => {
       const evaluation = await evaluateAndSaveSessionMemory(db, sessionId, 'Covered binary search basics.')
 
       expect(evaluation).not.toBeNull()
-      expect(evaluation?.topics_covered).toContain('Binary Search')
+      expect(evaluation?.topics_covered).toEqual([])
+      expect(evaluation?.assessment_status).toBe('unassessed')
 
       // Check saved evaluation record
       const evalRecord = db.prepare('SELECT * FROM tutor_session_evaluations WHERE session_id = ?').get(sessionId) as any
       expect(evalRecord).toBeDefined()
-      expect(evalRecord.topics_covered_json).toContain('Binary Search')
+      expect(evalRecord.topics_covered_json).toBe('[]')
     })
   })
 

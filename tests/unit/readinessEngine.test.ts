@@ -47,7 +47,7 @@ describe('Exam Readiness Predictor & Cram Optimizer', () => {
   })
 
   describe('calculateExamReadiness', () => {
-    it('calculates readiness score for mastered subject', () => {
+    it('reports scheduled recall evidence without presenting it as an exam score', () => {
       const cards: CardWithSchedule[] = [
         {
           id: 1,
@@ -85,13 +85,12 @@ describe('Exam Readiness Predictor & Cram Optimizer', () => {
         concepts: [{ id: 1, user_id: 1, subject_id: 1, concept: 'Cell Biology', mastery_prob: 0.95, observations: 10, updated_at: '2026-05-01' }]
       })
 
-      expect(res.projectedScore).toBeGreaterThanOrEqual(85)
-      expect(res.tier).toBe('ready')
+      expect(res.evidenceStatus).toBe('available')
       expect(res.daysRemaining).toBe(4)
       expect(res.weakTopics.length).toBe(0)
     })
 
-    it('flags weak topics and drops score when cards have low stability and missing coverage', () => {
+    it('matches linked cards and unique legacy titles while excluding unassigned cards from coverage', () => {
       const cards: CardWithSchedule[] = [
         {
           id: 1,
@@ -104,7 +103,28 @@ describe('Exam Readiness Predictor & Cram Optimizer', () => {
           stability: 1,
           interval: 1,
           last_reviewed_at: '2026-04-01', // reviewed a month ago
-          concept: 'Krebs Cycle'
+          concept: 'Different legacy label',
+          topic_id: 101
+        },
+        {
+          id: 2,
+          subject_id: 1,
+          type: 'flashcard',
+          front: 'Q2',
+          back: 'A2',
+          is_manual: 0,
+          created_at: '2026-05-01',
+          concept: '  glyCOLysis  '
+        },
+        {
+          id: 3,
+          subject_id: 1,
+          type: 'flashcard',
+          front: 'Q3',
+          back: 'A3',
+          is_manual: 0,
+          created_at: '2026-05-01',
+          concept: 'Unrelated concept'
         }
       ]
 
@@ -132,15 +152,40 @@ describe('Exam Readiness Predictor & Cram Optimizer', () => {
         modules
       })
 
-      expect(res.projectedScore).toBeLessThan(60)
-      expect(res.tier === 'borderline' || res.tier === 'critical').toBe(true)
-      expect(res.coveragePercent).toBe(50) // 1 of 2 topics covered
-      expect(res.weakTopics.length).toBeGreaterThan(0)
+      expect(res.evidenceStatus).toBe('available')
+      expect(res.coveragePercent).toBe(100)
+      expect(res.allTopics.find(topic => topic.topicTitle === 'Krebs Cycle')?.cardCount).toBe(1)
+      expect(res.allTopics.find(topic => topic.topicTitle === 'Glycolysis')?.cardCount).toBe(1)
+      expect(res.allTopics.find(topic => topic.topicTitle === 'Unassigned cards')?.cardCount).toBe(1)
+    })
+
+    it('leaves ambiguous legacy titles unassigned and reports no evidence explicitly', () => {
+      const modules = [
+        {
+          id: 1, subject_id: 1, title: 'One', status: 'in_progress' as const,
+          hours_estimated: 1, sort_order: 1, created_at: '2026-05-01',
+          topics: [
+            { id: 11, module_id: 1, title: 'Shared', hours_estimated: 1, sort_order: 1, is_completed: 0, mastery_target: 80, created_at: '2026-05-01' },
+            { id: 12, module_id: 1, title: ' shared ', hours_estimated: 1, sort_order: 2, is_completed: 0, mastery_target: 80, created_at: '2026-05-01' }
+          ]
+        }
+      ]
+      const ambiguous = calculateExamReadiness({
+        subjectId: 1, examDateISO: '2026-05-20', nowISO: '2026-05-01', modules,
+        cards: [{ id: 9, subject_id: 1, type: 'flashcard', front: 'Q', back: 'A', is_manual: 0, created_at: '2026-05-01', concept: 'Shared' }]
+      })
+      expect(ambiguous.coveragePercent).toBe(0)
+      expect(ambiguous.allTopics.find(topic => topic.topicTitle === 'Unassigned cards')?.cardCount).toBe(1)
+
+      const empty = calculateExamReadiness({ subjectId: 1, examDateISO: '2026-05-20', nowISO: '2026-05-01', cards: [] })
+      expect(empty.evidenceStatus).toBe('no_evidence')
+      expect(empty.coveragePercent).toBeUndefined()
+      expect(empty.allTopics).toHaveLength(0)
     })
   })
 
   describe('generateCramOptimizationPlan', () => {
-    it('allocates study time and boosts projected grade', () => {
+    it('allocates study time across a daily card review plan', () => {
       const cards: CardWithSchedule[] = Array.from({ length: 20 }, (_, i) => ({
         id: i + 1,
         subject_id: 1,
@@ -170,8 +215,7 @@ describe('Exam Readiness Predictor & Cram Optimizer', () => {
 
       expect(plan.daysCount).toBe(5)
       expect(plan.dailyPlan.length).toBe(5)
-      expect(plan.projectedBoostedScore).toBeGreaterThan(plan.currentScore)
-      expect(plan.scoreDelta).toBeGreaterThan(0)
+      expect(plan.totalCardsToReview).toBe(20)
       expect(plan.dailyPlan[0].cardIds.length).toBeGreaterThan(0)
       expect(plan.dailyPlan[0].focusTitle).toContain('Day 1')
     })

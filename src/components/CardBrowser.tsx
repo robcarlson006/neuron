@@ -139,6 +139,18 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
     [filtered, page]
   )
+  const groupedPage = useMemo(() => {
+    const groups = new Map<string, Card[]>()
+    paged.forEach((card) => {
+      let materialName = 'General / Direct Text'
+      if (card.material_id) materialName = materialMap.get(card.material_id) || 'Uploaded Document'
+      else if (card.source?.startsWith('[') && card.source.endsWith(']')) materialName = '🔗 Multi-Source Synthesis'
+      const group = groups.get(materialName) ?? []
+      group.push(card)
+      groups.set(materialName, group)
+    })
+    return groups
+  }, [paged, materialMap])
 
   // Selection (select all covers all currently filtered cards)
   const targetIds = useMemo(
@@ -576,10 +588,11 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
       ) : viewMode === 'material' ? (
         /* Grouped by Material View */
         <div className="space-y-4">
-          {Array.from(groupedByMaterial.entries()).map(([materialName, groupCards]) => {
+          {Array.from(groupedPage.entries()).map(([materialName, groupCards]) => {
             const isCollapsed = collapsedGroups.has(materialName)
-            const flashcardCount = groupCards.filter((c) => c.type === 'flashcard').length
-            const recallCount = groupCards.filter((c) => c.type === 'active_recall').length
+            const allGroupCards = groupedByMaterial.get(materialName) ?? []
+            const flashcardCount = allGroupCards.filter((c) => c.type === 'flashcard').length
+            const recallCount = allGroupCards.filter((c) => c.type === 'active_recall').length
 
             return (
               <div
@@ -596,7 +609,7 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
                       📄 {materialName}
                     </span>
                     <span className="text-xs font-semibold px-2 py-0.5 bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 rounded-full border border-sky-200 dark:border-sky-800">
-                      {groupCards.length} card{groupCards.length !== 1 ? 's' : ''}
+                      {allGroupCards.length} card{allGroupCards.length !== 1 ? 's' : ''} · {groupCards.length} on this page
                     </span>
                     {flashcardCount > 0 && (
                       <span className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-1.5 py-0.5 rounded">
@@ -631,8 +644,8 @@ const CardBrowser: React.FC<CardBrowserProps> = ({
         </div>
       )}
 
-      {/* Pagination for List View */}
-      {viewMode === 'list' && totalPages > 1 && (
+      {/* Pagination */}
+      {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2 pt-3">
           <button
             onClick={() => setPage((p) => Math.max(0, p - 1))}

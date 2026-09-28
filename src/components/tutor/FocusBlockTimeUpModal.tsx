@@ -1,10 +1,11 @@
 import React from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
 import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 
 export default function FocusBlockTimeUpModal(): React.JSX.Element | null {
   const navigate = useNavigate()
+  const location = useLocation()
   const {
     user,
     focusBlock,
@@ -24,6 +25,12 @@ export default function FocusBlockTimeUpModal(): React.JSX.Element | null {
 
   async function handleMoveOn(): Promise<void> {
     if (!focusBlock) return
+    const isTutorPage = location.pathname.startsWith('/tutor/') && !location.pathname.includes('/general')
+    if (currentItem?.action_type === 'tutor_drill' && isTutorPage) {
+      dismissFocusBlockTimeUp()
+      window.dispatchEvent(new CustomEvent('focus-block:prompt-end-session', { detail: { isLastStep } }))
+      return
+    }
     if (isLastStep) {
       endFocusBlock(true)
       navigate('/tutor')

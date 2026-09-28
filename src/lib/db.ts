@@ -361,6 +361,28 @@ export const DB_SCHEMA = `
     FOREIGN KEY (module_id) REFERENCES syllabus_modules(id) ON DELETE CASCADE
   );
 
+  -- Student-managed Canvas-style ordering of source materials. This is deliberately
+  -- separate from the AI-managed materials.module_id topical association.
+  CREATE TABLE IF NOT EXISTS curriculum_material_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS curriculum_material_group_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    material_id INTEGER NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (group_id) REFERENCES curriculum_material_groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_material_groups_subject_order ON curriculum_material_groups(subject_id, sort_order);
+  CREATE INDEX IF NOT EXISTS idx_curriculum_material_items_group_order ON curriculum_material_group_items(group_id, sort_order);
+
   CREATE TABLE IF NOT EXISTS module_topic_study_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic_id INTEGER NOT NULL,
@@ -385,6 +407,11 @@ export const DB_SCHEMA = `
     cards_generated INTEGER DEFAULT 0,
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
     ended_at TEXT,
+    config_json TEXT,
+    active_elapsed_seconds INTEGER NOT NULL DEFAULT 0,
+    paused_at TEXT,
+    finalization_status TEXT NOT NULL DEFAULT 'open' CHECK(finalization_status IN ('open','pending','applied','unassessed','failed')),
+    finalization_revision INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
@@ -438,6 +465,41 @@ export const DB_SCHEMA = `
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS tutor_assessment_events (
+    id TEXT PRIMARY KEY,
+    session_id INTEGER NOT NULL,
+    topic_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    question_message_id TEXT NOT NULL,
+    answer_message_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('correct','partial','incorrect','unassessed')),
+    assistance_level TEXT NOT NULL CHECK(assistance_level IN ('independent','hinted','worked_example','unknown')),
+    evidence TEXT,
+    confidence REAL,
+    effective_rating INTEGER,
+    policy_version TEXT NOT NULL DEFAULT 'tutor-evidence-v1',
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(session_id, topic_id),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_tutor_assessment_session ON tutor_assessment_events(session_id);
+  CREATE INDEX IF NOT EXISTS idx_tutor_assessment_topic ON tutor_assessment_events(user_id, topic_id, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS tutor_messages (
+    id TEXT PRIMARY KEY,
+    session_id INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+    content TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'text' CHECK(content_type IN ('text','diagram','code')),
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_tutor_messages_session ON tutor_messages(session_id, created_at);
 
   CREATE TABLE IF NOT EXISTS calendar_sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -659,6 +721,20 @@ export const DB_SCHEMA = `
 `
 
 export const MIGRATIONS_SQL = [
+  `CREATE TABLE IF NOT EXISTS curriculum_material_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS curriculum_material_group_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL, material_id INTEGER NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (group_id) REFERENCES curriculum_material_groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_material_groups_subject_order ON curriculum_material_groups(subject_id, sort_order)",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_material_items_group_order ON curriculum_material_group_items(group_id, sort_order)",
   "ALTER TABLE cards ADD COLUMN note_id INTEGER REFERENCES card_notes(id)",
   "ALTER TABLE cards ADD COLUMN cloze_ordinal INTEGER DEFAULT 0",
   "ALTER TABLE cards ADD COLUMN tags TEXT DEFAULT ''",
@@ -671,6 +747,11 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE tutor_sessions ADD COLUMN duration_minutes INTEGER",
   "ALTER TABLE tutor_sessions ADD COLUMN depth_level INTEGER DEFAULT 3",
   "ALTER TABLE tutor_sessions ADD COLUMN never_studied INTEGER DEFAULT 0",
+  "ALTER TABLE tutor_sessions ADD COLUMN config_json TEXT",
+  "ALTER TABLE tutor_sessions ADD COLUMN active_elapsed_seconds INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE tutor_sessions ADD COLUMN paused_at TEXT",
+  "ALTER TABLE tutor_sessions ADD COLUMN finalization_status TEXT NOT NULL DEFAULT 'open' CHECK(finalization_status IN ('open','pending','applied','unassessed','failed'))",
+  "ALTER TABLE tutor_sessions ADD COLUMN finalization_revision INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE materials ADD COLUMN file_size INTEGER",
   "ALTER TABLE materials ADD COLUMN file_path TEXT",
   "ALTER TABLE materials ADD COLUMN tags TEXT DEFAULT ''",
@@ -722,6 +803,42 @@ export const MIGRATIONS_SQL = [
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS tutor_assessment_events (
+    id TEXT PRIMARY KEY,
+    session_id INTEGER NOT NULL,
+    topic_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    question_message_id TEXT NOT NULL,
+    answer_message_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('correct','partial','incorrect','unassessed')),
+    assistance_level TEXT NOT NULL CHECK(assistance_level IN ('independent','hinted','worked_example','unknown')),
+    evidence TEXT,
+    confidence REAL,
+    effective_rating INTEGER,
+    policy_version TEXT NOT NULL DEFAULT 'tutor-evidence-v1',
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(session_id, topic_id),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_tutor_assessment_session ON tutor_assessment_events(session_id)",
+  "CREATE INDEX IF NOT EXISTS idx_tutor_assessment_topic ON tutor_assessment_events(user_id, topic_id, occurred_at)",
+  `CREATE TABLE IF NOT EXISTS tutor_messages (
+    id TEXT PRIMARY KEY,
+    session_id INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+    content TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'text' CHECK(content_type IN ('text','diagram','code')),
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_tutor_messages_session ON tutor_messages(session_id, created_at)",
+  `INSERT OR IGNORE INTO tutor_messages (id, session_id, role, content, content_type, metadata, created_at)
+   SELECT m.id, m.conversation_id, m.role, m.content, m.content_type, m.metadata, m.created_at
+   FROM messages m JOIN tutor_sessions ts ON ts.id = m.conversation_id`,
   // V3.3: Focus Block plan enhancements
   "ALTER TABLE daily_plans ADD COLUMN action_type TEXT DEFAULT 'custom'",
   "ALTER TABLE daily_plans ADD COLUMN learning_objective TEXT",
@@ -1097,4 +1214,3 @@ export function updateLectureStatus(
 export function deleteLecture(db: CascadeDB, id: number): void {
   db.prepare('DELETE FROM lectures WHERE id = ?').run(id)
 }
-

@@ -45,7 +45,7 @@ describe('Tutor Session Topic-SRS Integration', () => {
     db.close()
   })
 
-  test('evaluating a tutor session updates topic_spaced_memory with FSRS rating', async () => {
+  test('a named target without assessment evidence does not update retention', async () => {
     // Create session and messages
     const sessionId = insert(
       db,
@@ -64,13 +64,7 @@ describe('Tutor Session Topic-SRS Integration', () => {
     })
 
     const srsMap = getTopicsRetention(db, userId, subjectId, moduleId)
-    const srsRecord = srsMap.get(topicId)
-
-    expect(srsRecord).toBeDefined()
-    expect(srsRecord?.topicTitle).toBe('Gibbs Free Energy')
-    expect(srsRecord?.reps).toBeGreaterThanOrEqual(1)
-    expect(srsRecord?.retrievability).toBeGreaterThan(0.85)
-    expect(srsRecord?.retentionStatus).toBe('fresh')
+    expect(srsMap.get(topicId)).toBeUndefined()
   })
 
   test('evaluating with targetTopicIds restores decaying 83% topic to 100% and returns updatedTopics', async () => {
@@ -95,13 +89,21 @@ describe('Tutor Session Topic-SRS Integration', () => {
       subjectId, userId, moduleId, 'tutor', 'structured_qa'
     )
     insert(db, 'INSERT INTO conversations (id, subject_id, title) VALUES (?, ?, ?)', sessionId, subjectId, 'Gibbs Free Energy Drill')
-    insert(db, 'INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)', sessionId, 'assistant', 'Explain Gibbs Free Energy in equilibrium.')
-    insert(db, 'INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)', sessionId, 'user', 'At equilibrium delta G is zero and K equals Q.')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'question-1', sessionId, 'assistant', 'Explain Gibbs Free Energy in equilibrium.')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'answer-1', sessionId, 'user', 'At equilibrium delta G is zero and K equals Q.')
 
     // End drill passing targetTopicIds (as sent by our updated TutorSession)
     const evalResult = await evaluateAndSaveSessionMemory(db, sessionId, 'Excellent recall on equilibrium', {
       targetTopicIds: [topicId],
-      moduleId
+      moduleId,
+      assessments: [{
+        topic_id: topicId,
+        question_message_id: 'question-1',
+        answer_message_id: 'answer-1',
+        outcome: 'correct',
+        assistance_level: 'independent',
+        confidence: 0.95
+      }]
     })
 
     expect(evalResult).toBeDefined()
@@ -116,6 +118,70 @@ describe('Tutor Session Topic-SRS Integration', () => {
     expect(updatedRecord?.retrievability).toBe(1.0)
     expect(updatedRecord?.retentionStatus).toBe('fresh')
     expect(updatedRecord?.reps).toBe(3)
+
+    // Re-running finalization cannot apply the same evidence twice.
+    await evaluateAndSaveSessionMemory(db, sessionId, undefined, {
+      targetTopicIds: [topicId],
+      assessments: [{
+        topic_id: topicId,
+        question_message_id: 'question-1',
+        answer_message_id: 'answer-1',
+        outcome: 'correct',
+        assistance_level: 'independent'
+      }]
+    })
+    expect(getTopicsRetention(db, userId, subjectId, moduleId).get(topicId)?.reps).toBe(3)
+  })
+
+  test('assisted correct answers record coverage without advancing retention', async () => {
+    const sessionId = insert(db, 'INSERT INTO tutor_sessions (subject_id, user_id, module_id, session_type, phase) VALUES (?, ?, ?, ?, ?)', subjectId, userId, moduleId, 'tutor', 'structured_qa')
+    insert(db, 'INSERT INTO conversations (id, subject_id, title) VALUES (?, ?, ?)', sessionId, subjectId, 'Assisted drill')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'question-assisted', sessionId, 'assistant', 'After that hint, what does negative delta G mean?')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'answer-assisted', sessionId, 'user', 'It means the process is spontaneous.')
+
+    await evaluateAndSaveSessionMemory(db, sessionId, undefined, {
+      targetTopicIds: [topicId],
+      assessments: [{ topic_id: topicId, question_message_id: 'question-assisted', answer_message_id: 'answer-assisted', outcome: 'correct', assistance_level: 'hinted' }]
+    })
+
+    expect(getTopicsRetention(db, userId, subjectId, moduleId).get(topicId)).toBeUndefined()
+    expect(db.prepare('SELECT COUNT(*) AS count FROM module_topic_study_log WHERE topic_id = ?').get(topicId).count).toBe(1)
+  })
+
+  test('rejects topic IDs owned by another subject', async () => {
+    const otherSubjectId = insert(db, 'INSERT INTO subjects (user_id, name, status) VALUES (?, ?, ?)', userId, 'Physics', 'active')
+    const otherModuleId = insert(db, 'INSERT INTO syllabus_modules (subject_id, title, sort_order) VALUES (?, ?, ?)', otherSubjectId, 'Mechanics', 1)
+    const foreignTopicId = insert(db, 'INSERT INTO module_topics (module_id, title, sort_order) VALUES (?, ?, ?)', otherModuleId, 'Momentum', 1)
+    const sessionId = insert(db, 'INSERT INTO tutor_sessions (subject_id, user_id, module_id, session_type, phase) VALUES (?, ?, ?, ?, ?)', subjectId, userId, moduleId, 'tutor', 'structured_qa')
+    insert(db, 'INSERT INTO conversations (id, subject_id, title) VALUES (?, ?, ?)', sessionId, subjectId, 'Chemistry drill')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'foreign-question', sessionId, 'assistant', 'What is momentum?')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'foreign-answer', sessionId, 'user', 'Mass times velocity.')
+
+    const evaluation = await evaluateAndSaveSessionMemory(db, sessionId, undefined, {
+      targetTopicIds: [foreignTopicId],
+      assessments: [{ topic_id: foreignTopicId, question_message_id: 'foreign-question', answer_message_id: 'foreign-answer', outcome: 'correct', assistance_level: 'independent' }]
+    })
+
+    expect(evaluation?.assessment_status).toBe('unassessed')
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tutor_assessment_events').get().count).toBe(0)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM topic_spaced_memory').get().count).toBe(0)
+  })
+
+  test('rolls back evidence when a scheduling write fails', async () => {
+    const sessionId = insert(db, 'INSERT INTO tutor_sessions (subject_id, user_id, module_id, session_type, phase) VALUES (?, ?, ?, ?, ?)', subjectId, userId, moduleId, 'tutor', 'structured_qa')
+    insert(db, 'INSERT INTO conversations (id, subject_id, title) VALUES (?, ?, ?)', sessionId, subjectId, 'Rollback drill')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'rollback-question', sessionId, 'assistant', 'What does negative delta G indicate?')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'rollback-answer', sessionId, 'user', 'A spontaneous process.')
+    db.exec("CREATE TRIGGER fail_topic_schedule BEFORE INSERT ON topic_spaced_memory BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+
+    await expect(evaluateAndSaveSessionMemory(db, sessionId, undefined, {
+      targetTopicIds: [topicId],
+      assessments: [{ topic_id: topicId, question_message_id: 'rollback-question', answer_message_id: 'rollback-answer', outcome: 'correct', assistance_level: 'independent' }]
+    })).rejects.toThrow('injected failure')
+
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tutor_assessment_events').get().count).toBe(0)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM tutor_session_evaluations').get().count).toBe(0)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM module_topic_study_log').get().count).toBe(0)
   })
 
   test('getTopDueMaintenanceTopics returns all due topics when limit is omitted', async () => {

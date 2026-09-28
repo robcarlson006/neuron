@@ -1,10 +1,11 @@
 import React, { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
 import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
 
 export default function FocusBlockTimerBanner(): React.JSX.Element | null {
   const navigate = useNavigate()
+  const location = useLocation()
   const {
     user,
     focusBlock,
@@ -47,7 +48,7 @@ export default function FocusBlockTimerBanner(): React.JSX.Element | null {
 
   async function handleNextOrFinish(): Promise<void> {
     if (!focusBlock) return
-    const isTutorPage = window.location.pathname.startsWith('/tutor/') && !window.location.pathname.includes('/general')
+    const isTutorPage = location.pathname.startsWith('/tutor/') && !location.pathname.includes('/general')
     if (currentItem.action_type === 'tutor_drill' && isTutorPage) {
       // Prompt tutor session to show the End Session modal with flashcards option
       window.dispatchEvent(new CustomEvent('focus-block:prompt-end-session', { detail: { isLastStep } }))

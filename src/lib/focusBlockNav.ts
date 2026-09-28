@@ -17,6 +17,7 @@ export async function navigateToFocusBlockItem(
 
   if (item.action_type === 'tutor_drill') {
     let depthLevel: 1 | 2 | 3 | 4 | 5 = 3
+    let targetTopicId: number | undefined
 
     if (userId && window.electronAPI?.getConceptMastery) {
       try {
@@ -48,11 +49,30 @@ export async function navigateToFocusBlockItem(
       }
     }
 
+    if (item.target_topic && window.electronAPI?.syllabusListModules && window.electronAPI?.syllabusListTopics) {
+      try {
+        const modules = await window.electronAPI.syllabusListModules(item.subject_id)
+        const matches: number[] = []
+        for (const module of modules) {
+          const topics = await window.electronAPI.syllabusListTopics(module.id)
+          for (const topic of topics) {
+            if (topic.title.trim().toLowerCase() === item.target_topic.trim().toLowerCase()) matches.push(topic.id)
+          }
+        }
+        if (matches.length === 1) targetTopicId = matches[0]
+      } catch (err) {
+        console.warn('Failed to resolve focus block topic identity:', err)
+      }
+    }
+
     const config: TutorSessionConfig = {
       duration_minutes: item.estimated_minutes || 15,
       depth_level: depthLevel,
       never_studied: false,
-      target_topic: item.target_topic || undefined
+      target_topic: item.target_topic || undefined,
+      target_topics: item.target_topic ? [item.target_topic] : undefined,
+      target_topic_id: targetTopicId,
+      target_topic_ids: targetTopicId ? [targetTopicId] : undefined
     }
 
     navigate(`/tutor/${item.subject_id}?config=${encodeURIComponent(JSON.stringify(config))}`)

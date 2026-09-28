@@ -87,6 +87,22 @@ describe('KnowledgeGraphView', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/study/1?concept=Derivatives')
   })
 
+  it('routes a syllabus topic to its stable topic ID scope', () => {
+    render(
+      <KnowledgeGraphView
+        subjectId={1}
+        modules={[{ id: 3, subject_id: 1, title: 'Foundations', sort_order: 1, topics: [
+          { id: 31, module_id: 3, title: 'Algebra', sort_order: 1 }
+        ] } as any]}
+        cards={[{ ...cards[0], id: 131, topic_id: 31, concept: 'Algebra' }]}
+      />
+    )
+
+    fireEvent.click(screen.getByText('Algebra'))
+    fireEvent.click(screen.getByText(/Study Algebra Cards/i))
+    expect(mockNavigate).toHaveBeenCalledWith('/study/1?topicId=31')
+  })
+
   it('opens add dependency modal on "+ Link Dependency" button click', () => {
     render(
       <KnowledgeGraphView
@@ -146,4 +162,3 @@ describe('KnowledgeGraphView', () => {
     }
   })
 })
-

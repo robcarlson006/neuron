@@ -117,67 +117,15 @@ export function computeEstimatedMinutesForRetention(retrievabilityScore: number)
   return Math.min(30, Math.max(10, 15 + extraMinutes))
 }
 
-/**
- * Ensures existing completed topics have corresponding topic_spaced_memory rows.
- * Backfills any studied topic that is missing an SRS record.
- */
+/** Kept for compatibility; coverage-only history must not manufacture retention evidence. */
 export function backfillTopicSpacedMemories(
-  db: DatabaseLike,
-  userId: number,
-  subjectId: number
+  _db: DatabaseLike,
+  _userId: number,
+  _subjectId: number
 ): number {
-  try {
-    const missing = db.prepare(`
-      SELECT sl.topic_id, sl.studied_at, mt.module_id, sm.subject_id
-      FROM module_topic_study_log sl
-      JOIN module_topics mt ON mt.id = sl.topic_id
-      JOIN syllabus_modules sm ON sm.id = mt.module_id
-      WHERE sl.user_id = ? AND sm.subject_id = ?
-        AND NOT EXISTS (
-          SELECT 1 FROM topic_spaced_memory tsm
-          WHERE tsm.topic_id = sl.topic_id AND tsm.user_id = ?
-        )
-    `).all(userId, subjectId, userId) as Array<{
-      topic_id: number
-      studied_at: string
-      module_id: number
-      subject_id: number
-    }>
-
-    let backfilled = 0
-    for (const item of missing) {
-      const stability = 3.0 // Standard initial stability for a studied curriculum topic
-      const difficulty = 5.0
-      const studiedAt = item.studied_at || new Date().toISOString()
-      const r = computeTopicRetrievability(stability, studiedAt)
-      
-      const dueDate = new Date(new Date(studiedAt).getTime() + stability * 86400000)
-        .toISOString()
-        .split('T')[0]
-      const status = classifyRetentionStatus(r, dueDate)
-
-      db.prepare(`
-        INSERT OR IGNORE INTO topic_spaced_memory
-        (topic_id, user_id, subject_id, stability, difficulty, retrievability, reps, lapses, last_studied_at, next_review_due, status)
-        VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
-      `).run(
-        item.topic_id,
-        userId,
-        subjectId,
-        stability,
-        difficulty,
-        r,
-        studiedAt,
-        dueDate,
-        status
-      )
-      backfilled++
-    }
-    return backfilled
-  } catch (err) {
-    console.warn('Failed to backfill topic spaced memories:', err)
-    return 0
-  }
+  // A coverage/study-log entry does not prove a successful recall. Historical rows
+  // without assessment evidence remain unassessed instead of receiving synthetic FSRS state.
+  return 0
 }
 
 /**
@@ -189,9 +137,6 @@ export function getTopicsRetention(
   subjectId: number,
   moduleId?: number
 ): Map<number, TopicRetentionMetrics> {
-  // Ensure existing studied topics are backfilled
-  backfillTopicSpacedMemories(db, userId, subjectId)
-
   const query = moduleId
     ? `
       SELECT tsm.*, mt.title as topic_title, mt.module_id, sm.title as module_title

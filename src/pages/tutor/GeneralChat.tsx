@@ -27,12 +27,15 @@ export default function GeneralChat(): React.JSX.Element {
   const [sessionId, setSessionId] = useState<number | null>(routeSessionId ? Number(routeSessionId) : null)
 
   const streamingRef = useRef('')
+  const sessionIdRef = useRef<number | null>(sessionId)
+  const activeRequestIdRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isNearBottom = useRef(true)
   const [focusKey, setFocusKey] = useState(0)
 
   const activeSubjects = subjects.filter(s => s.status !== 'archived')
+  sessionIdRef.current = sessionId
 
   // ── Keyboard shortcut to toggle sidebar (Cmd+H / Ctrl+H) ──
   useEffect(() => {
@@ -108,6 +111,8 @@ export default function GeneralChat(): React.JSX.Element {
   // ── Streaming listener ──
   useEffect(() => {
     const cleanup = window.electronAPI.onTutorChunk((chunk) => {
+      if (chunk.conversationId && chunk.conversationId !== sessionIdRef.current) return
+      if (chunk.requestId && chunk.requestId !== activeRequestIdRef.current) return
       if (chunk.type === 'text') {
         streamingRef.current += chunk.content
         setStreamingContent(streamingRef.current)
@@ -117,9 +122,10 @@ export default function GeneralChat(): React.JSX.Element {
         streamingRef.current = ''
         setStreamingContent('')
 
-        if (finalContent && sessionId) {
+        const activeSessionId = chunk.conversationId || sessionIdRef.current
+        if (finalContent && activeSessionId) {
           window.electronAPI.tutorSaveMessage({
-            session_id: sessionId,
+            session_id: activeSessionId,
             role: 'assistant',
             content: finalContent,
             content_type: 'text'
@@ -127,15 +133,17 @@ export default function GeneralChat(): React.JSX.Element {
 
           setMessages(prev => [...prev, {
             id: Date.now().toString(),
-            conversation_id: sessionId,
+            conversation_id: activeSessionId,
             role: 'assistant',
             content: finalContent,
             content_type: 'text',
             created_at: new Date().toISOString()
           }])
         }
+        activeRequestIdRef.current = null
         setFocusKey(prev => prev + 1)
       } else if (chunk.type === 'error') {
+        activeRequestIdRef.current = null
         setSending(false)
         streamingRef.current = ''
         setStreamingContent('')
@@ -148,11 +156,6 @@ export default function GeneralChat(): React.JSX.Element {
 
   // ── Send ──
   async function handleSend(message: string): Promise<void> {
-    if (!navigator.onLine) {
-      addToast({ type: 'error', title: 'No Internet Connection', message: 'Check your connection and try again.' })
-      return
-    }
-
     let convId = sessionId
     if (!convId) {
       if (!user) {
@@ -170,6 +173,9 @@ export default function GeneralChat(): React.JSX.Element {
     }
 
     setSending(true)
+    sessionIdRef.current = convId
+    const requestId = `${convId}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    activeRequestIdRef.current = requestId
 
     // Build context from selected subject
     let attachedContent = attachedFile?.content || ''
@@ -203,12 +209,18 @@ export default function GeneralChat(): React.JSX.Element {
     }
 
     // Save user message
-    const userMsg = await window.electronAPI.tutorSaveMessage({
-      session_id: convId,
-      role: 'user',
-      content: message,
-      content_type: 'text'
-    }) as Message
+    let userMsg: Message
+    try {
+      userMsg = await window.electronAPI.tutorSaveMessage({
+        session_id: convId,
+        role: 'user',
+        content: message,
+        content_type: 'text'
+      }) as Message
+    } catch (error) {
+      setSending(false)
+      throw error
+    }
 
     setMessages(prev => [...prev, userMsg])
 
@@ -218,15 +230,18 @@ export default function GeneralChat(): React.JSX.Element {
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
     const timeoutId = setTimeout(() => {
+      window.electronAPI.tutorCancelStream(convId, requestId).catch(console.error)
       setSending(false)
       streamingRef.current = ''
       setStreamingContent('')
+      if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null
       addToast({ type: 'error', title: 'Request timed out', message: 'The AI took too long.' })
     }, 120000)
 
     try {
       await window.electronAPI.tutorStreamChat({
         sessionId: convId,
+        requestId,
         subjectId: selectedSubjectId || 0,
         message,
         sessionType: 'general',
@@ -276,6 +291,13 @@ export default function GeneralChat(): React.JSX.Element {
     } catch (err) {
       console.error('File attach error:', err)
     }
+  }
+
+  async function handleStopResponse(): Promise<void> {
+    const requestId = activeRequestIdRef.current
+    const activeSessionId = sessionIdRef.current
+    if (!requestId || !activeSessionId) return
+    await window.electronAPI.tutorCancelStream(activeSessionId, requestId)
   }
 
   async function handleSelectFromLibrary(): Promise<void> {
@@ -449,9 +471,11 @@ export default function GeneralChat(): React.JSX.Element {
       <div className="flex-shrink-0">
         <ChatInput
           onSend={handleSend}
+          onStop={sending ? handleStopResponse : undefined}
           onAttachFile={handleAttachFile}
           onSelectFromLibrary={handleSelectFromLibrary}
           disabled={sending}
+          draftKey={sessionId ? `general:${sessionId}` : 'general:new'}
           attachedFile={attachedFile?.name || null}
           onClearAttachment={() => setAttachedFile(null)}
           refocusKey={focusKey}

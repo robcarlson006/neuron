@@ -148,6 +148,38 @@ describe('conceptGraphEngine', () => {
       expect(graph.nodes.length).toBe(3)
       expect(graph.edges.length).toBe(3)
     })
+
+    it('keeps inferred curriculum structure from gating study and counts each card once', () => {
+      const graph = buildConceptGraph({
+        subjectId: 1,
+        modules: [{
+          id: 1, subject_id: 1, title: 'Foundations', sort_order: 1,
+          topics: [{ id: 11, module_id: 1, title: 'Algebra', sort_order: 1, card_count: 1 }]
+        } as any],
+        cards: [{ id: 7, subject_id: 1, type: 'flashcard', front: 'Q', back: 'A', is_manual: 0,
+          concept: 'Algebra', tags: 'Algebra', topic_id: 11, created_at: '2026-01-01' } as Card]
+      })
+
+      const algebra = graph.nodes.find(node => node.id === 'algebra')!
+      expect(algebra.cardCount).toBe(1)
+      expect(algebra.prerequisites).toHaveLength(0)
+      expect(graph.edges.some(edge => edge.relationship === 'contains' && edge.origin === 'inferred')).toBe(true)
+    })
+
+    it('uses the same assessed mastery threshold for prerequisite edges and blocking', () => {
+      const graph = buildConceptGraph({
+        subjectId: 1,
+        dependencies: [{ subject_id: 1, prerequisite_concept: 'A', target_concept: 'B' }],
+        concepts: [
+          { id: 1, user_id: 1, subject_id: 1, concept: 'A', mastery_prob: 0.49, observations: 1, updated_at: '2026-01-01' },
+          { id: 2, user_id: 1, subject_id: 1, concept: 'B', mastery_prob: 0.2, observations: 1, updated_at: '2026-01-01' }
+        ]
+      })
+      expect(graph.edges[0].isPrerequisiteMet).toBe(false)
+      expect(graph.nodes.find(node => node.id === 'b')?.status).toBe('blocked')
+      expect(graph.edges[0].relationship).toBe('prerequisite')
+      expect(graph.edges[0].origin).toBe('saved')
+    })
   })
 
   describe('getImpactedDownstreamConcepts & findShortestLearningPath', () => {
@@ -318,4 +350,3 @@ describe('conceptGraphEngine', () => {
     })
   })
 })
-

@@ -47,7 +47,7 @@ describe('StudySession Progress Saving', () => {
     jest.clearAllMocks()
     localStorage.clear()
 
-    mockUseAppStore.mockReturnValue({
+    const store = {
       user: mockUser,
       subjects: [{ id: 1, user_id: 1, name: 'Biology', status: 'active' as const, created_at: '' }],
       theme: 'light',
@@ -62,7 +62,9 @@ describe('StudySession Progress Saving', () => {
       updateSubject: jest.fn(),
       removeSubject: jest.fn(),
       addSubject: jest.fn()
-    })
+    }
+    mockUseAppStore.mockImplementation(((selector?: (state: typeof store) => unknown) =>
+      selector ? selector(store) : store) as typeof useAppStore)
 
     const api = (window as any).electronAPI
     api.getMeta.mockResolvedValue('false')
@@ -104,6 +106,25 @@ describe('StudySession Progress Saving', () => {
     expect(api.startStudySession).toHaveBeenCalledWith(1, 1)
   })
 
+  it('opens a focused queue for the selected graph concept', async () => {
+    const api = (window as any).electronAPI
+    api.getDueCards.mockResolvedValue([
+      { ...mockCard1, concept: 'Photosynthesis' },
+      { ...mockCard2, concept: 'Cell Respiration' }
+    ])
+
+    render(
+      <MemoryRouter initialEntries={['/study/1?concept=Photosynthesis']}>
+        <Routes>
+          <Route path="/study/:subjectId" element={<StudySession />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => expect(screen.getByText('What is the powerhouse of the cell?')).toBeInTheDocument())
+    expect(screen.queryByText('Explain active recall')).not.toBeInTheDocument()
+  })
+
   it('persists reviews in folder mode and does not skip processReview', async () => {
     render(
       <MemoryRouter initialEntries={['/study/1?folderId=5']}>
@@ -140,7 +161,7 @@ describe('StudySession Progress Saving', () => {
     expect(api.endStudySession).toHaveBeenCalledWith(999, 1, 1)
 
     // And local storage should have saved progress
-    const storageKey = 'study-session-progress-1-1-5-study'
+    const storageKey = 'study-session-progress-1-1-5-all-any-study'
     const saved = localStorage.getItem(storageKey)
     expect(saved).not.toBeNull()
     const parsed = JSON.parse(saved!)
@@ -192,7 +213,7 @@ describe('StudySession Progress Saving', () => {
   })
 
   it('resumes an in-progress session from localStorage', async () => {
-    const storageKey = 'study-session-progress-1-1-all-study'
+    const storageKey = 'study-session-progress-1-1-all-all-any-study'
     const savedProgress = {
       v: 1,
       subjectId: '1',

@@ -52,6 +52,9 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     subjectName: string
     materialId?: number
     materialName?: string
+    initialMaterialIds?: number[]
+    initialGroupId?: number
+    initialGroupTitle?: string
     initialTopic?: string
     initialTopics?: string[]
     moduleId?: number
@@ -420,6 +423,66 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         spaced_review_topics: selectedTopics
       }
       navigate(`/tutor/${subjectId}?config=${encodeURIComponent(JSON.stringify(config))}`)
+    }
+  }
+
+  function handleStartTutorMaterials(groupId?: number, materialIds?: number[], groupTitle?: string, mode?: string): void {
+    if (subject) {
+      setShowConfigModal({
+        subjectId,
+        subjectName: subject.name,
+        initialMaterialIds: materialIds,
+        initialGroupId: groupId,
+        initialGroupTitle: groupTitle,
+        initialMode: (mode as any) || 'material'
+      })
+    }
+  }
+
+  function handleStartSpacedReviewMaterials(groupId?: number, materialIds?: number[], groupTitle?: string): void {
+    if (subject) {
+      const config: import('../types').TutorSessionConfig = {
+        duration_minutes: 15,
+        depth_level: 3,
+        never_studied: false,
+        group_id: groupId,
+        group_title: groupTitle,
+        target_material_ids: materialIds,
+        material_ids: materialIds,
+        target_topic: groupTitle ? `Spaced Review: ${groupTitle}` : undefined,
+        is_spaced_review: true
+      }
+      navigate(`/tutor/${subjectId}?config=${encodeURIComponent(JSON.stringify(config))}`)
+    }
+  }
+
+  async function handleGenerateCardsForMaterials(groupId: number, materialIds: number[]): Promise<void> {
+    if (!materialIds || materialIds.length === 0) return
+    setLoadingCards(prev => ({ ...prev, [groupId]: true }))
+    try {
+      const result = await window.electronAPI.cardsBatchGenerate(subjectId, materialIds)
+      if (result.success) {
+        addToast({
+          type: 'success',
+          title: 'Cards Generated',
+          message: `Generated ${result.totalGenerated} flashcard${result.totalGenerated === 1 ? '' : 's'} across ${result.results.filter(r => r.success).length} materials!`
+        })
+        await loadAllData()
+      } else {
+        addToast({
+          type: 'error',
+          title: 'Generation Failed',
+          message: 'Failed to generate cards for selected materials'
+        })
+      }
+    } catch (err: any) {
+      addToast({
+        type: 'error',
+        title: 'Generation Error',
+        message: err?.message || 'Unknown error'
+      })
+    } finally {
+      setLoadingCards(prev => ({ ...prev, [groupId]: false }))
     }
   }
 
@@ -1252,7 +1315,16 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             </div>
           </div>
 
-          {curriculumView === 'materials' ? <MaterialCurriculumView subjectId={subjectId} /> : <>
+          {curriculumView === 'materials' ? (
+            <MaterialCurriculumView
+              subjectId={subjectId}
+              subjectName={subject?.name}
+              onStartTutor={handleStartTutorMaterials}
+              onStartSpacedReview={handleStartSpacedReviewMaterials}
+              onGenerateCards={handleGenerateCardsForMaterials}
+              loadingCards={loadingCards}
+            />
+          ) : <>
 
           {/* Syllabus Regeneration Loading Bar */}
           {isRegeneratingSyllabus && (
@@ -2132,6 +2204,9 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           subjectName={showConfigModal.subjectName}
           materialId={showConfigModal.materialId}
           materialName={showConfigModal.materialName}
+          initialMaterialIds={showConfigModal.initialMaterialIds}
+          initialGroupId={showConfigModal.initialGroupId}
+          initialGroupTitle={showConfigModal.initialGroupTitle}
           initialTopic={showConfigModal.initialTopic}
           initialTopics={showConfigModal.initialTopics}
           initialModuleId={showConfigModal.moduleId}

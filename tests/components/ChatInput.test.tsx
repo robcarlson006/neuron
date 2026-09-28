@@ -1,10 +1,10 @@
 import React from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import ChatInput from '../../src/components/tutor/ChatInput'
 
 describe('ChatInput Component', () => {
-  it('renders input area and sends messages on Enter', () => {
+  it('renders input area and sends messages on Enter', async () => {
     const handleSend = jest.fn()
     render(<ChatInput onSend={handleSend} placeholder="Type a message..." />)
 
@@ -13,6 +13,33 @@ describe('ChatInput Component', () => {
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
 
     expect(handleSend).toHaveBeenCalledWith('Hello Tutor')
+    await waitFor(() => expect(textarea).toHaveValue(''))
+  })
+
+  it('does not send Enter while an IME composition is active', () => {
+    const handleSend = jest.fn()
+    render(<ChatInput onSend={handleSend} />)
+    const textarea = screen.getByRole('textbox')
+    fireEvent.change(textarea, { target: { value: '構成中' } })
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', isComposing: true })
+    expect(handleSend).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft when saving the message fails', async () => {
+    const handleSend = jest.fn().mockRejectedValue(new Error('save failed'))
+    render(<ChatInput onSend={handleSend} />)
+    const textarea = screen.getByRole('textbox')
+    fireEvent.change(textarea, { target: { value: 'Please keep this draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('draft has been kept'))
+    expect(textarea).toHaveValue('Please keep this draft')
+  })
+
+  it('shows a stop action while a response is streaming', () => {
+    const onStop = jest.fn()
+    render(<ChatInput onSend={jest.fn()} onStop={onStop} disabled />)
+    fireEvent.click(screen.getByRole('button', { name: 'Stop response' }))
+    expect(onStop).toHaveBeenCalledTimes(1)
   })
 
   it('renders live math preview with KaTeX when user types raw exponent like x^2', () => {

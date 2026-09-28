@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell, protocol, net, Menu, MenuItem } from 'electron'
 import { join } from 'path'
+import { mkdirSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import Database from 'better-sqlite3'
@@ -23,6 +24,13 @@ import { LectureNotesService } from './ipc/lectureNotesService'
 import { LocalWhisperService } from './ipc/localWhisperService'
 import { TranscriptionService } from './ipc/transcriptionService'
 import { FolderSyncService } from './ipc/folderSyncService'
+
+// E2E runs must never open or mutate the user's normal study database.
+const testUserDataPath = process.env.NEURON_TEST_USER_DATA_DIR
+if (testUserDataPath) {
+  mkdirSync(testUserDataPath, { recursive: true })
+  app.setPath('userData', testUserDataPath)
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -273,7 +281,7 @@ app.whenReady().then(async () => {
   registerClassHandlers()
   setCalendarDatabase(db)
   registerCalendarHandlers()
-  registerUpdaterHandlers(() => mainWindow)
+  if (!testUserDataPath) registerUpdaterHandlers(() => mainWindow)
   setLocalEngineWindowGetter(() => mainWindow)
   registerLocalEngineHandlers()
   setFolderDatabase(db)
@@ -305,7 +313,7 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
-  FolderSyncService.init(db, () => mainWindow)
+  if (!testUserDataPath) FolderSyncService.init(db, () => mainWindow)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -325,4 +333,3 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   stopEngine()
 })
-

@@ -28,7 +28,12 @@ function ClassRedirect(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
   return <Navigate to={`/subject/${id}`} replace />
 }export default function App(): React.JSX.Element {
-  const { user, setUser, setSubjects, theme, showDemo, setShowDemo } = useAppStore()
+  const user = useAppStore(state => state.user)
+  const setUser = useAppStore(state => state.setUser)
+  const setSubjects = useAppStore(state => state.setSubjects)
+  const theme = useAppStore(state => state.theme)
+  const showDemo = useAppStore(state => state.showDemo)
+  const setShowDemo = useAppStore(state => state.setShowDemo)
   const [loading, setLoading] = useState(true)
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)

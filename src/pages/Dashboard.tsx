@@ -6,7 +6,7 @@ import PomodoroWidget from '../components/PomodoroWidget'
 import FocusModeModal from '../components/FocusModeModal'
 import GamificationPanel from '../components/GamificationPanel'
 import CardImportModal from '../components/CardImportModal'
-import type { SubjectWithStats, Deadline, CardSchedule } from '../types'
+import type { SubjectWithStats } from '../types'
 
 const FLASHCARD_SECONDS = 20
 const ACTIVE_RECALL_SECONDS = 60
@@ -26,11 +26,15 @@ export default function Dashboard({
   onNewSubject?: () => void
 }): React.JSX.Element {
   const handleOpenSubjectWizard = onNewSubject || onNewClass
-  const { user, subjects, removeSubject, updateSubject } = useAppStore()
+  const user = useAppStore(state => state.user)
+  const subjects = useAppStore(state => state.subjects)
+  const removeSubject = useAppStore(state => state.removeSubject)
+  const updateSubject = useAppStore(state => state.updateSubject)
   const [subjectStats, setSubjectStats] = useState<SubjectWithStats[]>([])
   const [totalDueToday, setTotalDueToday] = useState(0)
   const [flashcardsDue, setFlashcardsDue] = useState(0)
   const [recallDue, setRecallDue] = useState(0)
+  const [clozeDue, setClozeDue] = useState(0)
   const [estimatedMinutes, setEstimatedMinutes] = useState(0)
   const [streak, setStreak] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -47,22 +51,23 @@ export default function Dashboard({
     if (!user) return
     setLoading(true)
     try {
-      const allDue = await window.electronAPI.getDueCards(user.id)
-      setTotalDueToday(allDue.length)
-
-      const fc = allDue.filter((c: { type: string }) => c.type === 'flashcard').length
-      const rc = allDue.filter((c: { type: string }) => c.type === 'active_recall').length
+      const aggregate = await window.electronAPI.getDashboardAggregate(user.id)
+      const dueCount = (type: string): number => aggregate.dueByType.find(item => item.type === type)?.count ?? 0
+      const fc = dueCount('flashcard')
+      const rc = dueCount('active_recall')
+      const cloze = dueCount('cloze')
+      setTotalDueToday(fc + rc + cloze)
       setFlashcardsDue(fc)
       setRecallDue(rc)
+      setClozeDue(cloze)
 
-      const totalSeconds = fc * FLASHCARD_SECONDS + rc * ACTIVE_RECALL_SECONDS
+      const totalSeconds = fc * FLASHCARD_SECONDS + (rc + cloze) * ACTIVE_RECALL_SECONDS
       setEstimatedMinutes(Math.ceil(totalSeconds / 60))
 
-      const streakData = await window.electronAPI.getStreakData(user.id)
       let currentStreak = 0
       const today = new Date().toISOString().split('T')[0]
       let checkDate = today
-      for (const d of streakData) {
+      for (const d of aggregate.streakDates) {
         if (d.date === checkDate) {
           currentStreak++
           const prev = new Date(checkDate)
@@ -74,17 +79,11 @@ export default function Dashboard({
       }
       setStreak(currentStreak)
 
-      const deadlines = await window.electronAPI.getDeadlines()
-      const stats: SubjectWithStats[] = await Promise.all(
-        subjects.map(async (subject) => {
-          const cards = await window.electronAPI.getCards(subject.id)
-          const schedules = await window.electronAPI.getAllSchedules(user.id, subject.id) as CardSchedule[]
-          const dueCards = allDue.filter((c: { subject_id: number }) => c.subject_id === subject.id)
+      const stats: SubjectWithStats[] = subjects.map((subject) => {
+          const totals = aggregate.subjectTotals.find(row => row.subject_id === subject.id)
+          const masteryPercent = totals?.scheduled_cards ? (totals.mastered_cards / totals.scheduled_cards) * 100 : 0
 
-          const masteredCount = schedules.filter(s => s.interval >= 21).length
-          const masteryPercent = schedules.length > 0 ? (masteredCount / schedules.length) * 100 : 0
-
-          const subjectDeadlines = (deadlines as Deadline[]).filter(d => d.subject_id === subject.id)
+          const subjectDeadlines = aggregate.deadlines.filter(d => d.subject_id === subject.id)
           const nextDeadline = subjectDeadlines.sort(
             (a, b) => new Date(a.deadline_date).getTime() - new Date(b.deadline_date).getTime()
           )[0]
@@ -92,12 +91,11 @@ export default function Dashboard({
           return {
             subject,
             masteryPercent,
-            cardsDue: dueCards.length,
+            cardsDue: totals?.due_cards ?? 0,
             nextDeadline,
-            totalCards: cards.length
+            totalCards: totals?.total_cards ?? 0
           }
         })
-      )
       setSubjectStats(stats)
     } catch (err) {
       console.error('Dashboard load error:', err)
@@ -224,6 +222,12 @@ export default function Dashboard({
                     <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
                       <span className="w-2 h-2 rounded-full bg-indigo-400 flex-shrink-0" />
                       {recallDue} active recall
+                    </span>
+                  )}
+                  {clozeDue > 0 && (
+                    <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
+                      {clozeDue} cloze
                     </span>
                   )}
                   {estimatedMinutes > 0 && (

@@ -136,19 +136,23 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     layoutMode = 'hierarchical'
   } = params
 
-  // 1. Merge explicit dependencies with curriculum-inferred dependencies
-  const allDeps: ConceptDependency[] = [...dependencies]
-  const explicitDepKeys = new Set(
-    dependencies.map(d => `${normalizeConceptKey(d.prerequisite_concept)}->${normalizeConceptKey(d.target_concept)}`)
-  )
-
-  if (modules.length > 0) {
-    const inferred = inferDependenciesFromCurriculum(modules)
-    for (const inf of inferred) {
-      const key = `${normalizeConceptKey(inf.prerequisite_concept)}->${normalizeConceptKey(inf.target_concept)}`
-      if (!explicitDepKeys.has(key)) {
-        allDeps.push(inf)
-      }
+  // Saved edges are the only edges that assert a prerequisite. Curriculum order
+  // and parent/child relationships are useful context, but do not gate study.
+  const allDeps: Array<ConceptDependency & { relationship: 'prerequisite' | 'contains' | 'related'; origin: 'saved' | 'inferred' }> = dependencies
+    .filter(dep => dep.subject_id === params.subjectId)
+    .map(dep => ({ ...dep, relationship: 'prerequisite', origin: 'saved' }))
+  const explicitDepKeys = new Set(allDeps.map(d => `prerequisite:${normalizeConceptKey(d.prerequisite_concept)}->${normalizeConceptKey(d.target_concept)}`))
+  const addInferred = (dep: ConceptDependency, relationship: 'contains' | 'related') => {
+    if (dep.subject_id !== params.subjectId) return
+    const key = `${relationship}:${normalizeConceptKey(dep.prerequisite_concept)}->${normalizeConceptKey(dep.target_concept)}`
+    if (explicitDepKeys.has(key)) return
+    explicitDepKeys.add(key)
+    allDeps.push({ ...dep, relationship, origin: 'inferred' })
+  }
+  for (const dep of inferDependenciesFromCurriculum(modules)) addInferred(dep, 'related')
+  for (const mod of modules) {
+    for (const topic of mod.topics ?? []) {
+      addInferred({ subject_id: mod.subject_id, prerequisite_concept: mod.title, target_concept: topic.title, weight: 1 }, 'contains')
     }
   }
 
@@ -199,7 +203,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
         topicIdMap.set(top.id, { title: top.title, moduleTitle: mod.title, moduleId: mod.id })
         const topNode = getOrCreateNode(top.title, mod.title, mod.id, top.id)
         if (topNode.layer === undefined) topNode.layer = mIdx * 2 + 1 + Math.floor(tIdx / 2)
-        if (top.card_count) topNode.cardCount += top.card_count
+        if (top.card_count && cards.length === 0) topNode.cardCount += top.card_count
         if (top.retrievability !== undefined && top.retrievability > 0 && topNode.observations === 0) {
           topNode.masteryProb = Math.min(Math.max(top.retrievability, 0), 1)
           topNode.observations = 1
@@ -218,6 +222,8 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
 
   // Register concepts and link them with topics/modules from cards
   for (const card of cards) {
+    if (card.subject_id !== params.subjectId) continue
+    const countedNodeIds = new Set<string>()
     if (card.concept && card.concept.trim()) {
       const rawConcept = card.concept.trim()
       let associatedCat: string | undefined
@@ -231,24 +237,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
         associatedModId = topInfo.moduleId
         associatedTopId = card.topic_id
 
-        const topKey = normalizeConceptKey(topInfo.title)
-        const conceptKey = normalizeConceptKey(rawConcept)
-        if (topKey !== conceptKey) {
-          const edgeKey = `${topKey}->${conceptKey}`
-          if (!explicitDepKeys.has(edgeKey)) {
-            allDeps.push({
-              subject_id: card.subject_id,
-              prerequisite_concept: topInfo.title,
-              target_concept: rawConcept,
-              weight: 0.85
-            })
-            explicitDepKeys.add(edgeKey)
-          }
-        }
+        addInferred({ subject_id: card.subject_id, prerequisite_concept: topInfo.title, target_concept: rawConcept, weight: 0.85 }, 'contains')
       }
 
       const node = getOrCreateNode(rawConcept, associatedCat, associatedModId, associatedTopId)
-      node.cardCount += 1
+      countedNodeIds.add(node.id)
     }
 
     // Only match tags if they correspond to an existing topic or concept (avoid noise from random tags)
@@ -258,9 +251,13 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
         const tagKey = normalizeConceptKey(t)
         if (nodeMap.has(tagKey)) {
           const existingNode = nodeMap.get(tagKey)!
-          existingNode.cardCount += 1
+          countedNodeIds.add(existingNode.id)
         }
       }
+    }
+    for (const nodeId of countedNodeIds) {
+      const node = nodeMap.get(nodeId)
+      if (node) node.cardCount += 1
     }
   }
 
@@ -283,26 +280,28 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
       targetNode.category = sourceNode.category
     }
 
-    const edgeKey = `${sourceKey}->${targetKey}`
+    const edgeKey = `${dep.relationship}:${sourceKey}->${targetKey}`
     if (!edgeSet.has(edgeKey)) {
       edgeSet.add(edgeKey)
 
-      if (!sourceNode.dependents.includes(targetKey)) {
+      if (dep.relationship === 'prerequisite' && !sourceNode.dependents.includes(targetKey)) {
         sourceNode.dependents.push(targetKey)
       }
-      if (!targetNode.prerequisites.includes(sourceKey)) {
+      if (dep.relationship === 'prerequisite' && !targetNode.prerequisites.includes(sourceKey)) {
         targetNode.prerequisites.push(sourceKey)
       }
 
       // Is prerequisite met? (Prerequisite node has mastery >= 0.50 or observations >= 3 with mastery >= 0.45)
-      const isMet = sourceNode.masteryProb >= 0.50 || (sourceNode.observations >= 3 && sourceNode.masteryProb >= 0.45)
+      const isMet = sourceNode.observations === 0 || sourceNode.masteryProb >= 0.50
 
       edgeList.push({
         id: edgeKey,
         source: sourceKey,
         target: targetKey,
         weight: dep.weight ?? 1.0,
-        isPrerequisiteMet: isMet
+        isPrerequisiteMet: isMet,
+        relationship: dep.relationship,
+        origin: dep.origin
       })
     }
   }
@@ -315,7 +314,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
   for (const node of nodes) {
     const hasUnmetPrereq = node.prerequisites.some(pKey => {
       const pNode = nodeMap.get(pKey)
-      return !pNode || pNode.masteryProb < 0.50
+      return Boolean(pNode && pNode.observations > 0 && pNode.masteryProb < 0.50)
     })
 
     if (hasUnmetPrereq && node.masteryProb < 0.50) {
@@ -530,8 +529,10 @@ export function removeOverlaps(
           v.y = vy + shiftY
           moved = true
         } else if (normDistSq <= 1e-4) {
-          const jitterX = (Math.random() - 0.5) * 15 * damping
-          const jitterY = (Math.random() - 0.5) * 15 * damping
+          // Deterministic separation keeps the layout stable across mastery refreshes.
+          const direction = ((i * 31 + j * 17) % 2 === 0) ? 1 : -1
+          const jitterX = direction * 6 * damping
+          const jitterY = -direction * 6 * damping
           u.x = ux - jitterX
           u.y = uy - jitterY
           v.x = vx + jitterX

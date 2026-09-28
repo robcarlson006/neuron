@@ -21,6 +21,9 @@ interface SessionConfigModalProps {
   subjectName: string
   materialId?: number
   materialName?: string
+  initialMaterialIds?: number[]
+  initialGroupId?: number
+  initialGroupTitle?: string
   initialTopic?: string
   initialTopics?: string[]
   initialModuleId?: number
@@ -35,6 +38,9 @@ export default function SessionConfigModal({
   subjectName,
   materialId: propMaterialId,
   materialName: propMaterialName,
+  initialMaterialIds: propInitialMaterialIds,
+  initialGroupId: propInitialGroupId,
+  initialGroupTitle: propInitialGroupTitle,
   initialTopic,
   initialTopics,
   initialModuleId: propInitialModuleId,
@@ -46,7 +52,7 @@ export default function SessionConfigModal({
 
   // ── Mode & Topic State ──
   const [studyMode, setStudyMode] = useState<StudyMode>(
-    propInitialMode || (propMaterialId ? 'material' : propInitialModuleId ? 'syllabus' : initialTopic ? 'custom' : 'new_content')
+    propInitialMode || (propMaterialId || (propInitialMaterialIds && propInitialMaterialIds.length > 0) ? 'material' : propInitialModuleId ? 'syllabus' : initialTopic ? 'custom' : 'new_content')
   )
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
   const [materialsList, setMaterialsList] = useState<LibraryFile[]>([])
@@ -59,7 +65,16 @@ export default function SessionConfigModal({
   const [selectedTopics, setSelectedTopics] = useState<string[]>(
     initialTopics && initialTopics.length > 0 ? initialTopics : initialTopic ? [initialTopic] : []
   )
-  const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(propMaterialId || null)
+  const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(
+    propMaterialId || (propInitialMaterialIds && propInitialMaterialIds.length > 0 ? propInitialMaterialIds[0] : null)
+  )
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>(
+    propInitialMaterialIds && propInitialMaterialIds.length > 0
+      ? propInitialMaterialIds
+      : propMaterialId
+      ? [propMaterialId]
+      : []
+  )
   const [customTopic, setCustomTopic] = useState(initialTopic || '')
   const [quickReviewTopics, setQuickReviewTopics] = useState<QuickReviewTopic[]>([])
   const [quickReviewScope, setQuickReviewScope] = useState<QuickReviewScope>('topics')
@@ -171,10 +186,15 @@ export default function SessionConfigModal({
         const mats = (await window.electronAPI.libraryGetFiles(subjectId)) as LibraryFile[]
         if (isMounted) {
           setMaterialsList(mats)
-          if (propMaterialId) {
+          if (propInitialMaterialIds && propInitialMaterialIds.length > 0) {
+            setSelectedMaterialIds(propInitialMaterialIds)
+            setSelectedMaterialId(propInitialMaterialIds[0])
+          } else if (propMaterialId) {
             setSelectedMaterialId(propMaterialId)
-          } else if (mats.length > 0 && !selectedMaterialId) {
+            setSelectedMaterialIds([propMaterialId])
+          } else if (mats.length > 0 && selectedMaterialIds.length === 0) {
             setSelectedMaterialId(mats[0].id)
+            setSelectedMaterialIds([mats[0].id])
           }
         }
       } catch (err) {
@@ -315,10 +335,18 @@ export default function SessionConfigModal({
         chosenTopic = chosenTopics.join(', ') || activeMod?.title || subjectName
       }
     } else if (studyMode === 'material') {
-      const activeMat = materialsList.find(m => m.id === selectedMaterialId)
-      chosenMaterialId = activeMat?.id || propMaterialId
-      chosenMaterialName = activeMat?.filename || propMaterialName
-      chosenTopic = chosenMaterialName ? `Material: ${chosenMaterialName}` : subjectName
+      const activeIds = selectedMaterialIds.length > 0 ? selectedMaterialIds : (selectedMaterialId ? [selectedMaterialId] : (propMaterialId ? [propMaterialId] : []))
+      const matchedMats = materialsList.filter(m => activeIds.includes(m.id))
+      chosenMaterialId = activeIds[0] || propMaterialId
+      chosenMaterialName = matchedMats[0]?.filename || propMaterialName
+      if (propInitialGroupTitle) {
+        chosenTopic = `${propInitialGroupTitle} (${matchedMats.map(m => m.filename).join(', ') || 'Materials'})`
+      } else if (matchedMats.length > 1) {
+        chosenTopic = `Materials (${matchedMats.length}): ${matchedMats.map(m => m.filename).slice(0, 2).join(', ')}${matchedMats.length > 2 ? '...' : ''}`
+      } else {
+        chosenTopic = chosenMaterialName ? `Material: ${chosenMaterialName}` : subjectName
+      }
+      chosenTopics = matchedMats.map(m => m.filename)
     } else if (studyMode === 'custom') {
       chosenTopic = customTopic.trim() || subjectName
     }
@@ -345,12 +373,20 @@ export default function SessionConfigModal({
           })
           .map(topic => topic.id)
 
+    const activeMatIds = studyMode === 'material'
+      ? (selectedMaterialIds.length > 0 ? selectedMaterialIds : (selectedMaterialId ? [selectedMaterialId] : []))
+      : undefined
+
     const config: TutorSessionConfig = {
       duration_minutes: finalDuration,
       depth_level: finalDepth,
       never_studied: neverStudied || studyMode === 'new_content',
       material_id: chosenMaterialId,
       material_name: chosenMaterialName,
+      target_material_ids: activeMatIds && activeMatIds.length > 0 ? activeMatIds : undefined,
+      material_ids: activeMatIds && activeMatIds.length > 0 ? activeMatIds : undefined,
+      group_id: propInitialGroupId,
+      group_title: propInitialGroupTitle,
       module_id: chosenModuleId,
       module_name: chosenModuleName,
       target_topic: chosenTopic,
@@ -990,30 +1026,80 @@ export default function SessionConfigModal({
                   </p>
                 ) : (
                   <div>
-                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-1">
-                      Choose Material / Document:
-                    </label>
-                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
+                        {propInitialGroupTitle ? `Materials in ${propInitialGroupTitle}:` : 'Choose Materials / Documents:'}
+                      </label>
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const ids = (propInitialMaterialIds && propInitialMaterialIds.length > 0)
+                              ? propInitialMaterialIds
+                              : materialsList.map(m => m.id)
+                            setSelectedMaterialIds(ids)
+                            if (ids.length > 0) setSelectedMaterialId(ids[0])
+                          }}
+                          className="text-violet-600 dark:text-violet-400 hover:underline font-medium"
+                        >
+                          Select all
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-600">·</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedMaterialIds([])
+                            setSelectedMaterialId(null)
+                          }}
+                          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
                       {materialsList.map(mat => {
-                        const isSelected = selectedMaterialId === mat.id
+                        const isSelected = selectedMaterialIds.includes(mat.id)
                         return (
-                          <button
+                          <div
                             key={mat.id}
-                            type="button"
-                            onClick={() => setSelectedMaterialId(mat.id)}
-                            className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
+                            onClick={() => {
+                              setSelectedMaterialIds(prev =>
+                                prev.includes(mat.id)
+                                  ? prev.filter(id => id !== mat.id)
+                                  : [...prev, mat.id]
+                              )
+                              setSelectedMaterialId(mat.id)
+                            }}
+                            className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-between cursor-pointer ${
                               isSelected
-                                ? 'bg-violet-600 text-white shadow-sm'
+                                ? 'bg-violet-50 dark:bg-violet-950/40 text-violet-900 dark:text-violet-100 border border-violet-300 dark:border-violet-700 shadow-sm'
                                 : 'bg-white dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'
                             }`}
                           >
-                            <span>📄</span>
-                            <span className="truncate flex-1">{mat.filename}</span>
-                            {isSelected && <span>✓</span>}
-                          </button>
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {}}
+                                className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 pointer-events-none"
+                              />
+                              <span className="truncate flex-1">{mat.filename}</span>
+                            </div>
+                            {isSelected && (
+                              <span className="text-[10px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/40 px-1.5 py-0.5 rounded-full">
+                                Selected
+                              </span>
+                            )}
+                          </div>
                         )
                       })}
                     </div>
+                    {selectedMaterialIds.length === 0 && (
+                      <p className="text-[11px] text-slate-400 mt-1 italic">
+                        Select one or more materials to focus the tutor session.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -1219,7 +1305,7 @@ export default function SessionConfigModal({
                 : studyMode === 'syllabus'
                 ? `📖 ${selectedTopic || 'Syllabus'}`
                 : studyMode === 'material'
-                ? `📄 Material`
+                ? `📄 ${propInitialGroupTitle ? propInitialGroupTitle : selectedMaterialIds.length > 1 ? `${selectedMaterialIds.length} Materials` : (materialsList.find(m => m.id === selectedMaterialId)?.filename || 'Material')}`
                 : `✏️ ${customTopic || 'Custom'}`}
             </span>
             {selectedTime !== null ? <span> · {selectedTime}m</span> : <span> · Unlimited</span>}

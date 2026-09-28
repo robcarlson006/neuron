@@ -30,7 +30,7 @@ describe('Dashboard Component', () => {
   beforeEach(() => {
     jest.clearAllMocks()
 
-    mockUseAppStore.mockReturnValue({
+    const store = {
       user: mockUser,
       subjects: mockSubjects,
       theme: 'light',
@@ -45,24 +45,18 @@ describe('Dashboard Component', () => {
       updateSubject: jest.fn(),
       removeSubject: jest.fn(),
       addSubject: jest.fn()
-    })
+    }
+    mockUseAppStore.mockImplementation(((selector?: (state: typeof store) => unknown) =>
+      selector ? selector(store) : store) as typeof useAppStore)
 
     // Mock API calls
     const api = (window as unknown as { electronAPI: Record<string, jest.Mock> }).electronAPI
-    api.getDueCards.mockResolvedValue([
-      { id: 1, type: 'flashcard', subject_id: 1 },
-      { id: 2, type: 'active_recall', subject_id: 1 },
-      { id: 3, type: 'flashcard', subject_id: 1 }
-    ])
-    api.getStreakData.mockResolvedValue([
-      { date: new Date().toISOString().split('T')[0], count: 5 }
-    ])
-    api.getDeadlines.mockResolvedValue([])
-    api.getCards.mockResolvedValue([
-      { id: 1, type: 'flashcard' },
-      { id: 2, type: 'flashcard' }
-    ])
-    api.getAllSchedules.mockResolvedValue([])
+    api.getDashboardAggregate.mockResolvedValue({
+      dueByType: [{ type: 'flashcard', count: 2 }, { type: 'active_recall', count: 1 }],
+      subjectTotals: [{ subject_id: 1, total_cards: 2, scheduled_cards: 0, mastered_cards: 0, due_cards: 3 }],
+      deadlines: [],
+      streakDates: [{ date: new Date().toISOString().split('T')[0], count: 5 }]
+    })
   })
 
   it('renders welcome message with user name', async () => {
@@ -185,7 +179,7 @@ describe('Dashboard Component', () => {
   })
 
   it('renders archived classes section when archived subjects exist', async () => {
-    mockUseAppStore.mockReturnValue({
+    const store = {
       user: mockUser,
       subjects: [
         ...mockSubjects,
@@ -210,7 +204,9 @@ describe('Dashboard Component', () => {
       updateSubject: jest.fn(),
       removeSubject: jest.fn(),
       addSubject: jest.fn()
-    })
+    }
+    mockUseAppStore.mockImplementation(((selector?: (state: typeof store) => unknown) =>
+      selector ? selector(store) : store) as typeof useAppStore)
 
     render(
       <MemoryRouter>
