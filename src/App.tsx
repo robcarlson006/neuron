@@ -203,7 +203,7 @@ function ClassRedirect(): React.JSX.Element {
   }
 
   return (
-    <HashRouter>
+    <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       {/* Update banner — shown when update is available, downloading, or ready to install */}
       {(updateAvailable || updateReady || updateFailed) && !dismissed && (
         <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-slate-900/95 text-white dark:bg-slate-800/95 border border-slate-700/80 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md text-sm animate-in fade-in slide-in-from-bottom-3 duration-300">

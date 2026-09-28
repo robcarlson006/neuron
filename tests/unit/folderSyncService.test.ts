@@ -43,11 +43,11 @@ describe('FolderSyncService', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neuron-sync-test-'))
     db = createFreshDatabase()
-    FolderSyncService.stopAllWatchers()
+    FolderSyncService.reset()
   })
 
   afterEach(() => {
-    FolderSyncService.stopAllWatchers()
+    FolderSyncService.reset()
     try {
       fs.rmSync(tempDir, { recursive: true, force: true })
     } catch {
@@ -187,7 +187,7 @@ describe('FolderSyncService', () => {
         isDestroyed: () => false,
         webContents: { send: mockSend }
       }
-      FolderSyncService.init(db, () => mockWin as any)
+      FolderSyncService.setWindowGetter(() => mockWin as any)
 
       const result = await FolderSyncService.scanAndSync(db, 1, tempDir)
 
@@ -326,15 +326,18 @@ describe('FolderSyncService', () => {
   })
 
   describe('Watcher and Service Lifecycle', () => {
-    it('manages watchers via startWatching, getStatus, stopWatching, and stopAllWatchers', () => {
+    it('manages watchers via startWatching, getStatus, stopWatching, and stopAllWatchers', async () => {
       db.prepare(`
         INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
         VALUES (1, 1, 'Biology 101', 'active', ?)
       `).run(tempDir)
 
-      FolderSyncService.init(db, () => null)
+      FolderSyncService.setDependencies({
+        watcherFactory: () => ({ on: () => undefined, close: () => undefined } as any)
+      })
+      await FolderSyncService.init(db, () => null)
 
-      expect(FolderSyncService.getStatus(1).isWatching).toBe(false)
+      expect(FolderSyncService.getStatus(1).isWatching).toBe(true)
 
       FolderSyncService.startWatching(1, tempDir)
       expect(FolderSyncService.getStatus(1).isWatching).toBe(true)
@@ -393,12 +396,20 @@ describe('FolderSyncService', () => {
         VALUES (1, 1, 'Biology 101', 'active', ?)
       `).run(tempDir)
 
+      let onChange: (() => void) | undefined
+      FolderSyncService.setDependencies({
+        watcherFactory: (_folderPath, _options, listener) => {
+          onChange = listener
+          return { on: () => undefined, close: () => undefined } as any
+        }
+      })
       await FolderSyncService.init(db, () => null)
       // Wait briefly for watcher to attach before writing file
       await new Promise((resolve) => setTimeout(resolve, 200))
 
       // Write a file to trigger watcher
       fs.writeFileSync(path.join(tempDir, 'watch_test.txt'), 'Created during watch')
+      onChange?.()
 
       // Poll for the 1500ms debounce to fire cleanly under parallel suite load
       let materials: any[] = []

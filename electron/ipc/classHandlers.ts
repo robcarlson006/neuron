@@ -7,6 +7,14 @@ import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
 import { FolderSyncService } from './folderSyncService'
 import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
+import {
+  buildAutoCardGenerationPrompt,
+  buildSlideDeckCardGenerationPrompt,
+  buildTextbookCardGenerationPrompt,
+  buildTranscriptCardGenerationPrompt
+} from '../../src/lib/promptBuilders'
+import { validateCardQuality } from '../../src/lib/cardValidator'
+import { detectModality } from './cardGenHandlers'
 import type { ClassCreationData, Subject, Card } from '../../src/types'
 
 let db: Database.Database
@@ -330,15 +338,6 @@ Rules:
 
 async function generateCardsAsync(subjectId: number, materialIds: number[]): Promise<void> {
   try {
-    const {
-      buildAutoCardGenerationPrompt,
-      buildSlideDeckCardGenerationPrompt,
-      buildTranscriptCardGenerationPrompt,
-      buildTextbookCardGenerationPrompt
-    } = await import('../../src/lib/promptBuilders')
-    const { validateCardQuality } = await import('../../src/lib/cardValidator')
-    const { detectModality } = await import('./cardGenHandlers')
-
     for (const materialId of materialIds) {
       const material = db.prepare('SELECT * FROM materials WHERE id = ?').get(materialId) as
         { filename: string; content_text: string } | undefined

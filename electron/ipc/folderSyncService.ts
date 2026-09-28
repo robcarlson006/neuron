@@ -5,6 +5,14 @@ import type { BrowserWindow } from 'electron'
 import { parseFileToText } from './documentParser'
 import type { FolderSyncResult, FolderSyncEvent } from '../../src/types'
 
+type FolderWatcher = Pick<fs.FSWatcher, 'on' | 'close'>
+type WatcherFactory = (
+  folderPath: string,
+  options: fs.WatchOptions,
+  listener: () => void
+) => FolderWatcher
+type FileParser = typeof parseFileToText
+
 export const SUPPORTED_EXTENSIONS = new Set([
   '.pdf',
   '.docx',
@@ -100,14 +108,34 @@ export interface SyncDatabase {
 export class FolderSyncService {
   private static db: Database.Database | SyncDatabase | null = null
   private static getWindow: (() => BrowserWindow | null) | null = null
-  private static watchers = new Map<number, fs.FSWatcher>()
+  private static watchers = new Map<number, FolderWatcher>()
   private static debounceTimers = new Map<number, NodeJS.Timeout>()
   private static watchedFolders = new Map<number, string>()
   private static activeSyncs = new Map<number, Promise<FolderSyncResult>>()
+  private static watcherFactory: WatcherFactory = (folderPath, options, listener) =>
+    fs.watch(folderPath, options, () => listener())
+  private static fileParser: FileParser = parseFileToText
 
   static isSupportedFile = isSupportedFile
   static getRelativePath = getRelativePath
   static scanDirectory = scanDirectory
+
+  /** Configure filesystem dependencies for deterministic unit tests. */
+  static setDependencies(deps: { watcherFactory?: WatcherFactory; fileParser?: FileParser }): void {
+    if (deps.watcherFactory) FolderSyncService.watcherFactory = deps.watcherFactory
+    if (deps.fileParser) FolderSyncService.fileParser = deps.fileParser
+  }
+
+  /** Reset process-global state between tests or application shutdown. */
+  static reset(): void {
+    FolderSyncService.stopAllWatchers()
+    FolderSyncService.activeSyncs.clear()
+    FolderSyncService.db = null
+    FolderSyncService.getWindow = null
+    FolderSyncService.watcherFactory = (folderPath, options, listener) =>
+      fs.watch(folderPath, options, () => listener())
+    FolderSyncService.fileParser = parseFileToText
+  }
 
   /**
    * Sets the window getter function for IPC event dispatching.
@@ -257,7 +285,7 @@ export class FolderSyncService {
         if (!existing) {
           // New file -> parse and insert
           try {
-            const parsed = await parseFileToText(fullPath)
+            const parsed = await FolderSyncService.fileParser(fullPath)
             db.prepare(`
               INSERT INTO materials (subject_id, filename, file_type, content_text, file_mtime, file_size, relative_path)
               VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -273,7 +301,7 @@ export class FolderSyncService {
 
           if (mtimeChanged || sizeChanged) {
             try {
-              const parsed = await parseFileToText(fullPath)
+              const parsed = await FolderSyncService.fileParser(fullPath)
               db.prepare(`
                 UPDATE materials
                 SET content_text = ?, file_mtime = ?, file_size = ?, relative_path = ?
@@ -343,7 +371,7 @@ export class FolderSyncService {
     }
 
     try {
-      const watcher = fs.watch(folderPath, { recursive: true }, () => {
+      const watcher = FolderSyncService.watcherFactory(folderPath, { recursive: true }, () => {
         const existingTimer = FolderSyncService.debounceTimers.get(subjectId)
         if (existingTimer) {
           clearTimeout(existingTimer)
