@@ -755,7 +755,38 @@ export async function evaluateAndSaveSessionMemory(
     JOIN syllabus_modules sm ON sm.id = mt.module_id
     WHERE sm.subject_id = ?
   `).all(session.subject_id) as Array<{ id: number; title: string; module_id: number; module_title: string }>
-  const requestedIds = new Set((options?.targetTopicIds || []).filter(id => allowedTopics.some(t => t.id === id)))
+
+  // Older tutor sessions often persisted only the human-readable target topic.
+  // Resolve those names against the current subject's canonical syllabus rows so
+  // their verified answer evidence can reach Topic-SRS too. Exact normalized title
+  // matching keeps this safe: a name can never grant credit to another subject or
+  // to an ambiguous fuzzy match.
+  const normalizeTopicTitle = (value: string): string => value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+  let persistedConfig: TutorSessionConfig | null = null
+  if (session.config_json) {
+    try { persistedConfig = JSON.parse(session.config_json) as TutorSessionConfig } catch { /* legacy malformed config */ }
+  }
+  const requestedTopicNames = [
+    ...(options?.targetTopics || []),
+    ...(persistedConfig?.target_topics || []),
+    ...(persistedConfig?.spaced_review_topics || []),
+    ...(persistedConfig?.target_topic ? [persistedConfig.target_topic] : [])
+  ]
+  const topicIdsByTitle = new Map<string, number[]>()
+  for (const topic of allowedTopics) {
+    const key = normalizeTopicTitle(topic.title)
+    topicIdsByTitle.set(key, [...(topicIdsByTitle.get(key) || []), topic.id])
+  }
+  const resolvedNameIds = requestedTopicNames
+    .map(name => topicIdsByTitle.get(normalizeTopicTitle(name)))
+    .filter((ids): ids is number[] => Array.isArray(ids) && ids.length === 1)
+    .flat()
+  const requestedIds = new Set([
+    ...(options?.targetTopicIds || []),
+    ...(persistedConfig?.target_topic_ids || []),
+    ...(persistedConfig?.target_topic_id ? [persistedConfig.target_topic_id] : []),
+    ...resolvedNameIds
+  ].filter(id => allowedTopics.some(t => t.id === id)))
   const allowedAssessmentTopics = allowedTopics.filter(t => requestedIds.has(t.id))
 
   try {

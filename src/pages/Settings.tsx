@@ -301,6 +301,8 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   // Version / update state
   const [desiredRetention, setDesiredRetention] = useState(90)
   const [interleave, setInterleave] = useState(true)
+  const [dailyCardLimit, setDailyCardLimit] = useState(20)
+  const [dailyNewCardLimit, setDailyNewCardLimit] = useState(5)
   const [savedFSRS, setSavedFSRS] = useState(false)
 
   // AI Provider state
@@ -364,6 +366,12 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     window.electronAPI.getMeta('interleave_queue').then(v => {
       if (v != null) setInterleave(v !== 'false')
     }).catch(() => {})
+    window.electronAPI.getMeta('daily_card_limit').then(v => {
+      if (v != null && Number(v) > 0) setDailyCardLimit(Math.min(100, Math.max(5, Number(v))))
+    }).catch(() => {})
+    window.electronAPI.getMeta('daily_new_card_limit').then(v => {
+      if (v != null && Number(v) >= 0) setDailyNewCardLimit(Math.min(20, Math.max(0, Number(v))))
+    }).catch(() => {})
     window.electronAPI.getMeta('reminder_time').then(v => {
       if (v) setReminderTime(v)
     }).catch(() => {})
@@ -423,6 +431,8 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   async function handleSaveFSRS(): Promise<void> {
     await window.electronAPI.setMeta('desired_retention', (desiredRetention / 100).toString())
     await window.electronAPI.setMeta('interleave_queue', interleave ? 'true' : 'false')
+    await window.electronAPI.setMeta('daily_card_limit', String(dailyCardLimit))
+    await window.electronAPI.setMeta('daily_new_card_limit', String(Math.min(dailyNewCardLimit, dailyCardLimit)))
     setSavedFSRS(true)
     setTimeout(() => setSavedFSRS(false), 1500)
   }
@@ -817,6 +827,44 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
             >
               <span className={`inline-block w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform duration-200 ${interleave ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5 pt-4 border-t border-slate-100 dark:border-slate-700">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Daily card budget</label>
+                <span className="text-sm font-semibold text-violet-600 dark:text-violet-400 tabular-nums">{dailyCardLimit}</span>
+              </div>
+              <input
+                type="range"
+                min={5}
+                max={100}
+                step={1}
+                value={dailyCardLimit}
+                onChange={e => {
+                  const value = Number(e.target.value)
+                  setDailyCardLimit(value)
+                  setDailyNewCardLimit(limit => Math.min(limit, value))
+                }}
+                className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-violet-600 bg-slate-200 dark:bg-slate-700"
+              />
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Hard ceiling for one focused day</p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">New cards per day</label>
+                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">{dailyNewCardLimit}</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={20}
+                step={1}
+                value={dailyNewCardLimit}
+                onChange={e => setDailyNewCardLimit(Math.min(Number(e.target.value), dailyCardLimit))}
+                className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-emerald-600 bg-slate-200 dark:bg-slate-700"
+              />
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">New material never crowds out due reviews</p>
+            </div>
           </div>
           <button
             onClick={handleSaveFSRS}

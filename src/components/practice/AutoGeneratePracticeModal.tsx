@@ -19,20 +19,20 @@ type FocusMode = 'adaptive' | 'remediate_struggles' | 'foundational' | 'challeng
 const FOCUS_MODES: { id: FocusMode; label: string; desc: string; icon: string }[] = [
   {
     id: 'adaptive',
-    label: 'Balanced Curriculum',
-    desc: 'Evenly covers fundamental principles, proofs, and real-world applications.',
+    label: 'Balanced practice',
+    desc: 'A mix of core ideas, calculations, and applications.',
     icon: '🎯'
   },
   {
     id: 'remediate_struggles',
-    label: 'Target Misconceptions',
-    desc: 'Focuses on active learning gaps and known pitfalls from your learning profile.',
+    label: 'Fill learning gaps',
+    desc: 'Revisits concepts and mistakes that need more attention.',
     icon: '🧠'
   },
   {
     id: 'challenge',
-    label: 'Exam Challenge',
-    desc: 'Multi-step synthesis problems with higher Depth of Knowledge (DOK 3).',
+    label: 'Exam challenge',
+    desc: 'Multi-step problems that make you connect ideas under pressure.',
     icon: '🏆'
   }
 ]
@@ -57,6 +57,10 @@ export default function AutoGeneratePracticeModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const currentModule = modules.find((m) => m.id === selectedModuleId)
+  const selectedTopic = currentModule?.topics?.find((topic) => topic.id === selectedTopicId)
+  const scopeLabel = selectedTopic?.title || currentModule?.title || "All subject modules"
+  const countLabel = isAutoCount ? "A focused set" : `${problemCount} problems`
+  const focusLabel = FOCUS_MODES.find((mode) => mode.id === focusMode)?.label || "Balanced practice"
 
   const handleGenerate = async () => {
     setIsGenerating(true)
@@ -108,7 +112,12 @@ export default function AutoGeneratePracticeModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="practice-generation-title"
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
           <div className="flex items-center gap-2.5">
@@ -116,11 +125,11 @@ export default function AutoGeneratePracticeModal({
               <Sparkles size={18} />
             </div>
             <div>
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">
+              <h3 id="practice-generation-title" className="font-bold text-slate-900 dark:text-slate-100 text-base">
                 Auto-Generate Practice
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Engineered from your course materials and learning gaps
+                Build a focused set from your course materials
               </p>
             </div>
           </div>
@@ -135,6 +144,13 @@ export default function AutoGeneratePracticeModal({
 
         {/* Modal Body */}
         <div className="p-6 space-y-5 overflow-y-auto max-h-[75vh]">
+          <div className="rounded-xl border border-violet-100 dark:border-violet-900/50 bg-violet-50/70 dark:bg-violet-950/25 px-4 py-3">
+            <p className="text-sm font-semibold text-violet-950 dark:text-violet-100">Set the direction. Neuron handles the rest.</p>
+            <p className="mt-1 text-xs leading-relaxed text-violet-800/80 dark:text-violet-200/80">
+              Choose a scope and a learning goal. Each problem is checked against your materials before it is added.
+            </p>
+          </div>
+
           {/* Error Banner */}
           {errorMessage && (
             <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2.5">
@@ -148,15 +164,15 @@ export default function AutoGeneratePracticeModal({
 
           {/* 1. Curriculum Scope */}
           <div className="space-y-3">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            <label className="text-sm font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
               <BookOpen size={13} className="text-violet-500" />
-              <span>1. Select Curriculum Scope</span>
+              <span>Where should we practice?</span>
             </label>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
               {/* Module Dropdown */}
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
                   Module
                 </label>
                 <select
@@ -179,7 +195,7 @@ export default function AutoGeneratePracticeModal({
 
               {/* Topic Dropdown */}
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
                   Topic (Optional)
                 </label>
                 <select
@@ -201,18 +217,24 @@ export default function AutoGeneratePracticeModal({
             </div>
           </div>
 
+          <div className="flex items-center gap-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Current brief</span>
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <span className="truncate">{scopeLabel}</span>
+          </div>
+
           {/* 2. Quantity Selection */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <label className="text-sm font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <Layers size={13} className="text-violet-500" />
-                <span>2. How many practice problems?</span>
+                <span>How much practice do you want?</span>
               </label>
               <span className="text-xs font-bold text-violet-600 dark:text-violet-400 flex items-center gap-1">
                 {isAutoCount ? (
                   <>
                     <span>✨</span>
-                    <span>AI Decides</span>
+                    <span>Adaptive set</span>
                   </>
                 ) : (
                   `${problemCount} Problems`
@@ -226,6 +248,8 @@ export default function AutoGeneratePracticeModal({
                 type="button"
                 onClick={() => setIsAutoCount(true)}
                 disabled={isGenerating}
+                aria-pressed={isAutoCount}
+                aria-label="Choose an adaptive number of practice problems"
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
                   isAutoCount
                     ? 'bg-violet-600 text-white shadow-sm ring-2 ring-violet-500/30'
@@ -233,7 +257,7 @@ export default function AutoGeneratePracticeModal({
                 }`}
               >
                 <span>✨</span>
-                <span>Auto (AI Decides)</span>
+                <span>Adaptive</span>
               </button>
               {PROBLEM_COUNT_PRESETS.map((preset) => (
                 <button
@@ -244,13 +268,16 @@ export default function AutoGeneratePracticeModal({
                     setProblemCount(preset)
                   }}
                   disabled={isGenerating}
+                  aria-pressed={!isAutoCount && problemCount === preset}
+                  aria-label={`${preset} practice problems`}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     !isAutoCount && problemCount === preset
                       ? 'bg-violet-600 text-white shadow-sm ring-2 ring-violet-500/30'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                   }`}
                 >
-                  {preset}
+                  <span>{preset}</span>
+                  <span className="text-[10px] font-medium opacity-70">problems</span>
                 </button>
               ))}
             </div>
@@ -260,7 +287,7 @@ export default function AutoGeneratePracticeModal({
               <div className="p-3 rounded-xl bg-violet-50/70 dark:bg-violet-950/30 border border-violet-100 dark:border-violet-900/40 flex items-start gap-2.5">
                 <span className="text-sm">✨</span>
                 <div className="text-xs text-violet-950 dark:text-violet-200 leading-relaxed">
-                  <span className="font-semibold">Autonomous Sizing Active:</span> The AI will analyze topic concept density, course documents, and existing practice coverage to generate the optimal number of problems (typically 3–5) without repetitive fluff.
+                  <span className="font-semibold">Adaptive set:</span> Neuron will choose a useful number based on the topic and your existing coverage—usually 3–5 problems.
                 </div>
               </div>
             ) : (
@@ -284,9 +311,9 @@ export default function AutoGeneratePracticeModal({
 
           {/* 3. Pedagogical Focus */}
           <div className="space-y-2.5">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            <label className="text-sm font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
               <Target size={13} className="text-violet-500" />
-              <span>3. Pedagogical Focus</span>
+              <span>What should the set help you do?</span>
             </label>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -322,17 +349,17 @@ export default function AutoGeneratePracticeModal({
           {/* 4. Natural Language Custom Focus (Optional) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <label className="text-sm font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <span className="text-violet-500">💬</span>
-                <span>4. Custom Focus & Prompt (Optional)</span>
+                <span>Anything specific? <span className="font-normal text-slate-400">Optional</span></span>
               </label>
-              <span className="text-[11px] text-slate-400">Natural language</span>
+              <span className="text-[11px] text-slate-400">Your words are enough</span>
             </div>
             <textarea
               value={customInstructions}
               onChange={(e) => setCustomInstructions(e.target.value)}
               disabled={isGenerating}
-              placeholder="E.g., Focus on multi-step IS-LM shifts with unexpected tax cuts, test boundary conditions in derivatives, or emphasize clinical diagnostic dilemmas..."
+              placeholder="For example: focus on multi-step calculations, common exam traps, or applying this topic to a real case..."
               rows={2}
               className="w-full text-xs px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none font-medium leading-relaxed"
             />
@@ -355,34 +382,43 @@ export default function AutoGeneratePracticeModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900">
-          <button
-            onClick={onClose}
-            disabled={isGenerating}
-            className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 rounded-xl transition-colors disabled:opacity-50"
-          >
-            Cancel
-          </button>
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900">
+          <div className="min-w-0 text-[11px] text-slate-500 dark:text-slate-400">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{countLabel}</span>
+            <span className="mx-1.5">·</span>
+            <span className="truncate">{scopeLabel}</span>
+            <span className="mx-1.5">·</span>
+            <span>{focusLabel}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={onClose}
+              disabled={isGenerating}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 rounded-xl transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
 
-          <button
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 active:scale-98 rounded-xl shadow-md transition-all disabled:opacity-50"
-          >
-            {isGenerating ? (
-              <>
-                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Generating...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles size={14} />
-                <span>
-                  {isAutoCount ? "Generate (AI Decides)" : `Generate ${problemCount} Problems`}
-                </span>
-              </>
-            )}
-          </button>
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating}
+              className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 active:scale-98 rounded-xl shadow-md transition-all disabled:opacity-50"
+            >
+              {isGenerating ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Generating...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} />
+                  <span>
+                    {isAutoCount ? "Generate adaptive set" : `Generate ${problemCount} problems`}
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

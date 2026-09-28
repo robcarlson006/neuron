@@ -32,6 +32,7 @@ export default function TutorHub(): React.JSX.Element {
   const [showAllMaintenance, setShowAllMaintenance] = useState<boolean>(false)
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<number | 'all'>('all')
   const [durationMenuTopicId, setDurationMenuTopicId] = useState<number | null>(null)
+  const [refreshingDueTopics, setRefreshingDueTopics] = useState(false)
 
   const activeSubjects = subjects.filter(s => s.status !== 'archived')
 
@@ -111,6 +112,17 @@ export default function TutorHub(): React.JSX.Element {
       console.error('Failed to load tutor hub:', err)
       setError('Something went wrong loading your tutor dashboard.')
       setState('error')
+    }
+  }
+
+  async function refreshDueTopics(): Promise<void> {
+    if (!user || !window.electronAPI.tutorGetTopDueMaintenanceTopics) return
+    setRefreshingDueTopics(true)
+    try {
+      const dueTopics = await window.electronAPI.tutorGetTopDueMaintenanceTopics(user.id)
+      setDueMaintenanceTopics(dueTopics || [])
+    } finally {
+      setRefreshingDueTopics(false)
     }
   }
 
@@ -372,7 +384,7 @@ export default function TutorHub(): React.JSX.Element {
               )}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Moment-based study sprints tailored to your available time, due cards, and weak spots.
+              One plan for the time you have, built from due reviews and current learning gaps.
             </p>
           </div>
 
@@ -495,6 +507,24 @@ export default function TutorHub(): React.JSX.Element {
           </div>
         )}
 
+        {/* Sprint progress */}
+        {dailyPlans.length > 0 && (
+          <div className="mb-4 rounded-xl bg-slate-50/80 dark:bg-slate-900/30 border border-slate-100 dark:border-slate-700/60 px-3.5 py-3">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Today's progress</span>
+              <span className="text-[11px] font-semibold text-violet-700 dark:text-violet-300">
+                {dailyPlans.length - incompletePlans.length}/{dailyPlans.length} steps complete
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={dailyPlans.length} aria-valuenow={dailyPlans.length - incompletePlans.length}>
+              <div
+                className="h-full rounded-full bg-violet-600 transition-all duration-300"
+                style={{ width: `${Math.round(((dailyPlans.length - incompletePlans.length) / dailyPlans.length) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Sprint Items List */}
         {dailyPlans.length === 0 ? (
           <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center">
@@ -503,7 +533,7 @@ export default function TutorHub(): React.JSX.Element {
               Ready for a Focus Block?
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 max-w-sm mx-auto">
-              Select how much time you have right now (15m, 30m, 45m, 60m) to generate a targeted study sprint.
+              Choose the time you have and Neuron will make a short plan you can actually finish.
             </p>
             <button
               onClick={() => handleGeneratePlan(30)}
@@ -690,6 +720,14 @@ export default function TutorHub(): React.JSX.Element {
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  onClick={refreshDueTopics}
+                  disabled={refreshingDueTopics}
+                  className="text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-300 transition-colors disabled:opacity-50"
+                  title="Refresh review status after finishing a tutor session"
+                >
+                  {refreshingDueTopics ? 'Refreshing…' : 'Refresh status'}
+                </button>
                 {filteredDueTopics.length > 6 && (
                   <button
                     onClick={() => setShowAllMaintenance(prev => !prev)}
@@ -700,6 +738,10 @@ export default function TutorHub(): React.JSX.Element {
                 )}
               </div>
             </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 max-w-2xl">
+              These are topics whose independent recall evidence says they are ready for another check. Completing a tutor review updates this list automatically when you return.
+            </p>
 
             {/* Subject Filter Pills (if multiple subjects have due topics) */}
             {dueSubjectIds.length > 1 && (
@@ -773,6 +815,9 @@ export default function TutorHub(): React.JSX.Element {
                           {t.moduleTitle}
                         </p>
                       )}
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-2">
+                        Last checked {new Date(t.lastStudiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · Next check {new Date(t.nextReviewDue + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </p>
                     </div>
 
                     <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between gap-2">

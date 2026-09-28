@@ -26,6 +26,9 @@ export interface CardValidationResult {
   anti_patterns_detected: string[]
 }
 
+/** Minimum score required before an AI-generated card may enter the deck. */
+export const MIN_GENERATION_QUALITY_SCORE = 0.78
+
 /**
  * Andy Matuschak's 5 Foundational Properties for Retrieval Prompts
  */
@@ -312,6 +315,11 @@ export function validateCardQuality(card: {
   const evalResult = evaluateMatuschakCriteria(cleanedFront, cleanedBack)
   const qualityScore = evalResult.overallScore
 
+  if (qualityScore < MIN_GENERATION_QUALITY_SCORE) {
+    issues.push(`Quality score ${qualityScore.toFixed(2)} is below the generation threshold of ${MIN_GENERATION_QUALITY_SCORE.toFixed(2)}`)
+    antiPatterns.push('Below Quality Threshold')
+  }
+
   // Basic question format check
   const hasQuestionFormat =
     cleanedFront.includes('?') ||
@@ -322,7 +330,17 @@ export function validateCardQuality(card: {
     issues.push('Front may not be in question format (no "?" or "___" found)')
   }
 
-  const valid = cleanedFront.trim().length > 0 && cleanedBack.trim().length > 0
+  const hardFailPatterns = new Set([
+    'Binary Framing',
+    'Enumeration / Set Prompt',
+    'Dense Card Back',
+    'Ambiguous Horizon',
+    'Vague Reference in Front',
+    'Vague Reference in Back',
+    'Below Quality Threshold'
+  ])
+  const hasHardFail = antiPatterns.some(pattern => hardFailPatterns.has(pattern))
+  const valid = cleanedFront.trim().length > 0 && cleanedBack.trim().length > 0 && qualityScore >= MIN_GENERATION_QUALITY_SCORE && !hasHardFail
 
   return {
     valid,

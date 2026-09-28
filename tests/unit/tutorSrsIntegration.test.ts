@@ -67,6 +67,33 @@ describe('Tutor Session Topic-SRS Integration', () => {
     expect(srsMap.get(topicId)).toBeUndefined()
   })
 
+  test('exact canonical target names from older sessions still sync verified recall to retention', async () => {
+    const sessionId = insert(
+      db,
+      'INSERT INTO tutor_sessions (subject_id, user_id, module_id, session_type, phase) VALUES (?, ?, ?, ?, ?)',
+      subjectId, userId, moduleId, 'tutor', 'structured_qa'
+    )
+    insert(db, 'INSERT INTO conversations (id, subject_id, title) VALUES (?, ?, ?)', sessionId, subjectId, 'Legacy topic-name drill')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'legacy-question', sessionId, 'assistant', 'What does Gibbs Free Energy tell us?')
+    insert(db, 'INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)', 'legacy-answer', sessionId, 'user', 'It predicts whether a process is spontaneous at constant temperature and pressure.')
+
+    const result = await evaluateAndSaveSessionMemory(db, sessionId, undefined, {
+      targetTopics: ['  gibbs   free energy '],
+      moduleId,
+      assessments: [{
+        topic_id: topicId,
+        question_message_id: 'legacy-question',
+        answer_message_id: 'legacy-answer',
+        outcome: 'correct',
+        assistance_level: 'independent'
+      }]
+    })
+
+    expect(result?.assessment_status).toBe('applied')
+    expect(result?.updatedTopics?.map(topic => topic.topicId)).toContain(topicId)
+    expect(getTopicsRetention(db, userId, subjectId, moduleId).get(topicId)?.reps).toBe(1)
+  })
+
   test('evaluating with targetTopicIds restores decaying 83% topic to 100% and returns updatedTopics', async () => {
     // Seed topic with decayed retention (<0.85)
     const pastDate = new Date(Date.now() - 5 * 86400000).toISOString()

@@ -16,6 +16,11 @@ import {
   determineCardStudyModality,
   type AdaptiveStudyPreference
 } from '../lib/adaptiveStudyEngine'
+import {
+  buildDailyStudyPlan,
+  DEFAULT_DAILY_STUDY_LIMITS,
+  type DailyStudyLimits
+} from '../lib/dailyStudyPlan'
 
 interface StudyCard extends Card {
   interval: number
@@ -23,9 +28,13 @@ interface StudyCard extends Card {
   ease_factor: number
   due_date: string
   last_reviewed_at?: string
+  stability?: number | null
+  difficulty?: number | null
+  lapses?: number | null
+  state?: number | null
 }
 
-type EmptyReason = 'no-cards' | 'new-cards' | 'all-caught-up'
+type EmptyReason = 'no-cards' | 'new-cards' | 'all-caught-up' | 'daily-limit'
 
 interface SavedStudySessionProgress {
   v: 1
@@ -70,6 +79,7 @@ export default function StudySession(): React.JSX.Element {
   const [learnMenuOpen, setLearnMenuOpen] = useState(false)
   const learnMenuRef = useRef<HTMLDivElement>(null)
   const [emptyReason, setEmptyReason] = useState<EmptyReason>('no-cards')
+  const [dailyPlanSummary, setDailyPlanSummary] = useState<{ limit: number; deferred: number } | null>(null)
   const [summary, setSummary] = useState<SessionSummary>({
     total: 0,
     correct: 0,
@@ -345,22 +355,42 @@ export default function StudySession(): React.JSX.Element {
         : await window.electronAPI.getDueCards(user.id, subjectIdNum)
       const filteredDue = (due as StudyCard[]).filter(c => matchesStudyScope(c) && (!typeFilter || c.type === typeFilter))
 
-      if (filteredDue.length === 0) {
+      const [dailyMaxMeta, dailyNewMeta, recentLogs] = await Promise.all([
+        window.electronAPI.getMeta('daily_card_limit'),
+        window.electronAPI.getMeta('daily_new_card_limit'),
+        window.electronAPI.getReviewLogs(user.id, 1)
+      ])
+      const dailyLimits: DailyStudyLimits = {
+        maxCardsPerDay: Number.isFinite(Number(dailyMaxMeta)) && Number(dailyMaxMeta) > 0
+          ? Number(dailyMaxMeta)
+          : DEFAULT_DAILY_STUDY_LIMITS.maxCardsPerDay,
+        maxNewCardsPerDay: Number.isFinite(Number(dailyNewMeta)) && Number(dailyNewMeta) >= 0
+          ? Number(dailyNewMeta)
+          : DEFAULT_DAILY_STUDY_LIMITS.maxNewCardsPerDay
+      }
+      const reviewedTodayIds = new Set((recentLogs || []).map(log => log.card_id))
+      const today = new Date().toISOString().slice(0, 10)
+      const plan = buildDailyStudyPlan(filteredDue, today, dailyLimits, reviewedTodayIds)
+      setDailyPlanSummary({ limit: dailyLimits.maxCardsPerDay, deferred: plan.deferredDue.length })
+
+      if (plan.cards.length === 0) {
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
         const filteredAll = (all as StudyCard[]).filter(c => matchesStudyScope(c) && (!typeFilter || c.type === typeFilter))
         if (filteredAll.length === 0) {
           setEmptyReason('no-cards')
+        } else if (plan.isLimitReached && filteredDue.length > 0) {
+          setEmptyReason('daily-limit')
         } else {
           const hasNewCards = filteredAll.some((c: StudyCard) => c.repetitions === 0)
           setEmptyReason(hasNewCards ? 'new-cards' : 'all-caught-up')
         }
         setCards([])
       } else {
-        setCards(filteredDue)
+        setCards(plan.cards)
         await ensureDbSession(subjectIdNum)
       }
 
-      setSummary({ total: due.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
+      setSummary({ total: plan.cards.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
     } catch (err) {
       console.error('Load cards error:', err)
     } finally {
@@ -644,6 +674,38 @@ export default function StudySession(): React.JSX.Element {
                   Study All Cards Anyway
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    if (emptyReason === 'daily-limit') {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-8 bg-slate-50 dark:bg-slate-950">
+          <div className="text-center max-w-md page-enter">
+            <div className="w-16 h-16 bg-violet-100 dark:bg-violet-900/40 rounded-2xl flex items-center justify-center mx-auto mb-5">
+              <span className="text-3xl">🌱</span>
+            </div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50 mb-2">
+              Daily study complete
+            </h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
+              You finished today’s focused set of {dailyPlanSummary?.limit ?? 20} cards. {dailyPlanSummary?.deferred ?? 0} more will wait for a later session so your workload stays sustainable.
+            </p>
+            <div className="space-y-3">
+              <button
+                onClick={() => loadCards(true)}
+                className="w-full bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 px-6 py-2.5 rounded-lg font-medium text-sm transition-colors"
+              >
+                Study extra cards anyway
+              </button>
+              <button
+                onClick={() => navigate('/')}
+                className="w-full bg-violet-600 hover:bg-violet-700 text-white px-6 py-2.5 rounded-lg font-medium text-sm transition-colors"
+              >
+                Back to Dashboard
+              </button>
             </div>
           </div>
         </div>

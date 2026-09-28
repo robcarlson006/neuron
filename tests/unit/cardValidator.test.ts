@@ -107,6 +107,15 @@ describe('validateCardQuality & Psychometric Retrieval Rules', () => {
     const result = validateCardQuality({ front: 'What is X?', back: 'A concise answer', type: 'unknown' })
     expect(result.cards[0].type).toBe('flashcard')
   })
+
+  it('rejects a structurally valid but low-quality prompt', () => {
+    const result = validateCardQuality({
+      front: 'Does X happen?',
+      back: 'Yes'
+    })
+    expect(result.valid).toBe(false)
+    expect(result.anti_patterns_detected).toContain('Binary Framing')
+  })
 })
 
 describe('Psychometric Utility Functions', () => {

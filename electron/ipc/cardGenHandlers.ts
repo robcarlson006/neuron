@@ -1414,10 +1414,6 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
         front: c.front,
         back: c.back
       })))
-    } else if (base.front.length > 0 && base.back.length > 0) {
-      validatedCards.push({
-        ...base
-      })
     }
   }
 
@@ -1439,10 +1435,6 @@ async function handleAutoGenerate(subjectId: number, materialId: number): Promis
         front: c.front,
         back: c.back
       })))
-    } else if (base.front.length > 0 && base.back.length > 0) {
-      validatedCards.push({
-        ...base
-      })
     }
   }
 
