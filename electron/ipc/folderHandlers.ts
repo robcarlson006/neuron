@@ -28,6 +28,7 @@ export function registerFolderHandlers(): void {
           success: false,
           addedCount: 0,
           updatedCount: 0,
+          removedCount: 0,
           error: 'Database not initialized'
         }
       }
@@ -54,6 +55,7 @@ export function registerFolderHandlers(): void {
         success: false,
         addedCount: 0,
         updatedCount: 0,
+        removedCount: 0,
         error: 'Database not initialized'
       }
     }
@@ -67,6 +69,7 @@ export function registerFolderHandlers(): void {
         success: false,
         addedCount: 0,
         updatedCount: 0,
+        removedCount: 0,
         error: 'No linked folder found for this subject'
       }
     }

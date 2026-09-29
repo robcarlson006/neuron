@@ -132,9 +132,9 @@ const mockElectronAPI = {
 
   // Linked Class Folder Operations
   selectFolderDialog: jest.fn().mockResolvedValue(null),
-  linkFolderToClass: jest.fn().mockResolvedValue({ success: true, addedCount: 0, updatedCount: 0 }),
+  linkFolderToClass: jest.fn().mockResolvedValue({ success: true, addedCount: 0, updatedCount: 0, removedCount: 0 }),
   unlinkFolderFromClass: jest.fn().mockResolvedValue({ success: true }),
-  syncClassFolder: jest.fn().mockResolvedValue({ success: true, addedCount: 0, updatedCount: 0 }),
+  syncClassFolder: jest.fn().mockResolvedValue({ success: true, addedCount: 0, updatedCount: 0, removedCount: 0 }),
   openFolder: jest.fn().mockResolvedValue(undefined),
   // Study Sessions
   startStudySession: jest.fn().mockResolvedValue({ id: 101, user_id: 1, subject_id: 1, started_at: new Date().toISOString() }),

@@ -168,7 +168,7 @@ describe('FolderSyncService', () => {
     })
   })
 
-  describe('scanAndSync (Safe Sync)', () => {
+  describe('scanAndSync', () => {
     it('adds new files to the database with parsed content and metadata', async () => {
       // Insert test subject
       db.prepare(`
@@ -194,6 +194,7 @@ describe('FolderSyncService', () => {
       expect(result.success).toBe(true)
       expect(result.addedCount).toBe(2)
       expect(result.updatedCount).toBe(0)
+      expect(result.removedCount).toBe(0)
 
       // Verify materials table rows
       const materials = db.prepare('SELECT * FROM materials WHERE subject_id = 1 ORDER BY filename ASC').all() as any[]
@@ -224,7 +225,8 @@ describe('FolderSyncService', () => {
         expect.objectContaining({
           subjectId: 1,
           added: expect.arrayContaining(['syllabus.md', 'Week 1/cell_biology.txt']),
-          updated: []
+          updated: [],
+          removed: []
         })
       )
     })
@@ -256,6 +258,7 @@ describe('FolderSyncService', () => {
       expect(updateResult.success).toBe(true)
       expect(updateResult.addedCount).toBe(0)
       expect(updateResult.updatedCount).toBe(1)
+      expect(updateResult.removedCount).toBe(0)
 
       materials = db.prepare('SELECT * FROM materials WHERE subject_id = 1').all() as any[]
       expect(materials.length).toBe(1) // No duplicate row created
@@ -277,9 +280,10 @@ describe('FolderSyncService', () => {
       const res2 = await FolderSyncService.scanAndSync(db, 1, tempDir)
       expect(res2.addedCount).toBe(0)
       expect(res2.updatedCount).toBe(0)
+      expect(res2.removedCount).toBe(0)
     })
 
-    it('preserves database records when files are deleted on disk (Safe Sync)', async () => {
+    it('removes database records when files are deleted on disk', async () => {
       db.prepare(`
         INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
         VALUES (1, 1, 'Biology 101', 'active', ?)
@@ -302,12 +306,11 @@ describe('FolderSyncService', () => {
       expect(syncAfterDelete.success).toBe(true)
       expect(syncAfterDelete.addedCount).toBe(0)
       expect(syncAfterDelete.updatedCount).toBe(0)
+      expect(syncAfterDelete.removedCount).toBe(1)
 
-      // Material should still exist in database!
+      // Material should be deleted from database!
       const afterDelete = db.prepare('SELECT * FROM materials WHERE subject_id = 1').all() as any[]
-      expect(afterDelete.length).toBe(1)
-      expect(afterDelete[0].filename).toBe('to_delete.txt')
-      expect(afterDelete[0].content_text).toBe('Important study material')
+      expect(afterDelete.length).toBe(0)
     })
 
     it('handles non-existent folder by recording error status', async () => {

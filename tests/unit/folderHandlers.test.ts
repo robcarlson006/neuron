@@ -113,7 +113,8 @@ describe('folderHandlers', () => {
       const scanAndSyncSpy = jest.spyOn(FolderSyncService, 'scanAndSync').mockResolvedValueOnce({
         success: true,
         addedCount: 5,
-        updatedCount: 0
+        updatedCount: 0,
+        removedCount: 0
       })
 
       const handler = registeredHandlers.get('folder:link')!
@@ -129,7 +130,8 @@ describe('folderHandlers', () => {
       expect(result).toEqual({
         success: true,
         addedCount: 5,
-        updatedCount: 0
+        updatedCount: 0,
+        removedCount: 0
       })
 
       startWatchingSpy.mockRestore()
@@ -168,7 +170,8 @@ describe('folderHandlers', () => {
       const scanAndSyncSpy = jest.spyOn(FolderSyncService, 'scanAndSync').mockResolvedValueOnce({
         success: true,
         addedCount: 2,
-        updatedCount: 1
+        updatedCount: 1,
+        removedCount: 0
       })
 
       const handler = registeredHandlers.get('folder:syncNow')!
@@ -178,7 +181,8 @@ describe('folderHandlers', () => {
       expect(result).toEqual({
         success: true,
         addedCount: 2,
-        updatedCount: 1
+        updatedCount: 1,
+        removedCount: 0
       })
 
       scanAndSyncSpy.mockRestore()

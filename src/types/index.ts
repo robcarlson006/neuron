@@ -1111,6 +1111,7 @@ export interface FolderSyncResult {
   success: boolean
   addedCount: number
   updatedCount: number
+  removedCount?: number
   error?: string
 }
 
@@ -1118,6 +1119,7 @@ export interface FolderSyncEvent {
   subjectId: number
   added: string[]
   updated: string[]
+  removed?: string[]
   timestamp: string
 }
 

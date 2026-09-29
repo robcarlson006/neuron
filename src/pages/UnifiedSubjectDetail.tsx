@@ -185,7 +185,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         loadAllData()
         const addedCount = event.added?.length || 0
         const updatedCount = event.updated?.length || 0
-        const msg = `✨ Synced folder: ${addedCount} added, ${updatedCount} updated`
+        const removedCount = event.removed?.length || 0
+        const msg = `✨ Synced folder: ${addedCount} added, ${updatedCount} updated, ${removedCount} removed`
         setToast({ message: msg, type: 'success' })
         setTimeout(() => setToast(null), 4000)
         addToast({ type: 'success', title: 'Folder Synced', message: msg })
@@ -872,7 +873,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           })
         }
         await loadAllData()
-        const msg = `✨ Synced folder: ${res.addedCount} added, ${res.updatedCount} updated`
+        const removedCount = res.removedCount || 0
+        const msg = `✨ Synced folder: ${res.addedCount} added, ${res.updatedCount} updated, ${removedCount} removed`
         setToast({ message: msg, type: 'success' })
         setTimeout(() => setToast(null), 4000)
         addToast({ type: 'success', title: 'Folder Synced', message: msg })

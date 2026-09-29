@@ -205,7 +205,7 @@ export class FolderSyncService {
    * Internal implementation of directory scan and database synchronization.
    * New files are parsed and inserted.
    * Modified files are re-parsed and updated.
-   * Deleted files are preserved in the database (Safe Sync).
+   * Deleted files are removed from the database.
    */
   private static async doScanAndSync(
     db: Database.Database | SyncDatabase,
@@ -219,6 +219,7 @@ export class FolderSyncService {
           success: false,
           addedCount: 0,
           updatedCount: 0,
+          removedCount: 0,
           error: `Directory not found: ${folderPath}`
         }
       }
@@ -230,6 +231,7 @@ export class FolderSyncService {
           success: false,
           addedCount: 0,
           updatedCount: 0,
+          removedCount: 0,
           error: `Path is not a directory: ${folderPath}`
         }
       }
@@ -261,9 +263,11 @@ export class FolderSyncService {
       const filesOnDisk = scanDirectory(folderPath)
       const added: string[] = []
       const updated: string[] = []
+      const seenRelPaths = new Set<string>()
 
       for (const fullPath of filesOnDisk) {
         const relPath = getRelativePath(folderPath, fullPath)
+        seenRelPaths.add(relPath)
         const filename = path.basename(fullPath)
 
         let stat: fs.Stats
@@ -315,7 +319,18 @@ export class FolderSyncService {
         }
       }
 
-      // Safe Sync: Missing files on disk are retained in the database
+      // Remove materials from the database that no longer exist on disk
+      const removed: string[] = []
+      for (const mat of existingMaterials) {
+        if (mat.relative_path && !seenRelPaths.has(mat.relative_path)) {
+          try {
+            db.prepare('DELETE FROM materials WHERE id = ?').run(mat.id)
+            removed.push(mat.relative_path)
+          } catch (err) {
+            console.error(`Failed to delete missing material ${mat.filename}:`, err)
+          }
+        }
+      }
 
       const nowIso = new Date().toISOString()
       db.prepare(`
@@ -325,7 +340,7 @@ export class FolderSyncService {
       `).run(nowIso, subjectId)
 
       // Send IPC notification if any changes occurred
-      if (added.length > 0 || updated.length > 0) {
+      if (added.length > 0 || updated.length > 0 || removed.length > 0) {
         if (FolderSyncService.getWindow) {
           const win = FolderSyncService.getWindow()
           if (win && !win.isDestroyed?.()) {
@@ -333,6 +348,7 @@ export class FolderSyncService {
               subjectId,
               added,
               updated,
+              removed,
               timestamp: nowIso
             }
             win.webContents.send('folder:sync-event', syncEvent)
@@ -343,7 +359,8 @@ export class FolderSyncService {
       return {
         success: true,
         addedCount: added.length,
-        updatedCount: updated.length
+        updatedCount: updated.length,
+        removedCount: removed.length
       }
     } catch (err: unknown) {
       console.error(`Scan and sync error for subject ${subjectId}:`, err)
@@ -354,6 +371,7 @@ export class FolderSyncService {
         success: false,
         addedCount: 0,
         updatedCount: 0,
+        removedCount: 0,
         error: err instanceof Error ? err.message : String(err)
       }
     }
