@@ -264,11 +264,13 @@ export class FolderSyncService {
       const added: string[] = []
       const updated: string[] = []
       const seenRelPaths = new Set<string>()
+      const seenFilenames = new Set<string>()
 
       for (const fullPath of filesOnDisk) {
         const relPath = getRelativePath(folderPath, fullPath)
         seenRelPaths.add(relPath)
         const filename = path.basename(fullPath)
+        seenFilenames.add(filename)
 
         let stat: fs.Stats
         try {
@@ -299,6 +301,17 @@ export class FolderSyncService {
             console.error(`Failed to parse file ${fullPath}:`, err)
           }
         } else {
+          // If relative_path was null on existing material, ensure it is recorded
+          if (!existing.relative_path) {
+            try {
+              db.prepare('UPDATE materials SET relative_path = ? WHERE id = ?').run(relPath, existing.id)
+              existing.relative_path = relPath
+              matByRelPath.set(relPath, existing)
+            } catch (err) {
+              console.error(`Failed to update relative_path for ${filename}:`, err)
+            }
+          }
+
           // Modified file check
           const mtimeChanged = existing.file_mtime == null || existing.file_mtime !== mtime
           const sizeChanged = existing.file_size == null || existing.file_size !== size
@@ -319,13 +332,41 @@ export class FolderSyncService {
         }
       }
 
+      // Query lecture material IDs to protect recorded lectures from deletion
+      const protectedMaterialIds = new Set<number>()
+      try {
+        const lectureRows = db
+          .prepare('SELECT material_id FROM lectures WHERE subject_id = ? AND material_id IS NOT NULL')
+          .all(subjectId) as Array<{ material_id: number }>
+        for (const row of lectureRows) {
+          if (row.material_id) protectedMaterialIds.add(row.material_id)
+        }
+      } catch {}
+
       // Remove materials from the database that no longer exist on disk
       const removed: string[] = []
       for (const mat of existingMaterials) {
-        if (mat.relative_path && !seenRelPaths.has(mat.relative_path)) {
+        if (protectedMaterialIds.has(mat.id)) {
+          continue
+        }
+
+        let existsOnDisk = false
+        if (mat.relative_path) {
+          existsOnDisk = seenRelPaths.has(mat.relative_path)
+        } else {
+          existsOnDisk = seenRelPaths.has(mat.filename) || seenFilenames.has(mat.filename)
+        }
+
+        if (!existsOnDisk) {
           try {
+            try {
+              db.prepare('DELETE FROM embeddings WHERE material_id = ?').run(mat.id)
+            } catch {}
+            try {
+              db.prepare('UPDATE cards SET material_id = NULL WHERE material_id = ?').run(mat.id)
+            } catch {}
             db.prepare('DELETE FROM materials WHERE id = ?').run(mat.id)
-            removed.push(mat.relative_path)
+            removed.push(mat.relative_path || mat.filename)
           } catch (err) {
             console.error(`Failed to delete missing material ${mat.filename}:`, err)
           }

@@ -313,6 +313,68 @@ describe('FolderSyncService', () => {
       expect(afterDelete.length).toBe(0)
     })
 
+    it('removes materials with null relative_path when not found on disk, but preserves lecture notes', async () => {
+      db.prepare(`
+        INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
+        VALUES (1, 1, 'Biology 101', 'active', ?)
+      `).run(tempDir)
+
+      // Insert an unlinked material (e.g. from wizard or deleted from folder before sync)
+      db.prepare(`
+        INSERT INTO materials (id, subject_id, filename, file_type, content_text, relative_path)
+        VALUES (10, 1, 'old_problem_set.pdf', 'pdf', 'Old problem set text', NULL)
+      `).run()
+
+      // Insert a lecture material linked to a lecture record
+      db.prepare(`
+        INSERT INTO materials (id, subject_id, filename, file_type, content_text, relative_path)
+        VALUES (20, 1, 'Lecture - Intro to Bio.md', 'md', 'Lecture transcript', NULL)
+      `).run()
+      db.prepare(`
+        INSERT INTO lectures (id, subject_id, title, audio_path, material_id)
+        VALUES (1, 1, 'Intro to Bio', '/path/to/audio.webm', 20)
+      `).run()
+
+      // Also create a valid file on disk
+      fs.writeFileSync(path.join(tempDir, 'active_notes.txt'), 'Active notes')
+
+      const result = await FolderSyncService.scanAndSync(db, 1, tempDir)
+      expect(result.success).toBe(true)
+      expect(result.addedCount).toBe(1)
+      expect(result.removedCount).toBe(1)
+
+      const remainingMaterials = db.prepare('SELECT id, filename, relative_path FROM materials WHERE subject_id = 1').all() as any[]
+      // old_problem_set.pdf should be removed
+      expect(remainingMaterials.find((m) => m.id === 10)).toBeUndefined()
+      // Lecture note should be preserved
+      expect(remainingMaterials.find((m) => m.id === 20)).toBeDefined()
+      // active_notes.txt should be present
+      expect(remainingMaterials.find((m) => m.filename === 'active_notes.txt')).toBeDefined()
+    })
+
+    it('populates relative_path on existing material with null relative_path when file matches on disk', async () => {
+      db.prepare(`
+        INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
+        VALUES (1, 1, 'Biology 101', 'active', ?)
+      `).run(tempDir)
+
+      fs.writeFileSync(path.join(tempDir, 'syllabus.md'), '# Course Syllabus')
+
+      // Insert material with null relative_path
+      db.prepare(`
+        INSERT INTO materials (id, subject_id, filename, file_type, content_text, relative_path)
+        VALUES (10, 1, 'syllabus.md', 'md', '# Course Syllabus', NULL)
+      `).run()
+
+      const result = await FolderSyncService.scanAndSync(db, 1, tempDir)
+      expect(result.success).toBe(true)
+      expect(result.addedCount).toBe(0)
+      expect(result.removedCount).toBe(0)
+
+      const mat = db.prepare('SELECT id, filename, relative_path FROM materials WHERE id = 10').get() as any
+      expect(mat.relative_path).toBe('syllabus.md')
+    })
+
     it('handles non-existent folder by recording error status', async () => {
       db.prepare(`
         INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
