@@ -1,11 +1,86 @@
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import ChatMessage from '../../src/components/tutor/ChatMessage'
 
 describe('ChatMessage Component', () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
   it('renders user message plainly', () => {
     render(<ChatMessage role="user" content="Hello tutor, what is the slope?" />)
     expect(screen.getByText('Hello tutor, what is the slope?')).toBeInTheDocument()
+  })
+
+  it('shows a Card action for selected assistant text and passes only the selection', () => {
+    const onExtractCard = jest.fn()
+    const { container } = render(
+      <ChatMessage
+        role="assistant"
+        content="Scarcity means resources are limited relative to human wants."
+        onExtractCard={onExtractCard}
+      />
+    )
+    const message = container.querySelector('.relative') as HTMLElement
+    const selection = {
+      anchorNode: message,
+      focusNode: message,
+      toString: () => 'resources are limited',
+      rangeCount: 1,
+      getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 100, right: 220, top: 80, bottom: 100, width: 120 }) } as Range)
+    } as unknown as Selection
+    jest.spyOn(window, 'getSelection').mockReturnValue(selection)
+
+    fireEvent.mouseUp(message)
+
+    const cardButton = screen.getByRole('button', { name: 'Card' })
+    fireEvent.click(cardButton)
+
+    expect(onExtractCard).toHaveBeenCalledWith('resources are limited')
+    expect(screen.queryByRole('button', { name: 'Card' })).not.toBeInTheDocument()
+  })
+
+  it('does not show the selection Card action for empty selections or user messages', () => {
+    const selection = {
+      anchorNode: document.createElement('span'),
+      toString: () => '',
+      rangeCount: 0
+    } as unknown as Selection
+    jest.spyOn(window, 'getSelection').mockReturnValue(selection)
+
+    const { container } = render(
+      <>
+        <ChatMessage role="assistant" content="An assistant explanation with enough text." onExtractCard={jest.fn()} />
+        <ChatMessage role="user" content="A learner message with enough text." onExtractCard={jest.fn()} />
+      </>
+    )
+
+    const assistantMessage = container.querySelector('.relative') as HTMLElement
+    fireEvent.mouseUp(assistantMessage)
+
+    expect(screen.queryByRole('button', { name: 'Card' })).not.toBeInTheDocument()
+  })
+
+  it('dismisses the selection Card action when clicking outside the message', () => {
+    const onExtractCard = jest.fn()
+    const { container } = render(
+      <ChatMessage role="assistant" content="A tutor explanation with selected text." onExtractCard={onExtractCard} />
+    )
+    const message = container.querySelector('.relative') as HTMLElement
+    const selection = {
+      anchorNode: message,
+      focusNode: message,
+      toString: () => 'selected text',
+      rangeCount: 1,
+      getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 100, right: 180, top: 80, bottom: 100, width: 80 }) } as Range)
+    } as unknown as Selection
+    jest.spyOn(window, 'getSelection').mockReturnValue(selection)
+
+    fireEvent.mouseUp(message)
+    expect(screen.getByRole('button', { name: 'Card' })).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('button', { name: 'Card' })).not.toBeInTheDocument()
   })
 
   it('renders user message containing typed math equations with KaTeX', () => {

@@ -5,6 +5,7 @@ import ChatMessage from '../../components/tutor/ChatMessage'
 import ChatInput from '../../components/tutor/ChatInput'
 import ChatWelcome from '../../components/tutor/ChatWelcome'
 import SaveCardsModal from '../../components/tutor/SaveCardsModal'
+import QuickCardModal, { type QuickCardCandidate } from '../../components/tutor/QuickCardModal'
 import TutorChatSidebar from './TutorChatSidebar'
 import type { Message, LibraryFile } from '../../types'
 
@@ -24,6 +25,10 @@ export default function GeneralChat(): React.JSX.Element {
   const [libraryFiles, setLibraryFiles] = useState<LibraryFile[]>([])
   const [saveCardsContent, setSaveCardsContent] = useState<string | null>(null)
   const [showSaveCards, setShowSaveCards] = useState(false)
+  const [showQuickCardModal, setShowQuickCardModal] = useState(false)
+  const [quickCardLoading, setQuickCardLoading] = useState(false)
+  const [quickCardSnippet, setQuickCardSnippet] = useState('')
+  const [quickCardCandidate, setQuickCardCandidate] = useState<QuickCardCandidate | null>(null)
   const [sessionId, setSessionId] = useState<number | null>(routeSessionId ? Number(routeSessionId) : null)
 
   const streamingRef = useRef('')
@@ -122,7 +127,8 @@ export default function GeneralChat(): React.JSX.Element {
             session_id: sessionId,
             role: 'assistant',
             content: finalContent,
-            content_type: 'text'
+            content_type: 'text',
+            metadata: chunk.metadata
           }).catch(console.error)
 
           setMessages(prev => [...prev, {
@@ -131,6 +137,7 @@ export default function GeneralChat(): React.JSX.Element {
             role: 'assistant',
             content: finalContent,
             content_type: 'text',
+            metadata: chunk.metadata || null,
             created_at: new Date().toISOString()
           }])
         }
@@ -261,6 +268,78 @@ export default function GeneralChat(): React.JSX.Element {
   function handleCardsSaved(_count: number): void {
     setShowSaveCards(false)
     setSaveCardsContent(null)
+  }
+
+  async function handleExtractCard(snippet: string): Promise<void> {
+    const targetSubjectId = selectedSubjectId || activeSubjects[0]?.id
+    if (!targetSubjectId) {
+      addToast({ type: 'error', title: 'Select a class first', message: 'Choose a class context before creating a flashcard.' })
+      return
+    }
+
+    setQuickCardSnippet(snippet)
+    setQuickCardCandidate(null)
+    setQuickCardLoading(true)
+    setShowQuickCardModal(true)
+
+    try {
+      const targetSubject = subjects.find(subject => subject.id === targetSubjectId)
+      const result = await window.electronAPI.tutorExtractCardFromSnippet(targetSubjectId, snippet, targetSubject?.name)
+      if (result.success && result.cards?.[0]) {
+        setQuickCardCandidate({
+          type: result.cards[0].type || 'flashcard',
+          front: result.cards[0].front,
+          back: result.cards[0].back,
+          concept: result.cards[0].concept || targetSubject?.name || 'Key Concept'
+        })
+      } else {
+        setQuickCardCandidate({
+          type: 'flashcard',
+          front: snippet.length > 80 ? `${snippet.substring(0, 80)}...` : snippet,
+          back: '',
+          concept: targetSubject?.name || 'Key Concept'
+        })
+      }
+    } catch (error) {
+      console.error('Extract card error:', error)
+      setQuickCardCandidate({
+        type: 'flashcard',
+        front: snippet.length > 80 ? `${snippet.substring(0, 80)}...` : snippet,
+        back: '',
+        concept: subjects.find(subject => subject.id === targetSubjectId)?.name || 'Key Concept'
+      })
+    } finally {
+      setQuickCardLoading(false)
+    }
+  }
+
+  async function handleSaveQuickCard(card: QuickCardCandidate): Promise<void> {
+    const targetSubjectId = selectedSubjectId || activeSubjects[0]?.id
+    if (!targetSubjectId) {
+      addToast({ type: 'error', title: 'Select a class first', message: 'Choose a class context before saving this card.' })
+      return
+    }
+
+    try {
+      await window.electronAPI.saveCard({
+        subject_id: targetSubjectId,
+        type: card.type,
+        front: card.front,
+        back: card.back,
+        concept: card.concept || subjects.find(subject => subject.id === targetSubjectId)?.name || null,
+        is_manual: 0,
+        source: 'tutor'
+      })
+      addToast({
+        type: 'success',
+        title: 'Card saved',
+        message: `Added "${card.front.length > 40 ? `${card.front.substring(0, 40)}...` : card.front}" to your deck.`
+      })
+      setShowQuickCardModal(false)
+    } catch (error) {
+      console.error('Error saving quick card:', error)
+      addToast({ type: 'error', title: 'Save failed', message: 'Could not save card to deck.' })
+    }
   }
 
   // ── File attachment ──
@@ -397,6 +476,7 @@ export default function GeneralChat(): React.JSX.Element {
                 content={msg.content}
                 created_at={msg.created_at}
                 onSaveCards={msg.role === 'assistant' ? handleSaveCards : undefined}
+                onExtractCard={msg.role === 'assistant' ? handleExtractCard : undefined}
               />
             ))}
 
@@ -444,6 +524,15 @@ export default function GeneralChat(): React.JSX.Element {
           onSaved={handleCardsSaved}
         />
       )}
+
+      <QuickCardModal
+        isOpen={showQuickCardModal}
+        isLoading={quickCardLoading}
+        snippet={quickCardSnippet}
+        initialCard={quickCardCandidate}
+        onSave={handleSaveQuickCard}
+        onClose={() => setShowQuickCardModal(false)}
+      />
 
       {/* Input */}
       <div className="flex-shrink-0">

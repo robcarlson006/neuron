@@ -35,9 +35,20 @@ export default function TutorSession(): React.JSX.Element {
   const [viewTranscript, setViewTranscript] = useState(false)
   const [sessionEvaluation, setSessionEvaluation] = useState<TutorSessionEvaluation | null>(null)
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
+  const [draft, setDraft] = useState('')
+  const [checkpointStatus, setCheckpointStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [focusKey, setFocusKey] = useState(0)
   const [quickApiKey, setQuickApiKey] = useState('')
   const [savingQuickKey, setSavingQuickKey] = useState(false)
+  const [difficultyMeta, setDifficultyMeta] = useState<{
+    difficultyMode?: string
+    servedDifficultyLevel?: number
+    servedDifficultyScore?: number
+    adaptiveReason?: string
+    retentionStatus?: string
+    uncertainty?: number
+  } | null>(null)
+  const [showDifficultyReason, setShowDifficultyReason] = useState(false)
 
   // Syllabus context
   const [currentModule, setCurrentModule] = useState<SyllabusModule | null>(null)
@@ -70,6 +81,45 @@ export default function TutorSession(): React.JSX.Element {
   // Quick Review state
   const [quickReviewTopicIndex, setQuickReviewTopicIndex] = useState<number>(1)
   const [showRoadmapModal, setShowRoadmapModal] = useState<boolean>(false)
+
+  const checkpointKey = sessionId ? `neuron:tutor-checkpoint:${sessionId}` : null
+
+  async function saveCheckpoint(): Promise<void> {
+    if (!checkpointKey || !sessionId) return
+    try {
+      await window.electronAPI.setMeta(checkpointKey, JSON.stringify({
+        version: 1,
+        sessionId,
+        phase: sessionPhase,
+        runtime,
+        isPaused,
+        quickReviewTopicIndex,
+        draft,
+        attachedFile: attachedFile ? { name: attachedFile.name, content: attachedFile.content } : null,
+        currentModuleId: currentModule?.id || null,
+        savedAt: Date.now()
+      }))
+      setCheckpointStatus('saved')
+    } catch {
+      setCheckpointStatus('error')
+    }
+  }
+
+  useEffect(() => {
+    if (!checkpointKey || pageState === 'loading') return
+    const timer = window.setTimeout(() => { void saveCheckpoint() }, 700)
+    return () => window.clearTimeout(timer)
+  }, [checkpointKey, pageState, sessionPhase, runtime, isPaused, quickReviewTopicIndex, draft, attachedFile, currentModule?.id])
+
+  useEffect(() => {
+    if (!checkpointKey) return
+    const flush = (): void => { void saveCheckpoint() }
+    window.addEventListener('beforeunload', flush)
+    return () => {
+      window.removeEventListener('beforeunload', flush)
+      flush()
+    }
+  }, [checkpointKey, sessionId, sessionPhase, runtime, isPaused, quickReviewTopicIndex, draft, attachedFile, currentModule?.id])
 
   // In-flight card extraction state
   const [showQuickCardModal, setShowQuickCardModal] = useState(false)
@@ -291,7 +341,9 @@ export default function TutorSession(): React.JSX.Element {
 
           const restoredConfig: TutorSessionConfig = {
             duration_minutes: s.duration_minutes ?? config.duration_minutes ?? null,
-            depth_level: ((s.depth_level as 1 | 2 | 3 | 4 | 5 | 'adaptive') ?? config.depth_level ?? 'adaptive'),
+            depth_level: s.difficulty_mode === 'adaptive'
+              ? 'adaptive'
+              : ((s.depth_level as 1 | 2 | 3 | 4 | 5) ?? (config.depth_level === 'adaptive' ? 3 : config.depth_level ?? 3)),
             never_studied: Boolean(s.never_studied ?? config.never_studied),
             module_id: s.module_id || config.module_id || undefined,
             target_topic: config.target_topic,
@@ -323,9 +375,14 @@ export default function TutorSession(): React.JSX.Element {
               role: m.role as 'user' | 'assistant' | 'system',
               content: m.content,
               content_type: m.content_type || 'text',
+              metadata: m.metadata || null,
               created_at: m.created_at
             }))
           setMessages(hydrated)
+          const latestMetadata = [...hydrated].reverse().find(message => message.role === 'assistant' && message.metadata)?.metadata
+          if (latestMetadata) {
+            try { setDifficultyMeta(JSON.parse(latestMetadata)) } catch { /* optional diagnostic metadata */ }
+          }
 
           // Restore timer state
           const startedAt = new Date(s.started_at).getTime()
@@ -351,7 +408,51 @@ export default function TutorSession(): React.JSX.Element {
             }
           }
 
-          setRuntime({
+          let checkpoint: {
+            runtime?: TutorSessionRuntime
+            phase?: SessionPhase
+            isPaused?: boolean
+            quickReviewTopicIndex?: number
+            draft?: string
+            attachedFile?: { name: string; content: string } | null
+          } | null = null
+          try {
+            const rawCheckpoint = await window.electronAPI.getMeta(`neuron:tutor-checkpoint:${s.id}`)
+            if (rawCheckpoint) checkpoint = JSON.parse(rawCheckpoint)
+          } catch { /* an absent or malformed checkpoint should not block resume */ }
+
+          const restoredRuntime = checkpoint?.runtime && checkpoint.runtime.config
+            ? {
+                ...checkpoint.runtime,
+                config: { ...restoredConfig, ...checkpoint.runtime.config }
+              }
+            : {
+                config: restoredConfig,
+                started_at: now - (elapsedSecs * 1000),
+                time_elapsed_seconds: elapsedSecs,
+                time_remaining_seconds: remainingSecs,
+                is_time_up: s.phase === 'complete',
+                topics_covered: [],
+                questions_asked: [],
+                topics_mastered: [],
+                weak_topics: []
+              }
+
+          setRuntime(restoredRuntime)
+          setIsPaused(Boolean(checkpoint?.isPaused || restoredRuntime.is_paused))
+          if (checkpoint?.phase) {
+            setSessionPhase(checkpoint.phase)
+            sessionPhaseRef.current = checkpoint.phase
+          }
+          if (checkpoint?.quickReviewTopicIndex) setQuickReviewTopicIndex(checkpoint.quickReviewTopicIndex)
+          if (checkpoint?.draft) setDraft(checkpoint.draft)
+          if (checkpoint?.attachedFile) setAttachedFile(checkpoint.attachedFile)
+
+          /*
+           * The database remains the source of truth for messages and
+           * completion. The checkpoint only restores volatile UI state.
+           */
+          /* setRuntime({
             config: restoredConfig,
             started_at: now - (elapsedSecs * 1000),
             time_elapsed_seconds: elapsedSecs,
@@ -361,7 +462,7 @@ export default function TutorSession(): React.JSX.Element {
             questions_asked: [],
             topics_mastered: [],
             weak_topics: []
-          })
+          }) */
 
           if (s.phase === 'complete') {
             setSessionEnded(true)
@@ -379,9 +480,10 @@ export default function TutorSession(): React.JSX.Element {
 
       // ── CASE 2: No specific session requested — check if there is an existing session to resume ──
       if (!isExplicitNew && !configParam) {
-        const existingList = await window.electronAPI.tutorListSessions(subjectId, 1)
-        if (existingList && existingList.length > 0) {
-          navigate(`/tutor/${subjectId}/session/${existingList[0].id}`, { replace: true })
+        const existingList = await window.electronAPI.tutorListSessions(subjectId, 25)
+        const resumable = existingList?.find((candidate) => candidate.phase !== 'complete' && !candidate.ended_at)
+        if (resumable) {
+          navigate(`/tutor/${subjectId}/session/${resumable.id}`, { replace: true })
           return
         }
       }
@@ -417,6 +519,7 @@ export default function TutorSession(): React.JSX.Element {
         {
           duration_minutes: config.duration_minutes !== null ? config.duration_minutes : null,
           depth_level: config.depth_level === 'adaptive' ? 3 : config.depth_level,
+          difficulty_mode: config.depth_level === 'adaptive' ? 'adaptive' : 'fixed',
           never_studied: config.never_studied ? 1 : 0,
           title: sessionTitle
         }
@@ -547,7 +650,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     message: string,
     phase: SessionPhase,
     history: { role: 'user' | 'assistant'; content: string }[],
-    attached?: { name: string; content: string }
+    attached?: { name: string; content: string },
+    studentMessageId?: string
   ): Promise<void> {
     setSending(true)
     setPageState('streaming')
@@ -567,6 +671,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     try {
       await window.electronAPI.tutorStreamChat({
         sessionId: convId,
+        studentMessageId,
         subjectId,
         message,
         sessionType: 'tutor',
@@ -581,8 +686,12 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         attachedContent: attached?.content,
         durationMinutes: runtime.config.duration_minutes,
         depthLevel: runtime.config.depth_level,
+        difficultyMode: runtime.config.depth_level === 'adaptive' ? 'adaptive' : 'fixed',
         neverStudied: runtime.config.never_studied,
         materialId: sessionConfig?.material_id || runtime.config.material_id,
+        annotationContext: sessionConfig?.annotation_ids || sessionConfig?.lecture_ids
+          ? { annotationIds: sessionConfig.annotation_ids, lectureIds: sessionConfig.lecture_ids }
+          : undefined,
         targetTopic: sessionConfig?.target_topic || runtime.config.target_topic,
         targetTopics: sessionConfig?.target_topics || runtime.config.target_topics,
         isFillGaps: sessionConfig?.is_fill_gaps || runtime.config.is_fill_gaps,
@@ -830,6 +939,13 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         streamingRef.current = ''
         setStreamingContent('')
 
+        if (chunk.metadata) {
+          try {
+            const parsed = JSON.parse(chunk.metadata) as typeof difficultyMeta
+            setDifficultyMeta(parsed)
+          } catch { /* diagnostic metadata is optional */ }
+        }
+
         const activeSessionId = chunk.conversationId || sessionIdRef.current
         if (finalContent && activeSessionId) {
           // If session is timed and still has time remaining, strip premature [SESSION_END] tag
@@ -843,7 +959,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             session_id: activeSessionId,
             role: 'assistant',
             content: displayContent,
-            content_type: 'text'
+            content_type: 'text',
+            metadata: chunk.metadata
           }).catch(console.error)
 
           setMessages(prev => [...prev, {
@@ -852,6 +969,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             role: 'assistant',
             content: displayContent,
             content_type: 'text',
+            metadata: chunk.metadata || null,
             created_at: new Date().toISOString()
           }])
 
@@ -938,7 +1056,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-    await streamMessage(sessionId, message, sessionPhase, history, attachedFile || undefined)
+    await streamMessage(sessionId, message, sessionPhase, history, attachedFile || undefined, userMsg.id)
 
     // Clear attachment after sending
     setAttachedFile(null)
@@ -996,7 +1114,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-    await streamMessage(sessionId!, transitionMsg, 'socratic', history)
+    await streamMessage(sessionId!, transitionMsg, 'socratic', history, undefined, userMsg.id)
   }
 
   async function handleTransitionToSummary(): Promise<void> {
@@ -1017,7 +1135,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-    await streamMessage(sessionId!, transitionMsg, 'summary', history)
+    await streamMessage(sessionId!, transitionMsg, 'summary', history, undefined, userMsg.id)
   }
 
   function handleBackNavigation(): void {
@@ -1069,6 +1187,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
           moduleId: currentModule?.id || sessionConfig?.module_id
         }
       )
+      if (checkpointKey) await window.electronAPI.setMeta(checkpointKey, '')
       if (res && (res as { evaluation?: TutorSessionEvaluation }).evaluation) {
         const evalData = (res as { evaluation: TutorSessionEvaluation }).evaluation
         setSessionEvaluation(evalData)
@@ -1473,8 +1592,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
         {/* Top bar - hidden when in Focus Block */}
         {!focusBlock?.isRunning && (
-          <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
-            <div className="flex items-center gap-2.5">
+          <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between gap-4 flex-shrink-0 overflow-x-auto">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
               <button
                 onClick={handleBackNavigation}
                 title="Back to Tutor Hub"
@@ -1507,23 +1626,43 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 </svg>
               </button>
 
-              <div>
-                <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50 flex items-center gap-1.5">
+              <div className="min-w-0">
+                <h1 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-50">
                   {sessionConfig?.is_quick_review && (
                     <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                       ⚡ Quick Review
                     </span>
                   )}
-                  <span>{subject?.name || 'Tutor Session'}</span>
+                  <span className="truncate">{subject?.name || 'Tutor Session'}</span>
                 </h1>
-              <p className="text-xs text-slate-400 dark:text-slate-500">
+              <p className="truncate text-xs text-slate-400 dark:text-slate-500">
                 {sessionPhase === 'complete' ? 'Session ended' : phaseLabels[sessionPhase]}
                 {sessionConfig?.material_name ? ` · 📄 ${sessionConfig.material_name}` : (currentModule && ` · ${currentModule.title}`)}
               </p>
+              {difficultyMeta?.servedDifficultyLevel && (
+                <div className="relative mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowDifficultyReason(prev => !prev)}
+                    className="text-[11px] text-violet-600 dark:text-violet-300 hover:underline"
+                    aria-label="Why this difficulty?"
+                  >
+                    {difficultyMeta.difficultyMode === 'adaptive' ? '🤖 Adaptive' : '🎯 Fixed'} · Level {difficultyMeta.servedDifficultyLevel}
+                  </button>
+                  {showDifficultyReason && (
+                    <div className="absolute z-20 left-0 top-5 w-72 rounded-xl border border-violet-200 dark:border-violet-800 bg-white dark:bg-slate-800 p-3 shadow-xl text-[11px] text-slate-600 dark:text-slate-300">
+                      <p className="font-semibold text-slate-800 dark:text-slate-100 mb-1">Why this difficulty?</p>
+                      <p>{difficultyMeta.adaptiveReason || 'Based on your selected level.'}</p>
+                      {difficultyMeta.retentionStatus && <p className="mt-1">Retention: {difficultyMeta.retentionStatus}</p>}
+                      {difficultyMeta.uncertainty !== undefined && <p className="mt-1">Calibration confidence: {Math.round((1 - difficultyMeta.uncertainty) * 100)}%</p>}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-shrink-0 items-center gap-2 whitespace-nowrap">
             {/* Dynamic phase progress dots (aesthetic) */}
             <div className="flex items-center gap-1.5" title={sessionPhase === 'complete' ? 'Session Complete' : progressDotLabels[aestheticProgressIdx]}>
               {[0, 1, 2, 3].map((stepIdx) => {
@@ -1551,7 +1690,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 type="button"
                 onClick={handleTogglePause}
                 title={isPaused ? "Resume session (timer continues)" : "Pause session (timer freezes, take a break)"}
-                className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border transition-all ${
+                className={`flex min-w-[4.75rem] items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
                   isPaused
                     ? 'bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900/70 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 shadow-xs'
                     : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200/80 dark:border-slate-700/80'
@@ -1568,7 +1707,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 type="button"
                 onClick={() => setShowTimerMenu(prev => !prev)}
                 title="Click to adjust session duration and pacing"
-                className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-all ${
+                className={`flex min-w-[8.75rem] items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium tabular-nums transition-colors ${
                   isPaused
                     ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 font-semibold'
                     : runtime.config.duration_minutes === null
@@ -1781,6 +1920,11 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             >
               End Session
             </button>
+            <span className={`hidden w-14 shrink-0 text-center text-[10px] font-medium sm:inline-block ${
+              checkpointStatus === 'error' ? 'text-rose-500' : 'text-emerald-500'
+            }`} aria-live="polite">
+              {checkpointStatus === 'error' ? 'Save failed' : checkpointStatus === 'saved' ? 'Saved' : ''}
+            </span>
           </div>
         </div>
       )}
@@ -2056,6 +2200,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
               refocusKey={focusKey}
               attachedFile={attachedFile?.name || null}
               onClearAttachment={() => setAttachedFile(null)}
+              value={draft}
+              onChange={setDraft}
               placeholder={
                 sending ? 'Waiting for tutor...' :
                 sessionPhase === 'structured_qa' ? 'Type your answer...' :
