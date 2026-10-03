@@ -7,6 +7,7 @@ import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
 import { FolderSyncService } from './folderSyncService'
 import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
+import { normalizeMathText } from '../../src/lib/mathFormatter'
 import type { ClassCreationData, Subject, Card } from '../../src/types'
 
 let db: Database.Database
@@ -23,13 +24,15 @@ export function registerClassHandlers(): void {
 
     // 1. Create the subject (extended with class metadata)
     const subjectResult = db.prepare(`
-      INSERT INTO subjects (user_id, name, status, course_code, subject_type, time_commitment_minutes, linked_folder_path, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO subjects (user_id, name, status, course_code, subject_icon, color, subject_type, time_commitment_minutes, linked_folder_path, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       userId,
       data.name.trim(),
       data.status || 'active',
       data.courseCode || null,
+      data.subjectIcon || 'book-open',
+      data.color || '#8b5cf6',
       data.subjectType || 'class',
       data.timeCommitmentMinutes || 60,
       data.linkedFolderPath || null,
@@ -443,7 +446,7 @@ async function generateCardsAsync(subjectId: number, materialIds: number[]): Pro
 
       db.transaction(() => {
         for (const c of consolidated) {
-          const r = insertCard.run(subjectId, materialId, c.type, c.front, c.back, c.concept || subject.name, folderId, now)
+          const r = insertCard.run(subjectId, materialId, c.type, normalizeMathText(c.front || ''), normalizeMathText(c.back || ''), c.concept || subject.name, folderId, now)
           insertSchedule.run(r.lastInsertRowid, uid, now)
         }
       })()

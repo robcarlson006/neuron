@@ -122,4 +122,33 @@ describe('CalendarRepo & Context Detection', () => {
     const afterContext = repo.detectCurrentContext(1, new Date('2026-09-06T13:00:00'))
     expect(afterContext).toBeNull()
   })
+
+  test('persists study block metadata and protects synced events', () => {
+    const block = repo.saveEvent(1, {
+      title: 'Focus block',
+      start_time: '2026-09-06T14:00:00',
+      end_time: '2026-09-06T14:45:00',
+      all_day: 0,
+      subject_id: 1,
+      event_type: 'study',
+      focus_minutes: 45,
+      focus_action: 'tutor'
+    })
+    expect(block.study_status).toBe('planned')
+    expect(block.focus_action).toBe('tutor')
+    const completed = repo.updateStudyStatus(1, block.id, 'completed')
+    expect(completed.study_status).toBe('completed')
+    db.prepare("INSERT INTO calendar_sources (id, user_id, name, type) VALUES (9, 1, 'Imported', 'ical')").run()
+    db.prepare('UPDATE calendar_events SET source_id = 9 WHERE id = ?').run(block.id)
+    expect(() => repo.saveEvent(1, { ...block, title: 'Should not edit' })).toThrow(/read-only/i)
+  })
+
+  test('rejects invalid event time ranges', () => {
+    expect(() => repo.saveEvent(1, {
+      title: 'Invalid',
+      start_time: '2026-09-06T11:00:00',
+      end_time: '2026-09-06T10:00:00',
+      event_type: 'lecture'
+    })).toThrow(/after its start time/i)
+  })
 })

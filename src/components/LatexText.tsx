@@ -51,7 +51,8 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
     html = katex.renderToString(cleanLatex, {
       throwOnError: false,
       displayMode,
-      output: 'html'
+      output: 'htmlAndMathml',
+      trust: false
     })
     // Check if KaTeX returned an error element
     if (html.includes('katex-error')) {
@@ -68,7 +69,8 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
       html = katex.renderToString(repaired, {
         throwOnError: false,
         displayMode,
-        output: 'html'
+        output: 'htmlAndMathml',
+        trust: false
       })
       if (!html.includes('katex-error')) {
         error = false
@@ -96,6 +98,7 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
   return (
     <span
       className={displayMode ? 'block my-2 overflow-x-auto max-w-full text-center' : 'inline-block align-middle max-w-full break-words'}
+      aria-label={cleanLatex}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )

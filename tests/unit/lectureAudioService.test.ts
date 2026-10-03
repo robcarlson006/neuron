@@ -88,4 +88,27 @@ describe('LectureAudioService', () => {
     expect(fs.existsSync(finalized.audioPath)).toBe(false)
     expect(LectureAudioService.getLecture(finalized.lectureId)).toBeNull()
   })
+
+  test('backfills linked-folder artifacts when listing ready lectures', () => {
+    db.prepare('UPDATE subjects SET linked_folder_path = ? WHERE id = 1').run(tempDir)
+    db.prepare('INSERT INTO materials (subject_id, filename, file_type, content_text) VALUES (1, ?, ?, ?)').run(
+      'Lecture - Ready.md', 'md', '## Generated notes\n\n- Keep this section.'
+    )
+    const materialId = Number(db.prepare('SELECT last_insert_rowid() AS id').get().id)
+    db.prepare(`
+      INSERT INTO lectures (subject_id, title, audio_path, status, raw_transcript, material_id)
+      VALUES (1, ?, ?, 'ready', ?, ?)
+    `).run('Ready Lecture', path.join(tempDir, 'ready.webm'), '[00:01] Transcript text.', materialId)
+    db.prepare(`
+      INSERT INTO lectures (subject_id, title, audio_path, status)
+      VALUES (1, ?, ?, 'recorded')
+    `).run('Unfinished Lecture', path.join(tempDir, 'unfinished.webm'))
+
+    const listed = LectureAudioService.listLectures(1)
+
+    expect(listed).toHaveLength(2)
+    expect(fs.readFileSync(path.join(tempDir, '.neuron', 'lectures', 'Ready Lecture-1.transcript.md'), 'utf8')).toContain('Transcript text.')
+    expect(fs.readFileSync(path.join(tempDir, '.neuron', 'lectures', 'Ready Lecture-1.notes.md'), 'utf8')).toContain('Keep this section.')
+    expect(fs.existsSync(path.join(tempDir, '.neuron', 'lectures', 'Unfinished Lecture-2.transcript.md'))).toBe(false)
+  })
 })

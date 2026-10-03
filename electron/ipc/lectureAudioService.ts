@@ -10,6 +10,7 @@ import {
   type CascadeDB
 } from '../../src/lib/db'
 import type { Lecture } from '../../src/types'
+import { exportLectureArtifacts } from './lectureArtifactService'
 
 export interface ActiveRecordingSession {
   sessionId: string
@@ -188,7 +189,19 @@ class LectureAudioServiceManager {
 
   public listLectures(subjectId: number): Lecture[] {
     if (!this.db) return []
-    return listLecturesBySubject(this.db, subjectId)
+    const lectures = listLecturesBySubject(this.db, subjectId)
+    // Backfill sidecars for completed recordings created before linked-folder
+    // export was introduced, and keep the canonical Desktop folder current
+    // whenever the lecture list is opened.
+    for (const lecture of lectures) {
+      if (lecture.status !== 'ready' || !lecture.raw_transcript) continue
+      try {
+        exportLectureArtifacts(this.db, lecture.id)
+      } catch (error) {
+        console.warn(`Could not export lecture ${lecture.id} artifacts:`, error)
+      }
+    }
+    return lectures
   }
 
   public async deleteLecture(lectureId: number, deleteAudioFile = true): Promise<boolean> {

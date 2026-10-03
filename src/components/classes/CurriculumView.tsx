@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { SyllabusModule, ModuleTopic, ModuleCardGenOptions, ModuleTutorStats } from '../../types'
 import GenerateCardsModal from './GenerateCardsModal'
 
@@ -11,6 +11,7 @@ interface CurriculumViewProps {
   onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
   onToggleTopic: (topicId: number, studied: boolean) => void
   loadingCards?: Record<number, boolean>
+  focusTopicId?: number
 }
 
 const DEPTH_NAMES: Record<number, string> = {
@@ -60,7 +61,8 @@ export default function CurriculumView({
   onStartSpacedReview,
   onGenerateCards,
   onToggleTopic,
-  loadingCards
+  loadingCards,
+  focusTopicId
 }: CurriculumViewProps): React.JSX.Element {
   const [expandedModule, setExpandedModule] = useState<number | null>(
     modules.find(m => m.status === 'in_progress')?.id ?? null
@@ -68,6 +70,17 @@ export default function CurriculumView({
   const [modalModule, setModalModule] = useState<(SyllabusModule & { topics?: ModuleTopic[] }) | null>(null)
   const [modalInitialTopicId, setModalInitialTopicId] = useState<number | undefined>(undefined)
   const [selectedTopicsByModule, setSelectedTopicsByModule] = useState<Record<number, Set<number>>>({})
+
+  useEffect(() => {
+    if (!focusTopicId) return
+    const module = modules.find(item => item.topics?.some(topic => topic.id === focusTopicId))
+    if (!module) return
+    setExpandedModule(module.id)
+    const timer = window.setTimeout(() => {
+      document.querySelector(`[data-curriculum-topic="${focusTopicId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 50)
+    return () => window.clearTimeout(timer)
+  }, [focusTopicId, modules])
 
   function toggleModule(id: number): void {
     setExpandedModule(prev => prev === id ? null : id)
@@ -123,6 +136,10 @@ export default function CurriculumView({
       .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
       .map(t => ({ moduleId: mod.id, moduleTitle: mod.title, topic: t }))
   )
+  const estimatedNewContentMinutes = allNewTopics.reduce(
+    (sum, item) => sum + (Number(item.topic.estimated_minutes) || 15),
+    0
+  )
 
   return (
     <div className="space-y-2">
@@ -139,11 +156,11 @@ export default function CurriculumView({
                   New Content Added
                 </h3>
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200">
-                  {allNewTopics.length} new topic{allNewTopics.length > 1 ? 's' : ''} to review
+                  {allNewTopics.length} new topic{allNewTopics.length > 1 ? 's' : ''} to review · ~{estimatedNewContentMinutes}m onboarding
                 </span>
               </div>
               <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-400 mt-0.5 truncate">
-                Recently added study materials introduced new topics and concepts to your curriculum.
+                Start with closed-book recall, then get source-grounded feedback. Neuron will schedule the first follow-up reviews after successful retrieval.
               </p>
             </div>
           </div>
@@ -276,7 +293,7 @@ export default function CurriculumView({
                 ${isInProgress ? 'bg-sky-100 dark:bg-sky-800/50 text-sky-600 dark:text-sky-300' : ''}
                 ${isPending ? 'bg-slate-100 dark:bg-slate-700 text-slate-400' : ''}
               `}>
-                {isCompleted ? 'Completed' : isInProgress ? 'In Progress' : 'Pending'}
+                {isCompleted ? 'Reviewed' : isInProgress ? 'In Progress' : 'Needs study'}
               </span>
 
               {/* Expand arrow */}
@@ -332,7 +349,7 @@ export default function CurriculumView({
                   <div className="px-4 py-3 space-y-2">
                     <div className="flex items-center justify-between pb-1">
                       <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                        Topics ({completedCount}/{modTopics.length} completed)
+                        Topics ({completedCount}/{modTopics.length} reviewed)
                       </p>
                       {modTopics.length > 1 && (
                         <div className="flex items-center gap-2 text-[11px]">
@@ -375,6 +392,7 @@ export default function CurriculumView({
                         return (
                           <div
                             key={topic.id}
+                            data-curriculum-topic={topic.id}
                             className={`flex items-center justify-between gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors ${
                               isSelected
                                 ? 'bg-violet-50 dark:bg-violet-950/30 border border-violet-200/80 dark:border-violet-800/50'
@@ -457,19 +475,26 @@ export default function CurriculumView({
                               {topicCompleted ? (
                                 <div className="flex items-center gap-1.5">
                                   {/* Retention Status Indicator */}
-                                  {topic.retention_status === 'overdue' ? (
+                                  {topic.retention_status === 'overdue' || topic.review_status === 'due_now' ? (
                                     <span
                                       title={`Retention decayed to ${Math.round((topic.retrievability ?? 0.5) * 100)}% (${topic.days_overdue ?? 1}d overdue). Memory requires review!`}
                                       className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 flex items-center gap-1 animate-pulse"
                                     >
                                       <span>⚠️</span> {Math.round((topic.retrievability ?? 0.5) * 100)}% Due
                                     </span>
-                                  ) : topic.retention_status === 'fading' ? (
+                                  ) : topic.retention_status === 'fading' || topic.review_status === 'due_today' ? (
                                     <span
                                       title={`Retention at ${Math.round((topic.retrievability ?? 0.75) * 100)}%. Memory fading - review soon.`}
                                       className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1"
                                     >
                                       <span>⏳</span> {Math.round((topic.retrievability ?? 0.75) * 100)}% Fading
+                                    </span>
+                                  ) : topic.review_status === 'upcoming' ? (
+                                    <span
+                                      title={`Next review due ${topic.next_review_due || 'soon'}.`}
+                                      className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-sky-100/70 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                                    >
+                                      📅 {topic.next_review_due || 'Upcoming'}
                                     </span>
                                   ) : topic.retrievability !== undefined ? (
                                     <span
@@ -486,10 +511,10 @@ export default function CurriculumView({
                                       e.stopPropagation()
                                       onToggleTopic(topic.id, false)
                                     }}
-                                    title="Completed. Click to mark as uncompleted."
+                                    title="Reviewed. Click to mark this topic for another study pass."
                                     className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100/90 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700/60 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-emerald-200 dark:hover:bg-emerald-800/60 transition-colors"
                                   >
-                                    <span>✓</span> Completed
+                                    <span>✓</span> Reviewed · Revisit
                                   </button>
                                 </div>
                               ) : (
@@ -508,12 +533,20 @@ export default function CurriculumView({
                                       e.stopPropagation()
                                       onToggleTopic(topic.id, true)
                                     }}
-                                    title="Mark as completed"
+                                    title="Mark as reviewed"
                                     className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-0.5 rounded-full transition-colors"
                                   >
-                                    Mark complete
+                                    Mark reviewed
                                   </button>
                                 </div>
+                              )}
+                              {!topicCompleted && Boolean(topic.has_new_material || topic.is_gap) && (
+                                <span
+                                  title={`Estimated onboarding time: ${topic.estimated_minutes || 15} minutes`}
+                                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60"
+                                >
+                                  ✨ New · ~{topic.estimated_minutes || 15}m
+                                </span>
                               )}
                             </div>
                           </div>

@@ -124,7 +124,7 @@ describe('Dashboard Component', () => {
     )
 
     await waitFor(() => {
-      const addSubjectBtn = screen.getByRole('button', { name: /\+ Add Subject/i })
+      const addSubjectBtn = screen.getByRole('button', { name: /Add Subject/i })
       expect(addSubjectBtn).toBeInTheDocument()
       addSubjectBtn.click()
       expect(handleNewSubject).toHaveBeenCalledTimes(1)

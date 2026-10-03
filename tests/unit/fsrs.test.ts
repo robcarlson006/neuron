@@ -5,6 +5,7 @@ import {
   seedFromSM2,
   adjustRatingByResponseTime,
   boostForExam,
+  explainReviewDecision,
   projectRetention,
   suggestRetention,
   DEFAULT_FSRS_PARAMS,
@@ -200,6 +201,19 @@ describe('FSRS-5 scheduler', () => {
     it('does not boost for non-positive days', () => {
       expect(boostForExam(10, 0)).toBe(10)
       expect(boostForExam(10, -5)).toBe(10)
+    })
+  })
+
+  describe('explainReviewDecision', () => {
+    test('prioritizes exam boosts and recent lapses', () => {
+      expect(explainReviewDecision({ examBoosted: true, rating: 3 })).toBe('exam_boost')
+      expect(explainReviewDecision({ rating: 1 })).toBe('recent_lapse')
+    })
+
+    test('explains due, fading, and scheduled reviews', () => {
+      expect(explainReviewDecision({ dueDate: '2020-01-01', retrievability: 0.95 })).toBe('due_now')
+      expect(explainReviewDecision({ dueDate: '2999-01-01', retrievability: 0.85 })).toBe('retention_fading')
+      expect(explainReviewDecision({ dueDate: '2999-01-01', retrievability: 0.95 })).toBe('scheduled')
     })
   })
 

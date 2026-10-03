@@ -86,11 +86,24 @@ export class CalendarRepo {
   }
 
   saveEvent(userId: number, event: Partial<CalendarEvent>): CalendarEvent {
+    if (!event.title?.trim()) throw new Error('Event title is required')
+    if (!event.start_time || !event.end_time || new Date(event.end_time).getTime() <= new Date(event.start_time).getTime()) {
+      throw new Error('Event end time must be after its start time')
+    }
+    const isStudy = event.event_type === 'study'
+    if (isStudy && event.focus_minutes != null && (!Number.isInteger(event.focus_minutes) || event.focus_minutes < 5 || event.focus_minutes > 480)) {
+      throw new Error('Study blocks must be between 5 and 480 minutes')
+    }
+
     if (event.id) {
+      const existing = this.db.prepare('SELECT * FROM calendar_events WHERE id = ? AND user_id = ?').get(event.id, userId) as CalendarEvent | undefined
+      if (!existing) throw new Error('Calendar event not found')
+      if (existing.source_id) throw new Error('Synced calendar events are read-only')
       this.db.prepare(`
         UPDATE calendar_events
         SET title = ?, description = ?, location = ?, start_time = ?, end_time = ?,
-            all_day = ?, subject_id = ?, event_type = ?, updated_at = datetime('now')
+            all_day = ?, subject_id = ?, event_type = ?, study_status = ?, focus_minutes = ?,
+            focus_action = ?, daily_plan_id = ?, updated_at = datetime('now')
         WHERE id = ? AND user_id = ?
       `).run(
         event.title,
@@ -101,6 +114,10 @@ export class CalendarRepo {
         event.all_day ? 1 : 0,
         event.subject_id || null,
         event.event_type || 'lecture',
+        event.study_status || 'planned',
+        event.focus_minutes || null,
+        event.focus_action || null,
+        event.daily_plan_id || null,
         event.id,
         userId
       )
@@ -110,11 +127,12 @@ export class CalendarRepo {
     const res = this.db.prepare(`
       INSERT INTO calendar_events (
         user_id, source_id, external_id, title, description, location,
-        start_time, end_time, all_day, recurrence_rule, subject_id, event_type
+        start_time, end_time, all_day, recurrence_rule, subject_id, event_type,
+        study_status, focus_minutes, focus_action, daily_plan_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      userId,
+        userId,
       event.source_id || null,
       event.external_id || null,
       event.title,
@@ -125,18 +143,28 @@ export class CalendarRepo {
       event.all_day ? 1 : 0,
       event.recurrence_rule || null,
       event.subject_id || null,
-      event.event_type || 'lecture'
-    )
+        event.event_type || 'lecture',
+        event.study_status || 'planned',
+        event.focus_minutes || null,
+        event.focus_action || null,
+        event.daily_plan_id || null
+      )
 
     const newId = Number(res.lastInsertRowid)
     return this.getEventById(newId)!
   }
 
   deleteEvent(eventId: number): boolean {
-    const res = this.db.prepare(`
-      DELETE FROM calendar_events WHERE id = ?
-    `).run(eventId)
+    const res = this.db.prepare(`DELETE FROM calendar_events WHERE id = ? AND source_id IS NULL`).run(eventId)
     return res.changes > 0
+  }
+
+  updateStudyStatus(userId: number, eventId: number, status: 'planned' | 'completed' | 'skipped'): CalendarEvent {
+    const existing = this.db.prepare('SELECT * FROM calendar_events WHERE id = ? AND user_id = ?').get(eventId, userId) as CalendarEvent | undefined
+    if (!existing) throw new Error('Calendar event not found')
+    if (existing.source_id || existing.event_type !== 'study') throw new Error('Only local study blocks can be completed')
+    this.db.prepare(`UPDATE calendar_events SET study_status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`).run(status, eventId, userId)
+    return this.getEventById(eventId)!
   }
 
   detectCurrentContext(userId: number, referenceTime: Date = new Date()): CalendarScheduleContext | null {
@@ -283,8 +311,14 @@ export function registerCalendarHandlers(): void {
     return getCalendarRepo().saveEvent(userId, event)
   })
 
-  ipcMain.handle('calendar:deleteEvent', async (_, eventId: number) => {
+  ipcMain.handle('calendar:deleteEvent', async (_, { userId, eventId }: { userId: number; eventId: number }) => {
+    const event = getCalendarRepo().getEventById(eventId)
+    if (!event || event.user_id !== userId) return false
     return getCalendarRepo().deleteEvent(eventId)
+  })
+
+  ipcMain.handle('calendar:updateStudyStatus', async (_, { userId, eventId, status }: { userId: number; eventId: number; status: 'planned' | 'completed' | 'skipped' }) => {
+    return getCalendarRepo().updateStudyStatus(userId, eventId, status)
   })
 
   ipcMain.handle('calendar:detectCurrentContext', async (_, userId: number) => {

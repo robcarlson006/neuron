@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { GOOGLE_CALENDAR_IPC_VERSION } from '../src/types'
 import type {
   User, Subject, Card, CardFolder, CardSchedule, ReviewLog, Deadline,
   Diagnostic, ConceptMastery, RetentionForecastPoint, SM2Result,
@@ -6,13 +7,16 @@ import type {
   UserLevel, DailyQuest, ExportData, ImportResult, AnkiDeck, StudySession,
   FocusModeSettings, PublishedDeck, StudyGroup, StudyGroupMember,
   AnkiConnectNote, PluginEndpoint, AccessibilitySettings, OnboardingData,
-  ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult,
+  ReviewUndo, RAGSearchResult, RAGIndexStats, RAGIndexResult, GroundedAnswer,
   TutorSession, TutorStreamParams, DailyPlan, Message, DuplicateCheckResult,
   HardwareProfile, LocalModelInfo, DownloadProgress, LocalEngineStatus,
   FolderSyncResult, FolderSyncEvent, Lecture,
-  PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, PracticeEvaluationResult,
+  DocumentAnnotation, SaveDocumentAnnotationInput,
+  SubjectNote, SaveSubjectNoteInput,
+  HighlightCardExtractionOptions, HighlightCardExtractionResult,
+  PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, GuidedPracticeSessionConfig, PracticeEvaluationResult,
   AutonomousPracticeGenOptions, AutonomousPracticeGenResult,
-  MultiKeyVault, QuickReviewTopic, ConceptDependency
+  MultiKeyVault, QuickReviewTopic, ConceptDependency, AnalyticsSnapshot
 } from '../src/types'
 
 const electronAPI = {
@@ -73,10 +77,18 @@ const electronAPI = {
   // Materials
   getMaterials: (subjectId: number): Promise<unknown[]> => ipcRenderer.invoke('db:getMaterials', subjectId),
   getMaterial: (materialId: number): Promise<unknown> => ipcRenderer.invoke('db:getMaterial', materialId),
-  saveMaterial: (material: { subject_id: number; filename: string; file_type: string; content_text: string }): Promise<{ id: number }> =>
+  getMaterialFileUrl: (materialId: number): Promise<string | null> => ipcRenderer.invoke('db:getMaterialFileUrl', materialId),
+  getMaterialVisualUrl: (materialId: number): Promise<string | null> => ipcRenderer.invoke('db:getMaterialVisualUrl', materialId),
+  getMaterialVisualBytes: (materialId: number): Promise<Uint8Array | null> => ipcRenderer.invoke('db:getMaterialVisualBytes', materialId),
+  getMaterialVisualPageCount: (materialId: number): Promise<number | null> => ipcRenderer.invoke('db:getMaterialVisualPageCount', materialId),
+  saveMaterial: (material: { subject_id: number; filename: string; file_type: string; content_text: string; file_path?: string | null }): Promise<{ id: number }> =>
     ipcRenderer.invoke('db:saveMaterial', material),
   deleteMaterial: (materialId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('db:deleteMaterial', materialId),
+  getSubjectNote: (subjectId: number): Promise<SubjectNote | null> =>
+    ipcRenderer.invoke('db:getSubjectNote', subjectId),
+  saveSubjectNote: (input: SaveSubjectNoteInput): Promise<SubjectNote> =>
+    ipcRenderer.invoke('db:saveSubjectNote', input),
 
   // File operations
   openFileDialog: (): Promise<string | null> => ipcRenderer.invoke('file:openDialog'),
@@ -105,7 +117,7 @@ const electronAPI = {
     openaiKey?: string
     deepseekKey?: string
     groqKey?: string
-    visionProvider?: 'gemini' | 'openai' | 'local' | 'auto'
+    visionProvider?: 'gemini' | 'openai' | 'deepseek' | 'local' | 'auto'
     visionModel?: string
   }): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('ai:saveMultiKeyVault', updates),
@@ -169,6 +181,8 @@ const electronAPI = {
     ipcRenderer.invoke('db:getCurrentRetentionBySubject', userId),
   getDailyReviewStats: (userId: number, days?: number): Promise<{ date: string; reviews: number; correct: number; incorrect: number; avg_response_ms: number | null }[]> =>
     ipcRenderer.invoke('db:getDailyReviewStats', userId, days),
+  getAnalyticsSnapshot: (userId: number, days?: number): Promise<AnalyticsSnapshot> =>
+    ipcRenderer.invoke('db:getAnalyticsSnapshot', userId, days),
   getInterleavedDueCards: (userId: number, subjectId?: number): Promise<(Card & CardSchedule)[]> =>
     ipcRenderer.invoke('db:getInterleavedDueCards', userId, subjectId),
 
@@ -194,6 +208,15 @@ const electronAPI = {
 
   // Manual update checker
   getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
+  getUpdateState: (): Promise<{
+    status: 'idle' | 'downloading' | 'downloaded' | 'error'
+    version: string
+    downloadUrl: string | null
+    releaseUrl: string
+    progress: number
+    filePath: string
+    error: string
+  }> => ipcRenderer.invoke('updater:getState'),
   checkGitHub: (): Promise<{
     currentVersion: string
     latestVersion: string
@@ -202,13 +225,22 @@ const electronAPI = {
     releaseUrl: string
     releaseNotes: string
   }> => ipcRenderer.invoke('updater:checkGitHub'),
-  downloadUpdate: (url: string, version: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>
-    ipcRenderer.invoke('updater:download', url, version),
+  downloadUpdate: (url: string, version: string, releaseUrl?: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>
+    ipcRenderer.invoke('updater:download', url, version, releaseUrl),
   installDownloadedUpdate: (filePath: string): Promise<{ success: boolean; method: string }> =>
     ipcRenderer.invoke('updater:install', filePath),
   openReleasePage: (url: string): Promise<void> => ipcRenderer.invoke('updater:openReleasePage', url),
   cleanupUpdateFile: (filePath: string): Promise<void> => ipcRenderer.invoke('updater:cleanupFile', filePath),
   onDownloadProgress: (cb: (pct: number) => void) => ipcRenderer.on('updater:download-progress', (_e, pct) => cb(pct)),
+  onUpdateState: (cb: (state: {
+    status: 'idle' | 'downloading' | 'downloaded' | 'error'
+    version: string
+    downloadUrl: string | null
+    releaseUrl: string
+    progress: number
+    filePath: string
+    error: string
+  }) => void) => ipcRenderer.on('updater:state', (_e, state) => cb(state)),
   onUpdateError: (cb: (message: string) => void) => ipcRenderer.on('update:error', (_e, msg) => cb(msg)),
   onUpdaterError: (cb: (message: string) => void) => ipcRenderer.on('updater:error', (_e, msg) => cb(msg)),
 
@@ -337,10 +369,12 @@ const electronAPI = {
     ipcRenderer.invoke('rag:reindexAll'),
   ragDeleteIndex: (materialId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('rag:deleteIndex', materialId),
+  groundedAsk: (query: string, subjectId?: number | null): Promise<GroundedAnswer> =>
+    ipcRenderer.invoke('grounded:ask', query, subjectId),
 
   // ── Tutor Sessions ──
   tutorCreateSession: (subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: {
-    duration_minutes: number | null; depth_level: number; never_studied: number; title?: string
+    duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number; title?: string
   }): Promise<TutorSession> =>
     ipcRenderer.invoke('tutor:createSession', subjectId, userId, sessionType, moduleId, config),
   tutorGetSession: (sessionId: number): Promise<{ session: TutorSession; messages: Message[] } | null> =>
@@ -365,7 +399,7 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getSessionEvaluation', sessionId),
   tutorDeleteSession: (sessionId: number): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:deleteSession', sessionId),
-  tutorSaveMessage: (params: { session_id: number; role: string; content: string; content_type?: string }): Promise<Message> =>
+  tutorSaveMessage: (params: { session_id: number; role: string; content: string; content_type?: string; metadata?: string }): Promise<Message> =>
     ipcRenderer.invoke('tutor:saveMessage', params),
   tutorGetMessageHistory: (sessionId: number, limit?: number): Promise<Message[]> =>
     ipcRenderer.invoke('tutor:getMessageHistory', sessionId, limit),
@@ -374,12 +408,9 @@ const electronAPI = {
   tutorExtractCardFromSnippet: (
     subjectId: number,
     snippet: string,
-    contextTopic?: string
-  ): Promise<{
-    success: boolean
-    cards: Array<{ front: string; back: string; type: 'flashcard' | 'active_recall'; concept?: string }>
-    error?: string
-  }> => ipcRenderer.invoke('tutor:extractCardFromSnippet', subjectId, snippet, contextTopic),
+    contextTopic?: string,
+    options?: HighlightCardExtractionOptions
+  ): Promise<HighlightCardExtractionResult> => ipcRenderer.invoke('tutor:extractCardFromSnippet', subjectId, snippet, contextTopic, options),
   tutorCheckDuplicates: (subjectId: number, cards: { front: string; back: string }[]): Promise<DuplicateCheckResult[]> =>
     ipcRenderer.invoke('tutor:checkDuplicates', subjectId, cards),
   tutorUpdateMastery: (userId: number, subjectId: number, topic: string, score: number): Promise<{ mastery_prob: number }> =>
@@ -394,8 +425,8 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getSubjectModuleStats', subjectId, userId),
   tutorGetSubjectCurriculumTopics: (subjectId: number): Promise<QuickReviewTopic[]> =>
     ipcRenderer.invoke('tutor:getSubjectCurriculumTopics', subjectId),
-  onTutorChunk: (cb: (chunk: { conversationId: number; content: string; type: string }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; content: string; type: string }): void => cb(data)
+  onTutorChunk: (cb: (chunk: { conversationId: number; content: string; type: string; metadata?: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; content: string; type: string; metadata?: string }): void => cb(data)
     ipcRenderer.on('tutor:chunk', handler)
     return () => { ipcRenderer.removeListener('tutor:chunk', handler) }
   },
@@ -524,16 +555,35 @@ const electronAPI = {
       ipcRenderer.invoke('calendar:saveSource', data),
     deleteSource: (sourceId: number): Promise<boolean> =>
       ipcRenderer.invoke('calendar:deleteSource', sourceId),
-    syncSource: (sourceId: number): Promise<{ success: boolean; eventCount: number; error?: string }> =>
+    syncSource: (sourceId: number): Promise<import('../src/types').GoogleCalendarSyncResult> =>
       ipcRenderer.invoke('calendar:syncSource', sourceId),
     getEvents: (params: { userId: number; startDate?: string; endDate?: string }): Promise<import('../src/types').CalendarEvent[]> =>
       ipcRenderer.invoke('calendar:getEvents', params),
     saveEvent: (userId: number, event: Partial<import('../src/types').CalendarEvent>): Promise<import('../src/types').CalendarEvent> =>
       ipcRenderer.invoke('calendar:saveEvent', { userId, event }),
-    deleteEvent: (eventId: number): Promise<boolean> =>
-      ipcRenderer.invoke('calendar:deleteEvent', eventId),
+    deleteEvent: (userId: number, eventId: number): Promise<boolean> =>
+      ipcRenderer.invoke('calendar:deleteEvent', { userId, eventId }),
+    updateStudyStatus: (userId: number, eventId: number, status: 'planned' | 'completed' | 'skipped'): Promise<import('../src/types').CalendarEvent> =>
+      ipcRenderer.invoke('calendar:updateStudyStatus', { userId, eventId, status }),
     detectCurrentContext: (userId: number): Promise<import('../src/types').CalendarScheduleContext | null> =>
       ipcRenderer.invoke('calendar:detectCurrentContext', userId),
+  },
+  googleCalendar: {
+    ipcVersion: GOOGLE_CALENDAR_IPC_VERSION,
+    getStatus: (userId?: number): Promise<import('../src/types').GoogleCalendarRuntimeStatus> =>
+      ipcRenderer.invoke('googleCalendar:getStatus', userId),
+    validateClientId: (clientId: string): Promise<{ valid: boolean; message: string }> =>
+      ipcRenderer.invoke('googleCalendar:validateClientId', clientId),
+    connect: (userId: number, replaceAccountId?: number): Promise<{ account: import('../src/types').GoogleCalendarConnection; sync: import('../src/types').GoogleCalendarSyncResult }> =>
+      ipcRenderer.invoke('googleCalendar:connect', { userId, replaceAccountId }),
+    getAccounts: (userId: number): Promise<import('../src/types').GoogleCalendarConnection[]> =>
+      ipcRenderer.invoke('googleCalendar:getAccounts', userId),
+    disconnect: (userId: number, accountId: number): Promise<boolean> =>
+      ipcRenderer.invoke('googleCalendar:disconnect', { userId, accountId }),
+    syncAccount: (userId: number, accountId: number): Promise<import('../src/types').GoogleCalendarSyncResult> =>
+      ipcRenderer.invoke('googleCalendar:syncAccount', { userId, accountId }),
+    setSourceEnabled: (userId: number, sourceId: number, enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke('googleCalendar:setSourceEnabled', { userId, sourceId, enabled }),
   },
 
   // ── Local AI & Hardware ──
@@ -549,6 +599,8 @@ const electronAPI = {
     ipcRenderer.invoke('local-ai:delete-model', modelId),
   getLocalEngineStatus: (): Promise<LocalEngineStatus> =>
     ipcRenderer.invoke('local-ai:get-engine-status'),
+  getLocalAIHealth: (port?: number, modelId?: string): Promise<import('../src/types').LocalAIHealth> =>
+    ipcRenderer.invoke('local-ai:get-health', port, modelId),
   startLocalEngine: (modelId: string, port?: number): Promise<{ success: boolean; error?: string; port?: number }> =>
     ipcRenderer.invoke('local-ai:start-engine', modelId, port),
   stopLocalEngine: (): Promise<{ success: boolean }> =>
@@ -577,6 +629,18 @@ const electronAPI = {
     ipcRenderer.on('folder:sync-event', handler)
     return () => { ipcRenderer.removeListener('folder:sync-event', handler) }
   },
+
+  // ── Persistent document annotations / Cornell sidecar ──
+  listDocumentAnnotations: (resource: { materialId?: number; lectureId?: number; includeDeleted?: boolean }): Promise<DocumentAnnotation[]> =>
+    ipcRenderer.invoke('annotations:list', resource),
+  reconcileMaterialAnnotations: (materialId: number): Promise<DocumentAnnotation[]> =>
+    ipcRenderer.invoke('annotations:reconcileMaterial', materialId),
+  saveDocumentAnnotation: (input: SaveDocumentAnnotationInput): Promise<DocumentAnnotation> =>
+    ipcRenderer.invoke('annotations:save', input),
+  deleteDocumentAnnotation: (annotationId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('annotations:delete', annotationId),
+  restoreDocumentAnnotation: (annotationId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('annotations:restore', annotationId),
 
   // ── Lecture Audio Recording & Notes ──
   startLectureRecording: (
@@ -666,10 +730,24 @@ const electronAPI = {
     ipcRenderer.invoke('practice:generateVariant', problemId, userStruggles),
   practiceCreateSession: (config: PracticeSessionConfig): Promise<{ session: PracticeSession; problems: PracticeProblem[] }> =>
     ipcRenderer.invoke('practice:createSession', config),
+  practiceCreateGuidedSession: (config: GuidedPracticeSessionConfig): Promise<{ session: PracticeSession; problems: PracticeProblem[] }> =>
+    ipcRenderer.invoke('practice:createGuidedSession', config),
   practiceGetSession: (sessionId: number): Promise<{ session: PracticeSession; attempts: (PracticeProblemAttempt & { problem_title: string; problem_text: string })[] } | null> =>
     ipcRenderer.invoke('practice:getSession', sessionId),
   practiceSubmitAttempt: (sessionId: number, problemId: number, userAnswer: string, timeSpentSeconds: number): Promise<{ success: boolean; evaluation?: PracticeEvaluationResult; attempt?: PracticeProblemAttempt; error?: string }> =>
     ipcRenderer.invoke('practice:submitAttempt', sessionId, problemId, userAnswer, timeSpentSeconds),
+  practiceSubmitGuidedStep: (sessionId: number, problemId: number, phase: string, learnerResponse: string): Promise<{ success: boolean; evaluation?: unknown; state?: unknown; error?: string }> =>
+    ipcRenderer.invoke('practice:submitGuidedStep', sessionId, problemId, phase, learnerResponse),
+  practiceRequestGuidedHint: (sessionId: number, problemId: number, learnerResponse?: string): Promise<{ success: boolean; hint?: string; learnerPrompt?: string; hintLevel?: number; assistanceLevel?: string; state?: unknown; error?: string }> =>
+    ipcRenderer.invoke('practice:requestGuidedHint', sessionId, problemId, learnerResponse),
+  practiceRecordGuidedExplanation: (sessionId: number, problemId: number, explanation: string): Promise<{ success: boolean; state?: unknown; error?: string }> =>
+    ipcRenderer.invoke('practice:recordGuidedExplanation', sessionId, problemId, explanation),
+  practiceStartGuidedTransfer: (sessionId: number, problemId: number): Promise<{ success: boolean; state?: unknown; error?: string }> =>
+    ipcRenderer.invoke('practice:startGuidedTransfer', sessionId, problemId),
+  practiceBeginGuidedProblem: (sessionId: number, problemId: number): Promise<{ success: boolean; state?: unknown; error?: string }> =>
+    ipcRenderer.invoke('practice:beginGuidedProblem', sessionId, problemId),
+  practiceRevealGuidedAnswer: (sessionId: number, problemId: number): Promise<{ success: boolean; state?: unknown; error?: string }> =>
+    ipcRenderer.invoke('practice:revealGuidedAnswer', sessionId, problemId),
   practiceEndSession: (sessionId: number, summary?: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('practice:endSession', sessionId, summary),
   practiceGetStats: (subjectId: number, userId: number): Promise<{ totalProblems: number; totalSessions: number; totalCompleted: number; totalCorrect: number; accuracy: number }> =>

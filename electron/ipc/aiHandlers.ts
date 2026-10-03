@@ -35,7 +35,8 @@ const CONNECT_TIMEOUT_MS = 120_000
  */
 async function callAI(
   prompt: string,
-  config: { provider: string; baseUrl: string; model: string; apiKey: string }
+  config: { provider: string; baseUrl: string; model: string; apiKey: string },
+  retryAttempt = 0
 ): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
@@ -115,6 +116,10 @@ async function callAI(
     }
     return text
   } catch (err) {
+    if (isLocalEndpoint(config.baseUrl) && retryAttempt < 2 && !controller.signal.aborted) {
+      await new Promise(resolve => setTimeout(resolve, 350 * (retryAttempt + 1)))
+      return callAI(prompt, config, retryAttempt + 1)
+    }
     if (controller.signal.aborted) {
       throw new Error('AI request timed out. Please check your connection and try again.')
     }
@@ -506,7 +511,8 @@ export async function* streamAI(
 export async function callAIMessages(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   config: { provider: string; baseUrl: string; model: string; apiKey: string },
-  responseFormat?: { type: 'json_object' | 'text' }
+  responseFormat?: { type: 'json_object' | 'text' },
+  retryAttempt = 0
 ): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
@@ -637,6 +643,10 @@ export async function callAIMessages(
     const data = await response.json()
     return data.choices?.[0]?.message?.content || ''
   } catch (err) {
+    if (isLocalEndpoint(config.baseUrl) && retryAttempt < 2 && !controller.signal.aborted) {
+      await new Promise(resolve => setTimeout(resolve, 350 * (retryAttempt + 1)))
+      return callAIMessages(messages, config, responseFormat, retryAttempt + 1)
+    }
     if (controller.signal.aborted) {
       throw new Error('AI request timed out. Please try again.')
     }
@@ -644,7 +654,7 @@ export async function callAIMessages(
       const errMsg = err instanceof Error ? err.message : String(err)
       if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch failed')) {
         throw new Error(
-          `Could not connect to local AI server at ${config.baseUrl}. Make sure your local model runner is active (e.g. run "ollama run ${config.model || 'qwen2.5:3b'}" in Terminal).`
+          `LOCAL_AI_FAILED: Could not connect to the local AI engine at ${config.baseUrl} after three attempts. Reopen Local AI setup to restart it, or explicitly choose cloud fallback if you are online.`
         )
       }
     }

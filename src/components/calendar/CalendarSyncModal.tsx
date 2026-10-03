@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
-import type { CalendarSource } from '../../types'
+import type { CalendarSource, GoogleCalendarRuntimeStatus } from '../../types'
 
 interface CalendarSyncModalProps {
   isOpen: boolean
@@ -24,24 +24,45 @@ export default function CalendarSyncModal({
   const [syncingId, setSyncingId] = useState<number | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
+  const [googleAccounts, setGoogleAccounts] = useState<Array<{ id: number; status: string; last_synced_at?: string; last_error?: string }>>([])
+  const [runtimeStatus, setRuntimeStatus] = useState<GoogleCalendarRuntimeStatus | null>(null)
+  const [runtimeError, setRuntimeError] = useState('')
+
+  useEffect(() => {
+    if (!isOpen || !user) return
+    setRuntimeError('')
+    const googleApi = window.electronAPI?.googleCalendar
+    if (!googleApi?.getStatus) {
+      setRuntimeError('Neuron must be restarted to load the Google Calendar integration.')
+      return
+    }
+    void googleApi.getStatus(user.id).then(status => {
+      setRuntimeStatus(status)
+      setGoogleAccounts(status.accounts)
+      if (status.integrationVersion !== googleApi.ipcVersion || !status.handlerRegistered || !status.schemaReady) setRuntimeError(status.error || 'Neuron must be restarted to finish loading Google Calendar.')
+    }).catch(() => setRuntimeError('Neuron must be fully quit and reopened before Google Calendar can be connected.'))
+  }, [isOpen, user])
 
   if (!isOpen) return null
 
   const handleSyncSource = async (sourceId: number) => {
     setSyncingId(sourceId)
     try {
-      const res = await window.electronAPI.calendar.syncSource(sourceId)
-      if (res.success) {
+      const source = sources.find(item => item.id === sourceId)
+      const res = source?.type === 'google_oauth' && source.google_account_id
+        ? await window.electronAPI.googleCalendar.syncAccount(user!.id, source.google_account_id)
+        : await window.electronAPI.calendar.syncSource(sourceId)
+      if (res.success || res.partial) {
         addToast({
-          type: 'success',
-          title: 'Calendar Synced',
-          message: `Updated ${res.eventCount} events from Google Calendar.`
+          type: res.partial ? 'info' : 'success',
+          title: res.partial ? 'Calendar Partially Synced' : 'Calendar Synced',
+          message: res.partial ? (res.warning || `Updated ${res.eventCount} events with some calendar warnings.`) : `Updated ${res.eventCount} events from Google Calendar.`
         })
         onSyncComplete()
       } else {
         addToast({
           type: 'error',
-          title: 'Sync Failed',
+          title: `Sync Failed${res.stage ? ` · ${res.stage.replace('_', ' ')}` : ''}`,
           message: res.error || 'Could not fetch calendar feed.'
         })
       }
@@ -54,6 +75,49 @@ export default function CalendarSyncModal({
     } finally {
       setSyncingId(null)
     }
+  }
+
+  const handleConnectGoogle = async (replaceAccountId?: number) => {
+    if (!user) return
+    try {
+      const status = await window.electronAPI.googleCalendar.getStatus(user.id)
+      setRuntimeStatus(status)
+      if (status.integrationVersion !== window.electronAPI.googleCalendar.ipcVersion || !status.handlerRegistered || !status.schemaReady) {
+        setRuntimeError(status.error || 'Neuron must be restarted before connecting Google Calendar.')
+        return
+      }
+      if (!status.clientIdConfigured) {
+        setRuntimeError(status.error || 'Google Calendar is not configured. Open Settings and add a Google OAuth client ID.')
+        return
+      }
+    } catch {
+      setRuntimeError('Neuron must be fully quit and reopened before Google Calendar can be connected.')
+      return
+    }
+    setConnecting(true)
+    try {
+      const result = await window.electronAPI.googleCalendar.connect(user.id, replaceAccountId)
+      setGoogleAccounts(previous => [...previous.filter(account => account.id !== result.account.id), result.account])
+      const sync = result.sync
+      addToast({
+        type: sync.success ? 'success' : sync.partial ? 'info' : 'error',
+        title: sync.success ? 'Google Calendar connected' : sync.partial ? 'Google Calendar connected with warnings' : 'Google authorization succeeded; sync needs attention',
+        message: sync.success ? `Synced ${sync.eventCount} events from ${sync.calendarCount} calendars.` : sync.warning || sync.error || 'Authorization succeeded, but calendar import needs attention.'
+      })
+      onSyncComplete()
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Google Calendar connection failed', message: err.message || 'Could not complete Google authorization.' })
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  const handleDisconnectGoogle = async (accountId: number) => {
+    if (!user || !confirm('Disconnect this Google account and remove its imported calendar events?')) return
+    await window.electronAPI.googleCalendar.disconnect(user.id, accountId)
+    setGoogleAccounts(previous => previous.filter(account => account.id !== accountId))
+    addToast({ type: 'info', title: 'Google Calendar disconnected', message: 'Imported Google calendars and events were removed.' })
+    onSyncComplete()
   }
 
   const handleDeleteSource = async (sourceId: number) => {
@@ -147,14 +211,41 @@ export default function CalendarSyncModal({
 
         {/* Content */}
         <div className="p-5 overflow-y-auto space-y-6">
+          <section className="space-y-3 rounded-xl border border-blue-200 bg-blue-50/60 p-4 dark:border-blue-900/50 dark:bg-blue-950/20">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Connect with Google</h3>
+              <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-400">Read-only access to all calendars you choose in Google. Neuron imports the past 12 months and next 24 months.</p>
+            </div>
+            <button type="button" onClick={() => void handleConnectGoogle()} disabled={connecting} className="btn-primary w-full text-xs">
+              {connecting ? 'Waiting for Google authorization…' : runtimeError ? 'Check Google Calendar setup' : 'Connect Google Calendar'}
+            </button>
+            {runtimeError && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">{runtimeError}<div className="mt-1">Open Settings → Advanced → Google Calendar setup to configure the client ID, or fully quit and reopen Neuron if an update was just installed.</div></div>}
+            {!runtimeError && runtimeStatus && <p className="text-[11px] text-emerald-700 dark:text-emerald-300">Google Calendar authorization is ready.</p>}
+            {googleAccounts.map(account => {
+              const accountSources = sources.filter(source => source.type === 'google_oauth' && source.google_account_id === account.id)
+              return <div key={account.id} className="space-y-2 rounded-lg border border-blue-200/70 bg-white/70 p-3 dark:border-blue-900/50 dark:bg-slate-900/40">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-slate-800 dark:text-slate-200">Google account · {account.status === 'connected' ? 'Connected' : 'Reauthorization required'}</span>
+                  <div className="flex gap-2">
+                    {account.status !== 'connected' && <button type="button" onClick={() => void handleConnectGoogle(account.id)} className="text-xs text-blue-700 hover:underline dark:text-blue-300">Reconnect</button>}
+                    <button type="button" onClick={() => void window.electronAPI.googleCalendar.syncAccount(user!.id, account.id).then(result => { addToast({ type: result.success ? 'success' : result.partial ? 'info' : 'error', title: result.success ? 'Google calendars synced' : result.partial ? 'Google calendars partially synced' : `Google sync failed${result.stage ? ` · ${result.stage.replace('_', ' ')}` : ''}`, message: result.success ? `Updated ${result.eventCount} events.` : result.warning || result.error || 'Sync failed.' }); onSyncComplete() })} className="text-xs text-blue-700 hover:underline dark:text-blue-300">Sync</button>
+                    <button type="button" onClick={() => void handleDisconnectGoogle(account.id)} className="text-xs text-red-600 hover:underline">Disconnect</button>
+                  </div>
+                </div>
+                {account.last_error && <p className="text-[11px] text-red-600 dark:text-red-400">{account.last_error}</p>}
+                {accountSources.length > 0 && <div className="space-y-1">{accountSources.map(source => <label key={source.id} className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400"><input type="checkbox" checked={source.enabled !== 0 && source.enabled !== false} onChange={event => void window.electronAPI.googleCalendar.setSourceEnabled(user!.id, source.id, event.target.checked).then(onSyncComplete)} />{source.name}</label>)}</div>}
+              </div>
+            })}
+          </section>
+
           {/* Existing Connected Sources */}
-          {sources.length > 0 && (
+          {sources.filter(source => source.type !== 'google_oauth').length > 0 && (
             <div className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                 Connected Calendars
               </h3>
               <div className="space-y-2">
-                {sources.map(s => (
+                {sources.filter(source => source.type !== 'google_oauth').map(s => (
                   <div
                     key={s.id}
                     className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/40 flex items-center justify-between gap-3"

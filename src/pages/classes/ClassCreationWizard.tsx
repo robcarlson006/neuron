@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
 import FileDropZone from '../../components/classes/FileDropZone'
+import SubjectAppearancePicker, { DEFAULT_SUBJECT_COLOR, DEFAULT_SUBJECT_ICON, SubjectIcon } from '../../components/SubjectAppearancePicker'
 
 interface PendingFile {
   name: string
@@ -43,6 +44,8 @@ export default function ClassCreationWizard({
   const [courseCode, setCourseCode] = useState('')
   const [timeCommitment, setTimeCommitment] = useState(60)
   const [classStatus, setClassStatus] = useState<'active' | 'ongoing'>('active')
+  const [subjectIcon, setSubjectIcon] = useState(DEFAULT_SUBJECT_ICON)
+  const [subjectColor, setSubjectColor] = useState(DEFAULT_SUBJECT_COLOR)
 
   // Step 2: Materials
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
@@ -148,6 +151,8 @@ export default function ClassCreationWizard({
         name: className.trim(),
         subjectType,
         courseCode: courseCode.trim() || undefined,
+        subjectIcon,
+        color: subjectColor,
         timeCommitmentMinutes: timeCommitment,
         status: classStatus,
         materials: parsedFiles.length > 0 ? parsedFiles.map(f => ({
@@ -255,6 +260,8 @@ export default function ClassCreationWizard({
             </select>
           </div>
         </div>
+
+        <SubjectAppearancePicker icon={subjectIcon} color={subjectColor} onIconChange={setSubjectIcon} onColorChange={setSubjectColor} />
 
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
@@ -473,7 +480,7 @@ export default function ClassCreationWizard({
       <div className="space-y-4">
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-slate-800 dark:text-slate-200">{className}</h3>
+            <h3 className="flex items-center gap-2 font-semibold text-slate-800 dark:text-slate-200"><SubjectIcon name={subjectIcon} color={subjectColor} size={22} />{className}</h3>
             <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-medium">
               {subjectType === 'class' ? '🏫 Class' : '📖 Book'}
             </span>

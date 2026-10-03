@@ -1,6 +1,7 @@
 import React from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
+import { SubjectIcon } from './SubjectAppearancePicker'
 import NeuronLogo from './NeuronLogo'
 
 function IconGrid(): React.JSX.Element {
@@ -75,6 +76,7 @@ function IconSun(): React.JSX.Element {
 const mainNavItems = [
   { to: '/', label: 'Dashboard', icon: <IconGrid /> },
   { to: '/tutor', label: 'Tutor', icon: <IconTutor /> },
+  { to: '/helper', label: 'Ask Materials', icon: <span className="text-sm">✦</span> },
   { to: '/calendar', label: 'Calendar', icon: <IconCalendar /> },
 ]
 
@@ -83,6 +85,7 @@ const progressNavItems = [
 ]
 
 const settingsNavItems = [
+  { to: '/help', label: 'Help & Learn', icon: <span className="text-sm">?</span> },
   { to: '/settings', label: 'Settings', icon: <IconCog /> },
 ]
 
@@ -203,8 +206,8 @@ export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): Re
               >
                 {({ isActive }) => (
                   <>
-                    <span className={`flex-shrink-0 ${isActive ? 'text-neuron-500' : 'text-slate-400'}`}>
-                      {subject.subject_type === 'book' ? '📖' : subject.subject_type === 'class' ? '🏫' : '•'}
+                    <span className={`subject-icon-frame subject-icon-frame-sidebar ${isActive ? 'text-neuron-500' : 'text-slate-400'}`}>
+                      <SubjectIcon name={subject.subject_icon} color={subject.color} size={16} title={`${subject.name} icon`} />
                     </span>
                     <span className="truncate">{subject.name}</span>
                   </>
@@ -245,8 +248,8 @@ export default function Sidebar({ onNewClass }: { onNewClass?: () => void }): Re
                       >
                         {({ isActive }) => (
                           <>
-                            <span className={`flex-shrink-0 text-xs ${isActive ? 'text-neuron-500' : 'text-slate-400'}`}>
-                              📦
+                            <span className={`subject-icon-frame subject-icon-frame-sidebar-archived ${isActive ? 'text-neuron-500' : 'text-slate-400'}`}>
+                              <SubjectIcon name={subject.subject_icon} color={subject.color} size={14} title={`${subject.name} icon`} />
                             </span>
                             <span className="truncate">{subject.name}</span>
                           </>

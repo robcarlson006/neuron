@@ -23,6 +23,9 @@ export interface ParsedReconciledTopic {
   description?: string | null
   matched_previous_topic?: string | null
   coverage_delta?: 'identical' | 'deepened' | 'new_topic' | 'new_prerequisite'
+  concept_type?: string | null
+  estimated_minutes?: number | null
+  source_material_ids?: number[] | null
 }
 
 export interface ParsedReconciledModule {
@@ -62,6 +65,14 @@ function normText(str: string): string {
     .trim()
 }
 
+function conceptFingerprint(str: string): string {
+  return normText(str)
+    .split(' ')
+    .filter(token => token.length > 2)
+    .sort()
+    .join('-')
+}
+
 /**
  * Reconciles an existing syllabus with a new curriculum structure:
  * - Updates existing module_topics in place, preserving primary keys, study logs, practice problems, and flashcards.
@@ -97,6 +108,7 @@ export function reconcileCurriculum(
 
   const existingTopics = database.prepare(`
     SELECT mt.id, mt.module_id, sm.title as module_title, mt.title, mt.description, mt.sort_order,
+      mt.concept_fingerprint,
       CASE WHEN EXISTS (
         SELECT 1 FROM module_topic_study_log sl WHERE sl.topic_id = mt.id AND sl.user_id = ?
       ) THEN 1 ELSE 0 END as completed,
@@ -117,6 +129,7 @@ export function reconcileCurriculum(
     title: string
     description: string | null
     sort_order: number
+    concept_fingerprint?: string | null
     completed: number
     has_problems: number
     has_cards: number
@@ -165,6 +178,12 @@ export function reconcileCurriculum(
           matchedTopic = existingTopics.find(
             t => !usedExistingTopicIds.has(t.id) && normText(t.title) === normMatch
           )
+        }
+
+        // 1. Stable concept fingerprint match, when available.
+        if (!matchedTopic) {
+          const fingerprint = conceptFingerprint(newTop.title)
+          matchedTopic = existingTopics.find(t => !usedExistingTopicIds.has(t.id) && t.concept_fingerprint && t.concept_fingerprint === fingerprint)
         }
 
         // 2. Exact or normalized title match
@@ -303,20 +322,29 @@ export function reconcileCurriculum(
           database.prepare(`
             UPDATE module_topics
             SET module_id = ?, title = ?, description = ?, sort_order = ?,
-                has_new_material = ?, is_gap = ?
+              has_new_material = ?, is_gap = ?, concept_fingerprint = ?, concept_type = ?,
+              estimated_minutes = ?, new_content_state = ?, source_material_ids = ?
             WHERE id = ?
           `).run(
             moduleId, tp.topicData.title, tp.topicData.description || null, j,
             tp.hasNewMaterial ? 1 : 0, tp.isGap ? 1 : 0,
+            conceptFingerprint(tp.topicData.title), tp.topicData.concept_type || 'concept',
+            tp.topicData.estimated_minutes || 15,
+            tp.isCompleted ? 'verified' : tp.hasNewMaterial || tp.isGap ? 'unseen' : 'unseen',
+            JSON.stringify(tp.topicData.source_material_ids || []),
             tp.existingTopicId
           )
         } else {
           database.prepare(`
-            INSERT INTO module_topics (module_id, title, description, sort_order, has_new_material, is_gap)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO module_topics
+              (module_id, title, description, sort_order, has_new_material, is_gap, concept_fingerprint, concept_type, estimated_minutes, new_content_state, source_material_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             moduleId, tp.topicData.title, tp.topicData.description || null, j,
-            tp.hasNewMaterial ? 1 : 0, tp.isGap ? 1 : 0
+            tp.hasNewMaterial ? 1 : 0, tp.isGap ? 1 : 0,
+            conceptFingerprint(tp.topicData.title), tp.topicData.concept_type || 'concept',
+            tp.topicData.estimated_minutes || 15,
+            'unseen', JSON.stringify(tp.topicData.source_material_ids || [])
           )
         }
       }
@@ -438,7 +466,7 @@ async function reconcileSyllabusFromAI(subjectId: number, targetMaterialIds?: nu
   `).all(actualUserId, subjectId) as { id: number; module_id: number; module_title: string; title: string; completed: number }[]
 
   const materialSummaries = materials.map(m =>
-    buildComprehensiveOutline(m.content_text, m.filename)
+    `[MATERIAL_ID=${m.id} FILENAME=${m.filename}]\n${buildComprehensiveOutline(m.content_text, m.filename)}`
   ).join('\n\n---\n\n')
 
   const weeklyHours = subject.time_commitment_minutes || 60
@@ -494,6 +522,9 @@ Respond in JSON format:
         {
           "title": "Topic title",
           "description": "What this topic covers",
+          "concept_type": "definition | mechanism | procedure | application | comparison",
+          "estimated_minutes": 15,
+          "source_material_ids": [],
           "matched_previous_topic": null,
           "coverage_delta": "identical"
         }
@@ -525,6 +556,9 @@ Respond in JSON format:
         {
           "title": "Subtopic title",
           "description": "What this subtopic covers",
+          "concept_type": "definition | mechanism | procedure | application | comparison",
+          "estimated_minutes": 15,
+          "source_material_ids": [],
           "matched_previous_topic": null,
           "coverage_delta": "identical"
         }
@@ -540,6 +574,9 @@ Rules:
 - Organize materials logically by topic (foundations first, then advanced).
 - Module titles must be descriptive topic names (do NOT use "Week 1", "Week 2").
 - Each module should have 2-5 subtopics.
+- Every topic must identify its concept type, estimated active-retrieval minutes, and supporting material IDs when known.
+- Use the MATERIAL_ID values in SOURCE MATERIALS for source_material_ids; never invent IDs.
+- Do not merge two distinct concepts merely because their titles are similar; use matched_previous_topic only when the concept identity is clear.
 - Return ONLY valid JSON. No markdown. No commentary.`
 
   const config = getAIConfig()

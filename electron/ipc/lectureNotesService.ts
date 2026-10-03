@@ -7,6 +7,8 @@ import {
 import { buildLectureNotesPrompt } from '../../src/lib/promptBuilders'
 import { getAIConfig, getApiKey, normalizeBaseUrl, isLocalEndpoint, DEFAULT_MODEL } from './aiConfigStore'
 import { TranscriptionService, type TranscriptionResult } from './transcriptionService'
+import { exportLectureArtifacts } from './lectureArtifactService'
+import { normalizeMathText } from '../../src/lib/mathFormatter'
 
 interface LectureNotesServiceOptions {
   generateNotesFn?: (prompt: string) => Promise<string>
@@ -140,7 +142,7 @@ class LectureNotesServiceManager {
       const prompt = buildLectureNotesPrompt(rawTranscript, subjectName, lecture.title)
       let markdown: string
       try {
-        markdown = await this.callAIForMarkdown(prompt)
+        markdown = normalizeMathText(await this.callAIForMarkdown(prompt))
       } catch (aiErr: any) {
         const msg = aiErr?.message || 'Failed to generate study notes'
         throw new Error(
@@ -177,6 +179,11 @@ class LectureNotesServiceManager {
         material_id: materialId,
         raw_transcript: rawTranscript
       })
+      try {
+        exportLectureArtifacts(this.db, lectureId, markdown)
+      } catch (exportError) {
+        console.warn('Lecture processing succeeded but linked-folder export failed:', exportError)
+      }
       this.emitStatus({ lectureId, status: 'ready', materialId })
 
       return { success: true, materialId }

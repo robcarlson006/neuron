@@ -1,7 +1,8 @@
 /**
  * Embedding generation utilities.
  * Main-process only (uses fetch / Node.js APIs).
- * Tries the configured AI provider, falls back to TF-IDF.
+ * Embeddings are optional. Retrieval has a deterministic lexical fallback;
+ * this module only owns provider-backed vectors and reports failures clearly.
  */
 
 import type { AIProviderConfig } from '../types'
@@ -18,6 +19,14 @@ export interface EmbeddingProviderConfig {
 export interface EmbeddingResult {
   embedding: number[]
   model: string
+}
+
+export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small'
+
+export function resolveEmbeddingModel(config: AIProviderConfig): string {
+  if (config.provider === 'gemini') return 'text-embedding-004'
+  if (config.baseUrl?.includes('api.deepseek.com')) return ''
+  return DEFAULT_EMBEDDING_MODEL
 }
 
 /**
@@ -74,7 +83,8 @@ async function callEmbeddingAPI(text: string, config: AIProviderConfig): Promise
   // OpenAI-compatible embedding API
   const baseUrl = config.baseUrl || 'https://api.deepseek.com'
   const url = `${baseUrl.replace(/\/$/, '')}/v1/embeddings`
-  const model = config.model || 'text-embedding-ada-002'
+  const model = resolveEmbeddingModel(config)
+  if (!model) throw new Error('The configured provider does not expose a compatible embedding model')
 
   const response = await fetch(url, {
     method: 'POST',
@@ -118,7 +128,8 @@ async function callEmbeddingAPIBatch(texts: string[], config: AIProviderConfig):
 
   const baseUrl = config.baseUrl || 'https://api.deepseek.com'
   const url = `${baseUrl.replace(/\/$/, '')}/v1/embeddings`
-  const model = config.model || 'text-embedding-ada-002'
+  const model = resolveEmbeddingModel(config)
+  if (!model) throw new Error('The configured provider does not expose a compatible embedding model')
 
   const response = await fetch(url, {
     method: 'POST',

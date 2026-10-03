@@ -1,5 +1,6 @@
 import os from 'os'
 import { execSync } from 'child_process'
+import { statfsSync } from 'fs'
 import type { HardwareProfile, HardwareTier } from '../../src/types'
 
 /**
@@ -53,6 +54,7 @@ function getAccurateSystemSpecs(): {
   cpuCores: number
   totalMemBytes: number
   freeMemBytes: number
+  freeDiskBytes: number
   platform: string
   arch: string
 } {
@@ -60,6 +62,11 @@ function getAccurateSystemSpecs(): {
   let arch = os.arch()
   let totalMemBytes = os.totalmem()
   const freeMemBytes = os.freemem()
+  let freeDiskBytes = 0
+  try {
+    const disk = statfsSync(os.homedir())
+    freeDiskBytes = Number(disk.bavail) * Number(disk.bsize)
+  } catch {}
   const cpus = os.cpus() || []
   let cpuModel = cpus[0]?.model?.trim() || 'Unknown CPU'
   let cpuCores = cpus.length || 1
@@ -129,6 +136,7 @@ function getAccurateSystemSpecs(): {
     cpuCores,
     totalMemBytes,
     freeMemBytes,
+    freeDiskBytes,
     platform,
     arch
   }
@@ -151,6 +159,7 @@ export function getHardwareProfile(): HardwareProfile {
   return {
     totalMemoryGb: Number((specs.totalMemBytes / (1024 * 1024 * 1024)).toFixed(1)),
     freeMemoryGb: Number((specs.freeMemBytes / (1024 * 1024 * 1024)).toFixed(1)),
+    freeDiskGb: Number((specs.freeDiskBytes / (1024 * 1024 * 1024)).toFixed(1)),
     cpuModel: specs.cpuModel,
     cpuCores: specs.cpuCores,
     arch: specs.arch,

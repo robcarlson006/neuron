@@ -16,6 +16,56 @@ export interface ActiveFocusBlockState {
   showTimeUpModal: boolean
 }
 
+interface PersistedPomodoroState {
+  phase: PomodoroPhase
+  running: boolean
+  startedAt: number | null
+  secondsTotal: number
+  pausedSecondsLeft: number | null
+  savedAt: number
+}
+
+interface PersistedFocusBlockState extends ActiveFocusBlockState {
+  savedAt: number
+}
+
+const POMODORO_RUNTIME_KEY = 'neuron:pomodoro-runtime'
+const FOCUS_BLOCK_RUNTIME_KEY = 'neuron:focus-block-runtime'
+
+function readJson<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) as T : null
+  } catch {
+    return null
+  }
+}
+
+function writeJson(key: string, value: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* persistence is best effort */ }
+}
+
+function clearPersisted(key: string): void {
+  try { localStorage.removeItem(key) } catch { /* persistence is best effort */ }
+}
+
+function recoverPomodoroState(settings: { workMinutes: number }): Pick<AppState, 'pomodoroPhase' | 'pomodoroRunning' | 'pomodoroStartedAt' | 'pomodoroSecondsTotal' | 'pomodoroPausedSecondsLeft'> {
+  const saved = readJson<PersistedPomodoroState>(POMODORO_RUNTIME_KEY)
+  if (!saved || saved.phase === 'idle') {
+    return { pomodoroPhase: 'idle', pomodoroRunning: false, pomodoroStartedAt: null, pomodoroSecondsTotal: settings.workMinutes * 60, pomodoroPausedSecondsLeft: null }
+  }
+
+  if (saved.running && saved.startedAt !== null) {
+    const remaining = Math.max(0, saved.secondsTotal - Math.floor((Date.now() - saved.startedAt) / 1000))
+    if (remaining <= 0) {
+      return { pomodoroPhase: saved.phase === 'break' ? 'break-done' : 'work-done', pomodoroRunning: false, pomodoroStartedAt: null, pomodoroSecondsTotal: saved.secondsTotal, pomodoroPausedSecondsLeft: null }
+    }
+    return { pomodoroPhase: saved.phase, pomodoroRunning: true, pomodoroStartedAt: saved.startedAt, pomodoroSecondsTotal: saved.secondsTotal, pomodoroPausedSecondsLeft: null }
+  }
+
+  return { pomodoroPhase: saved.phase, pomodoroRunning: false, pomodoroStartedAt: null, pomodoroSecondsTotal: saved.secondsTotal, pomodoroPausedSecondsLeft: saved.pausedSecondsLeft }
+}
+
 interface AppState {
   user: User | null
   subjects: Subject[]
@@ -103,6 +153,8 @@ function loadPomodoroSettings(): { enabled: boolean; workMinutes: number; breakM
 
 export const useAppStore = create<AppState>((set, get) => {
   const pom = loadPomodoroSettings()
+  const recoveredPomodoro = recoverPomodoroState(pom)
+  const recoveredFocusBlock = readJson<PersistedFocusBlockState>(FOCUS_BLOCK_RUNTIME_KEY)
 
   return {
     user: null,
@@ -132,11 +184,7 @@ export const useAppStore = create<AppState>((set, get) => {
     })(),
 
     // Pomodoro runtime
-    pomodoroPhase: 'idle',
-    pomodoroRunning: false,
-    pomodoroStartedAt: null,
-    pomodoroSecondsTotal: pom.workMinutes * 60,
-    pomodoroPausedSecondsLeft: null,
+    ...recoveredPomodoro,
 
     setUser: (user) => set({ user }),
     setSubjects: (subjects) => set({ subjects }),
@@ -205,30 +253,37 @@ export const useAppStore = create<AppState>((set, get) => {
     },
     startPomodoro: () => {
       const { pomodoroWorkMinutes } = get()
-      set({
+      const next = {
         pomodoroPhase: 'work',
         pomodoroRunning: true,
         pomodoroStartedAt: Date.now(),
         pomodoroSecondsTotal: pomodoroWorkMinutes * 60,
         pomodoroPausedSecondsLeft: null
-      })
+      } as const
+      writeJson(POMODORO_RUNTIME_KEY, { phase: next.pomodoroPhase, running: next.pomodoroRunning, startedAt: next.pomodoroStartedAt, secondsTotal: next.pomodoroSecondsTotal, pausedSecondsLeft: next.pomodoroPausedSecondsLeft, savedAt: Date.now() })
+      set(next)
     },
     resumePomodoro: () => {
       const { pomodoroPausedSecondsLeft, pomodoroSecondsTotal } = get()
       const remaining = pomodoroPausedSecondsLeft ?? pomodoroSecondsTotal
-      set({
+      const next = {
         pomodoroRunning: true,
         pomodoroStartedAt: Date.now(),
         pomodoroSecondsTotal: remaining,
         pomodoroPausedSecondsLeft: null
-      })
+      } as const
+      writeJson(POMODORO_RUNTIME_KEY, { ...get(), ...next, phase: get().pomodoroPhase, running: next.pomodoroRunning, startedAt: next.pomodoroStartedAt, secondsTotal: next.pomodoroSecondsTotal, pausedSecondsLeft: next.pomodoroPausedSecondsLeft, savedAt: Date.now() })
+      set(next)
     },
     pausePomodoro: (secondsLeft) => {
-      set({ pomodoroRunning: false, pomodoroPausedSecondsLeft: secondsLeft })
+      const state = get()
+      writeJson(POMODORO_RUNTIME_KEY, { phase: state.pomodoroPhase, running: false, startedAt: null, secondsTotal: state.pomodoroSecondsTotal, pausedSecondsLeft: secondsLeft, savedAt: Date.now() })
+      set({ pomodoroRunning: false, pomodoroStartedAt: null, pomodoroPausedSecondsLeft: secondsLeft })
     },
     completePomodoroPhase: () => {
       set((state) => {
         if (!state.pomodoroRunning) return {}
+        clearPersisted(POMODORO_RUNTIME_KEY)
         return {
           pomodoroPhase: state.pomodoroPhase === 'work' ? 'work-done' : 'break-done',
           pomodoroRunning: false,
@@ -239,26 +294,31 @@ export const useAppStore = create<AppState>((set, get) => {
     },
     startBreak: () => {
       const { pomodoroBreakMinutes } = get()
-      set({
+      const next = {
         pomodoroPhase: 'break',
         pomodoroRunning: true,
         pomodoroStartedAt: Date.now(),
         pomodoroSecondsTotal: pomodoroBreakMinutes * 60,
         pomodoroPausedSecondsLeft: null
-      })
+      } as const
+      writeJson(POMODORO_RUNTIME_KEY, { phase: next.pomodoroPhase, running: next.pomodoroRunning, startedAt: next.pomodoroStartedAt, secondsTotal: next.pomodoroSecondsTotal, pausedSecondsLeft: next.pomodoroPausedSecondsLeft, savedAt: Date.now() })
+      set(next)
     },
     startWorkAfterBreak: () => {
       const { pomodoroWorkMinutes } = get()
-      set({
+      const next = {
         pomodoroPhase: 'work',
         pomodoroRunning: true,
         pomodoroStartedAt: Date.now(),
         pomodoroSecondsTotal: pomodoroWorkMinutes * 60,
         pomodoroPausedSecondsLeft: null
-      })
+      } as const
+      writeJson(POMODORO_RUNTIME_KEY, { phase: next.pomodoroPhase, running: next.pomodoroRunning, startedAt: next.pomodoroStartedAt, secondsTotal: next.pomodoroSecondsTotal, pausedSecondsLeft: next.pomodoroPausedSecondsLeft, savedAt: Date.now() })
+      set(next)
     },
     resetPomodoro: () => {
       const { pomodoroWorkMinutes } = get()
+      clearPersisted(POMODORO_RUNTIME_KEY)
       set({
         pomodoroPhase: 'idle',
         pomodoroRunning: false,
@@ -269,23 +329,27 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     // Focus Block initial state & actions
-    focusBlock: null,
+    focusBlock: recoveredFocusBlock ? { ...recoveredFocusBlock } : null,
 
     startFocusBlock: (items: FocusBlockItem[], startIndex = 0) => {
       if (!items || items.length === 0) return
       const validIndex = Math.max(0, Math.min(items.length - 1, startIndex))
       const current = items[validIndex]
       const totalSec = Math.max(60, (current.estimated_minutes || 20) * 60)
+      const nextFocusBlock = {
+        items,
+        activeIndex: validIndex,
+        remainingSeconds: totalSec,
+        totalSeconds: totalSec,
+        isRunning: true,
+        isPaused: false,
+        isOvertime: false,
+        showTimeUpModal: false
+      }
+      writeJson(FOCUS_BLOCK_RUNTIME_KEY, { ...nextFocusBlock, savedAt: Date.now() })
       set({
         focusBlock: {
-          items,
-          activeIndex: validIndex,
-          remainingSeconds: totalSec,
-          totalSeconds: totalSec,
-          isRunning: true,
-          isPaused: false,
-          isOvertime: false,
-          showTimeUpModal: false
+          ...nextFocusBlock
         }
       })
     },
@@ -293,24 +357,28 @@ export const useAppStore = create<AppState>((set, get) => {
     pauseFocusBlock: () => {
       set((state) => {
         if (!state.focusBlock) return {}
-        return {
+        const next = {
           focusBlock: {
             ...state.focusBlock,
             isPaused: true
           }
         }
+        writeJson(FOCUS_BLOCK_RUNTIME_KEY, { ...next.focusBlock, savedAt: Date.now() })
+        return next
       })
     },
 
     resumeFocusBlock: () => {
       set((state) => {
         if (!state.focusBlock) return {}
-        return {
+        const next = {
           focusBlock: {
             ...state.focusBlock,
             isPaused: false
           }
         }
+        writeJson(FOCUS_BLOCK_RUNTIME_KEY, { ...next.focusBlock, savedAt: Date.now() })
+        return next
       })
     },
 
@@ -319,7 +387,7 @@ export const useAppStore = create<AppState>((set, get) => {
         if (!state.focusBlock) return {}
         const addedSeconds = extraMinutes * 60
         const newRemaining = Math.max(0, state.focusBlock.remainingSeconds) + addedSeconds
-        return {
+        const next = {
           focusBlock: {
             ...state.focusBlock,
             remainingSeconds: newRemaining,
@@ -330,6 +398,8 @@ export const useAppStore = create<AppState>((set, get) => {
             isRunning: true
           }
         }
+        writeJson(FOCUS_BLOCK_RUNTIME_KEY, { ...next.focusBlock, savedAt: Date.now() })
+        return next
       })
     },
 
@@ -340,7 +410,7 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         const nextSeconds = state.focusBlock.remainingSeconds - 1
         const justFinished = state.focusBlock.remainingSeconds > 0 && nextSeconds <= 0
-        return {
+        const next = {
           focusBlock: {
             ...state.focusBlock,
             remainingSeconds: nextSeconds,
@@ -348,6 +418,8 @@ export const useAppStore = create<AppState>((set, get) => {
             showTimeUpModal: justFinished ? true : state.focusBlock.showTimeUpModal
           }
         }
+        writeJson(FOCUS_BLOCK_RUNTIME_KEY, { ...next.focusBlock, savedAt: Date.now() })
+        return next
       })
     },
 
@@ -365,21 +437,26 @@ export const useAppStore = create<AppState>((set, get) => {
       if (nextIndex < focusBlock.items.length) {
         const nextItem = focusBlock.items[nextIndex]
         const totalSec = Math.max(60, (nextItem.estimated_minutes || 20) * 60)
+        const nextFocusBlock = {
+          ...focusBlock,
+          items: updatedItems,
+          activeIndex: nextIndex,
+          remainingSeconds: totalSec,
+          totalSeconds: totalSec,
+          isRunning: true,
+          isPaused: false,
+          isOvertime: false,
+          showTimeUpModal: false
+        }
+        writeJson(FOCUS_BLOCK_RUNTIME_KEY, { ...nextFocusBlock, savedAt: Date.now() })
         set({
           focusBlock: {
-            ...focusBlock,
-            items: updatedItems,
-            activeIndex: nextIndex,
-            remainingSeconds: totalSec,
-            totalSeconds: totalSec,
-            isRunning: true,
-            isPaused: false,
-            isOvertime: false,
-            showTimeUpModal: false
+            ...nextFocusBlock
           }
         })
       } else {
         // Finished all steps
+        clearPersisted(FOCUS_BLOCK_RUNTIME_KEY)
         set({ focusBlock: null })
       }
     },
@@ -392,18 +469,21 @@ export const useAppStore = create<AppState>((set, get) => {
           window.electronAPI.planCompleteAction(currentItem.id).catch(console.error)
         }
       }
+      clearPersisted(FOCUS_BLOCK_RUNTIME_KEY)
       set({ focusBlock: null })
     },
 
     dismissFocusBlockTimeUp: () => {
       set((state) => {
         if (!state.focusBlock) return {}
-        return {
+        const next = {
           focusBlock: {
             ...state.focusBlock,
             showTimeUpModal: false
           }
         }
+        writeJson(FOCUS_BLOCK_RUNTIME_KEY, { ...next.focusBlock, savedAt: Date.now() })
+        return next
       })
     }
   }

@@ -314,6 +314,10 @@ export function saveAIConfig(config: AIConfig): void {
   writeMeta('ai_provider', config.provider)
   writeMeta('ai_base_url', config.baseUrl)
   writeMeta('ai_model', config.model)
+  // Keep a small, non-sensitive marker so the main process can restore a
+  // previously configured local engine after an app restart. The model ID and
+  // endpoint remain the canonical configuration above.
+  writeMeta('local_ai_enabled', isLocalEndpoint(config.baseUrl) ? 'true' : 'false')
 }
 
 // ── Test connection ────────────────────────────────────────────────────────────
@@ -454,7 +458,7 @@ export interface MultiKeyVault {
   openaiKey?: string
   deepseekKey?: string
   groqKey?: string
-  visionProvider?: 'gemini' | 'openai' | 'local' | 'auto'
+  visionProvider?: 'gemini' | 'openai' | 'deepseek' | 'local' | 'auto'
   visionModel?: string
   hasGeminiKey?: boolean
   hasOpenaiKey?: boolean
@@ -511,8 +515,8 @@ export function getMultiKeyVault(): MultiKeyVault {
   const deepseek = getStoredKey('deepseek')
   const groq = getStoredKey('groq')
 
-  const visionProvider = (readMeta('vision_provider') as 'gemini' | 'openai' | 'local' | 'auto') || 'gemini'
-  const visionModel = readMeta('vision_model') || 'gemini-2.0-flash'
+  const visionProvider = (readMeta('vision_provider') as 'gemini' | 'openai' | 'deepseek' | 'local' | 'auto') || 'deepseek'
+  const visionModel = readMeta('vision_model') || 'deepseek-flash'
 
   return {
     geminiKey: maskKey(gemini),
@@ -533,7 +537,7 @@ export function saveMultiKeyVault(updates: {
   openaiKey?: string
   deepseekKey?: string
   groqKey?: string
-  visionProvider?: 'gemini' | 'openai' | 'local' | 'auto'
+  visionProvider?: 'gemini' | 'openai' | 'deepseek' | 'local' | 'auto'
   visionModel?: string
 }): void {
   if (!db) return

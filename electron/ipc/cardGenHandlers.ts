@@ -15,6 +15,7 @@ import { parseDocumentTopology } from '../../src/lib/coverage/documentTopologyPa
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
 import { safeParseAICards, type ParsedAICardsPayload } from '../../src/lib/jsonRepair'
 import { cleanCardBrackets } from '../../src/lib/cardParser'
+import { normalizeMathText } from '../../src/lib/mathFormatter'
 import { validateCardQuality } from '../../src/lib/cardValidator'
 import { consolidateCardTopics } from '../../src/lib/topicClustering'
 import { getOrCreateMaterialFolder } from './materialFolderHelper'
@@ -1479,8 +1480,8 @@ function saveGeneratedCards(cards: Partial<Card>[], database: Database.Database,
   const savedCards: Card[] = []
   const saveMany = database.transaction(() => {
     for (const card of cards) {
-      const cleanFront = cleanCardBrackets(card.front || '')
-      const cleanBack = cleanCardBrackets(card.back || '')
+      const cleanFront = normalizeMathText(cleanCardBrackets(card.front || ''))
+      const cleanBack = normalizeMathText(cleanCardBrackets(card.back || ''))
       const cleanConcept = card.concept ? cleanCardBrackets(card.concept) : null
 
       let folderId = card.folder_id || null

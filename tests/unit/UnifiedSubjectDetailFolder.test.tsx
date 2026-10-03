@@ -225,6 +225,41 @@ describe('UnifiedSubjectDetail — Linked Folder & Live Sync', () => {
     expect(screen.getByText(/Week 1\/lecture1\.pdf/i)).toBeInTheDocument()
   })
 
+  it('selects all linked materials for tutor/card context by default', async () => {
+    render(<UnifiedSubjectDetail />)
+
+    const materialsTab = await screen.findByRole('button', { name: /^Materials/i })
+    fireEvent.click(materialsTab)
+
+    const materialCheckboxes = await screen.findAllByRole('checkbox', { name: 'Select material' })
+    expect(materialCheckboxes).toHaveLength(mockMaterials.length)
+    materialCheckboxes.forEach((checkbox) => expect(checkbox).toBeChecked())
+    expect(screen.getByText(/2 selected/i)).toBeInTheDocument()
+  })
+
+  it('preserves an explicit material deselection when the linked folder refreshes', async () => {
+    const linkedSubject: Subject = {
+      ...baseSubject,
+      linked_folder_path: '/Users/test/Documents/Bio101',
+      folder_sync_status: 'idle',
+      folder_last_synced_at: new Date().toISOString()
+    }
+    useAppStore.setState({ subjects: [linkedSubject] })
+    render(<UnifiedSubjectDetail />)
+
+    const materialsTab = await screen.findByRole('button', { name: /^Materials/i })
+    fireEvent.click(materialsTab)
+    const materialCheckboxes = await screen.findAllByRole('checkbox', { name: 'Select material' })
+    fireEvent.click(materialCheckboxes[0])
+    expect(materialCheckboxes[0]).not.toBeChecked()
+
+    act(() => {
+      folderSyncCallback!({ subjectId: 1, added: [], updated: [], timestamp: new Date().toISOString() })
+    })
+    await waitFor(() => expect(window.electronAPI.getMaterials).toHaveBeenCalledWith(1))
+    await waitFor(() => expect(screen.getAllByRole('checkbox', { name: 'Select material' })[0]).not.toBeChecked())
+  })
+
   it('reloads materials and shows toast on folder:sync-event', async () => {
     render(<UnifiedSubjectDetail />)
 

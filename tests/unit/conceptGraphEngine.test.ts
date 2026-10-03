@@ -148,6 +148,46 @@ describe('conceptGraphEngine', () => {
       expect(graph.nodes.length).toBe(3)
       expect(graph.edges.length).toBe(3)
     })
+
+    it('keeps curriculum and card-topic relationships contextual instead of blocking', () => {
+      const graph = buildConceptGraph({
+        subjectId: 1,
+        modules: [{
+          id: 1,
+          subject_id: 1,
+          title: 'Foundations',
+          status: 'pending',
+          hours_estimated: 1,
+          sort_order: 1,
+          created_at: '2026-01-01',
+          topics: [{ id: 11, module_id: 1, title: 'Vectors', mastery_target: 80, sort_order: 1, created_at: '2026-01-01' }]
+        }, {
+          id: 2,
+          subject_id: 1,
+          title: 'Applications',
+          status: 'pending',
+          hours_estimated: 1,
+          sort_order: 2,
+          created_at: '2026-01-01',
+          topics: [{ id: 12, module_id: 2, title: 'Gradients', mastery_target: 80, sort_order: 1, created_at: '2026-01-01' }]
+        }],
+        cards: [{ id: 5, subject_id: 1, type: 'flashcard', front: 'Gradient', back: 'Slope', is_manual: 0, concept: 'Gradient method', topic_id: 12, material_id: 99, created_at: '2026-01-01' }]
+      })
+
+      const gradients = graph.nodes.find(node => node.id === 'gradients')!
+      const contextEdge = graph.edges.find(edge => edge.target === 'gradient method')!
+      expect(gradients.status).not.toBe('blocked')
+      expect(contextEdge.relationshipType).toBe('card_topic_context')
+      expect(contextEdge.blocks).toBe(false)
+      expect(gradients.materialIds).toEqual([99])
+    })
+
+    it('produces deterministic coordinates for overlapping nodes', () => {
+      const input = { subjectId: 1, dependencies: [{ subject_id: 1, prerequisite_concept: 'A', target_concept: 'B' }] as ConceptDependency[] }
+      const first = buildConceptGraph(input)
+      const second = buildConceptGraph(input)
+      expect(first.nodes.map(node => [node.id, node.x, node.y])).toEqual(second.nodes.map(node => [node.id, node.x, node.y]))
+    })
   })
 
   describe('getImpactedDownstreamConcepts & findShortestLearningPath', () => {
@@ -318,4 +358,3 @@ describe('conceptGraphEngine', () => {
     })
   })
 })
-

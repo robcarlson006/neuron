@@ -1,0 +1,9 @@
+{"id":"src-01","title":"Lost in the Middle: How Language Models Use Long Contexts","url":"https://aclanthology.org/2024.tacl-1.9/","type":"research-paper","year":2024}
+{"id":"src-02","title":"Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks","url":"https://arxiv.org/abs/2005.11401","type":"research-paper","year":2020}
+{"id":"src-03","title":"Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection","url":"https://arxiv.org/abs/2310.11511","type":"research-paper","year":2023}
+{"id":"src-04","title":"ColBERTv2: Effective and Efficient Retrieval via Lightweight Late Interaction","url":"https://aclanthology.org/2022.naacl-main.272/","type":"research-paper","year":2022}
+{"id":"src-05","title":"Evaluating Very Long-Term Conversational Memory of LLM Agents","url":"https://aclanthology.org/2024.acl-long.747/","type":"research-paper","year":2024}
+{"id":"src-06","title":"Memory Matters: The Need to Improve Long-Term Memory in LLM-Agents","url":"https://ojs.aaai.org/index.php/AAAI-SS/article/view/27688","type":"research-paper","year":2023}
+{"id":"src-07","title":"Deep Knowledge Tracing with Transformers","url":"https://pmc.ncbi.nlm.nih.gov/articles/PMC7334675/","type":"research-paper","year":2020}
+{"id":"src-08","title":"The science of effective learning with spacing and retrieval practice","url":"https://www.nature.com/articles/s44159-022-00089-1","type":"review-paper","year":2022}
+{"id":"src-09","title":"Retrieval Practice Consistently Benefits Student Learning","url":"https://doi.org/10.1007/s10648-021-09595-9","type":"review-paper","year":2021}

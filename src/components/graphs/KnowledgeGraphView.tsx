@@ -16,7 +16,9 @@ import {
   CheckCircle2,
   X,
   Play,
-  MessageSquare
+  MessageSquare,
+  BookOpen,
+  ExternalLink
 } from '../icons'
 import {
   buildConceptGraph
@@ -39,7 +41,9 @@ export interface KnowledgeGraphViewProps {
   cards?: Card[]
   onAddDependency?: (prereq: string, target: string) => Promise<void>
   onDeleteDependency?: (prereq: string, target: string) => Promise<void>
-  onOpenTutor?: (concept: string) => void
+  onOpenTutor?: (concept: string, node?: ConceptGraphNode) => void
+  onOpenPractice?: (node: ConceptGraphNode) => void
+  onOpenCurriculum?: (node: ConceptGraphNode) => void
 }
 
 type FilterOption = 'all' | 'gaps' | 'blocked' | 'learning' | 'mastered' | 'bottlenecks'
@@ -53,7 +57,9 @@ export default function KnowledgeGraphView({
   cards = [],
   onAddDependency,
   onDeleteDependency,
-  onOpenTutor
+  onOpenTutor,
+  onOpenPractice,
+  onOpenCurriculum
 }: KnowledgeGraphViewProps): React.JSX.Element {
   const navigate = useNavigate()
 
@@ -97,8 +103,8 @@ export default function KnowledgeGraphView({
       if (containerRef.current) {
         const { clientWidth, clientHeight } = containerRef.current
         setCanvasDim({
-          width: Math.max(clientWidth, 600),
-          height: Math.max(clientHeight, 500)
+          width: Math.max(clientWidth, 320),
+          height: Math.max(clientHeight, 450)
         })
       }
     }
@@ -718,6 +724,14 @@ export default function KnowledgeGraphView({
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 border-b border-slate-200/60 dark:border-slate-800/60 bg-white/70 dark:bg-slate-900/70 text-[11px] text-slate-500 dark:text-slate-400" aria-label="Knowledge graph legend">
+        <span className="font-semibold text-slate-600 dark:text-slate-300">Legend</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-5 rounded-full bg-emerald-500" /> Proven prerequisite</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-0 w-5 border-t border-dashed border-slate-400" /> Curriculum context</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Mastery</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-500" /> Gap</span>
+      </div>
+
       {/* ── Main Graph Canvas Area & Inspector Panel ── */}
       <div className="relative flex-1 min-h-[450px] overflow-hidden" ref={containerRef}>
         {/* SVG Graph View */}
@@ -764,6 +778,17 @@ export default function KnowledgeGraphView({
             >
               <path d="M 0 1 L 10 5 L 0 9 z" fill="#8b5cf6" />
             </marker>
+            <marker
+              id="arrow-context"
+              viewBox="0 0 10 10"
+              refX="22"
+              refY="5"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#94a3b8" />
+            </marker>
           </defs>
 
           {/* Graph Content Group with Pan and Zoom */}
@@ -806,14 +831,19 @@ export default function KnowledgeGraphView({
               const cx2 = tgtPos.x - Math.max(dx * 0.45, 30)
               const cy2 = tgtPos.y - dy * 0.1
 
+              const isContextual = !edge.blocks
               const strokeColor = isConnectedToSelected
                 ? '#8b5cf6'
+                : isContextual
+                ? '#94a3b8'
                 : edge.isPrerequisiteMet
                 ? '#10b981'
                 : '#f43f5e'
 
               const markerEnd = isConnectedToSelected
                 ? 'url(#arrow-selected)'
+                : isContextual
+                ? 'url(#arrow-context)'
                 : edge.isPrerequisiteMet
                 ? 'url(#arrow-met)'
                 : 'url(#arrow-unmet)'
@@ -824,8 +854,8 @@ export default function KnowledgeGraphView({
                     d={`M ${srcPos.x} ${srcPos.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${tgtPos.x} ${tgtPos.y}`}
                     fill="none"
                     stroke={strokeColor}
-                    strokeWidth={isConnectedToSelected ? 3 : 1.75}
-                    strokeDasharray={edge.isPrerequisiteMet ? undefined : '4 3'}
+                    strokeWidth={isConnectedToSelected ? 3 : isContextual ? 1.25 : 1.75}
+                    strokeDasharray={isContextual ? '2 4' : edge.isPrerequisiteMet ? undefined : '4 3'}
                     strokeOpacity={isConnectedToSelected ? 0.95 : 0.6}
                     markerEnd={markerEnd}
                   />
@@ -847,9 +877,18 @@ export default function KnowledgeGraphView({
                   key={node.id}
                   transform={`translate(${pos.x}, ${pos.y})`}
                   className="cursor-pointer transition-transform"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Select ${node.label}`}
                   onClick={e => {
                     e.stopPropagation()
                     setSelectedNodeId(node.id)
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setSelectedNodeId(node.id)
+                    }
                   }}
                   onMouseDown={e => {
                     e.stopPropagation()
@@ -1057,6 +1096,24 @@ export default function KnowledgeGraphView({
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50">
+                  <span className="block text-[10px] uppercase tracking-wide text-slate-400">Evidence</span>
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{selectedNode.evidenceKind || 'inferred'} · {selectedNode.evidenceCount || 0}</span>
+                </div>
+                <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50">
+                  <span className="block text-[10px] uppercase tracking-wide text-slate-400">Confidence</span>
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{Math.round((selectedNode.relationshipConfidence ?? 0) * 100)}%</span>
+                </div>
+              </div>
+              <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                {selectedNode.status === 'blocked'
+                  ? 'Study the unmet prerequisite first, then return here for a retrieval check.'
+                  : selectedNode.status === 'gap' || selectedNode.status === 'shaky'
+                  ? 'This is a high-value next action: use a short tutor drill, then complete a mixed practice item.'
+                  : 'Keep this concept in spaced maintenance and test it in a new context.'}
+              </p>
+
               {/* Bottleneck Alert */}
               {selectedNode.isBottleneck && (
                 <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200">
@@ -1151,6 +1208,21 @@ export default function KnowledgeGraphView({
                   </div>
                 )}
               </div>
+
+              {(selectedNode.contextualPrerequisites?.length || selectedNode.contextualDependents?.length) ? (
+                <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/40 p-3">
+                  <h5 className="font-semibold text-slate-700 dark:text-slate-200 mb-1">Learning context</h5>
+                  <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                    These connections come from curriculum order or card/topic associations. They help you navigate the subject but do not block study.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {[...(selectedNode.contextualPrerequisites || []), ...(selectedNode.contextualDependents || [])].map(key => {
+                      const contextNode = graphData.nodes.find(node => node.id === key)
+                      return <button key={key} type="button" onClick={() => setSelectedNodeId(key)} className="rounded-full bg-white px-2 py-1 text-[10px] font-medium text-slate-600 hover:text-violet-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-violet-300">{contextNode?.label || key}</button>
+                    })}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             {/* Inspector Action Buttons Footer */}
@@ -1164,10 +1236,34 @@ export default function KnowledgeGraphView({
 
               {onOpenTutor && (
                 <button
-                  onClick={() => onOpenTutor(selectedNode.label)}
+                  onClick={() => onOpenTutor(selectedNode.label, selectedNode)}
                   className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium text-xs transition-colors"
                 >
                   <MessageSquare size={13} /> Ask Socratic AI Tutor
+                </button>
+              )}
+              {onOpenPractice && (selectedNode.topicId || selectedNode.moduleId) && (
+                <button
+                  onClick={() => onOpenPractice(selectedNode)}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium text-xs transition-colors"
+                >
+                  <BookOpen size={13} /> Practice this topic
+                </button>
+              )}
+              {onOpenCurriculum && (selectedNode.topicId || selectedNode.moduleId) && (
+                <button
+                  onClick={() => onOpenCurriculum(selectedNode)}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium text-xs transition-colors"
+                >
+                  <Network size={13} /> Open curriculum topic
+                </button>
+              )}
+              {selectedNode.materialIds?.[0] && (
+                <button
+                  onClick={() => navigate(`/subject/${subjectId}/material/${selectedNode.materialIds![0]}`)}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium text-xs transition-colors"
+                >
+                  <ExternalLink size={13} /> Open source material
                 </button>
               )}
             </div>

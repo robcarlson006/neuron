@@ -8,7 +8,7 @@ import NeuronLogo from './NeuronLogo'
 interface Step {
   id: string
   modal?: boolean           // full blocking modal (welcome / complete)
-  navigateTo?: 'dashboard' | 'subject' | 'diagnostics' | 'study' | 'tutor' | 'calendar' | 'analytics'
+  navigateTo?: 'dashboard' | 'subject' | 'diagnostics' | 'study' | 'tutor' | 'calendar' | 'analytics' | 'help'
   title: string
   body: React.ReactNode
   cta: string
@@ -207,6 +207,37 @@ const STEPS: Step[] = [
     cta: 'Next →'
   },
   {
+    id: 'notes-workspace',
+    navigateTo: 'subject',
+    title: 'Notebook, Cornell Notes & Materials',
+    body: (
+      <>
+        <p>Use the class workspace to write a durable <strong>Notebook</strong>, capture Cornell cues and summaries during lectures, and annotate source materials.</p>
+        <p className="mt-2 text-xs opacity-80">Notes autosave while you work. Highlights can become source-grounded cards without leaving the document.</p>
+      </>
+    ),
+    cta: 'Next →'
+  },
+  {
+    id: 'grounded-ai',
+    navigateTo: 'tutor',
+    title: 'Grounded AI & Local Privacy',
+    body: (
+      <>
+        <p><strong>Ask Materials</strong> answers from your uploaded sources and shows evidence. Tutor sessions can use the same class context.</p>
+        <p className="mt-2 text-xs opacity-80">Settings lets you choose local models, cloud providers, and feature-specific routing.</p>
+      </>
+    ),
+    cta: 'Next →'
+  },
+  {
+    id: 'help-center',
+    navigateTo: 'help',
+    title: 'Learn Every Feature',
+    body: <p>The <strong>Help & Learn</strong> area stays available from the sidebar. Search for any feature, expand a lesson, and jump straight into the relevant screen.</p>,
+    cta: 'Next →'
+  },
+  {
     id: 'calendar',
     navigateTo: 'calendar',
     title: 'Calendar & Exam Boost',
@@ -289,6 +320,7 @@ export default function DemoTour({ onComplete }: DemoTourProps): React.JSX.Eleme
         case 'tutor': return '/tutor'
         case 'calendar': return '/calendar'
         case 'analytics': return '/analytics'
+        case 'help': return '/help'
         default: return null
       }
     },

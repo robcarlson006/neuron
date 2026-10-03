@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+  --neuron-canvas: #f8fafc;
+  --neuron-surface: #ffffff;
+  --neuron-surface-raised: #ffffff;
+  --neuron-surface-muted: #f1f5f9;
+  --neuron-border: #e2e8f0;
+  --neuron-border-strong: #cbd5e1;
+  --neuron-text: #0f172a;
+  --neuron-text-muted: #64748b;
+  --neuron-focus: #8b5cf6;
+}
+
+.dark {
+  color-scheme: dark;
+  --neuron-canvas: #090e1a;
+  --neuron-surface: #111827;
+  --neuron-surface-raised: #172033;
+  --neuron-surface-muted: #1e293b;
+  --neuron-border: #334155;
+  --neuron-border-strong: #475569;
+  --neuron-text: #f8fafc;
+  --neuron-text-muted: #94a3b8;
+  --neuron-focus: #a78bfa;
+}
+
 @layer base {
   * {
     box-sizing: border-box;
@@ -24,11 +50,90 @@
   }
 
   body {
-    @apply bg-neuron-50 dark:bg-neuron-950 text-slate-900 dark:text-slate-50;
+    background: var(--neuron-canvas);
+    color: var(--neuron-text);
+    transition: background-color 180ms ease, color 180ms ease;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--neuron-focus) 28%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--neuron-focus);
+    outline-offset: 2px;
   }
 }
 
 @layer components {
+  .subject-icon-frame {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    line-height: 0;
+  }
+
+  .subject-icon-frame-card {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--neuron-focus) 10%, transparent);
+  }
+
+  .subject-icon-frame-sidebar {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .subject-icon-frame-sidebar-archived {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
+  .neuron-pdf-text-layer {
+    overflow: hidden;
+    line-height: 1;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    inset: 0;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .neuron-pdf-text-layer span,
+  .neuron-pdf-text-layer br {
+    position: absolute;
+    white-space: pre;
+    color: transparent;
+    transform-origin: 0% 0%;
+    cursor: text;
+    margin: 0;
+    padding: 0;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .neuron-pdf-text-layer::selection,
+  .neuron-pdf-text-layer span::selection {
+    background: rgba(251, 191, 36, 0.7);
+  }
+
+  /* In selection mode PDF.js owns the geometry. The text stays hidden until
+   * the learner selects it, preventing duplicate slide text while making the
+   * selected words visibly bold over the original pixels. */
+  .neuron-pdf-text-layer.selection-active span::selection {
+    color: rgba(31, 41, 55, 0.9);
+    text-shadow: 0 0 0.01px currentColor;
+  }
+
+  .neuron-pdf-text-layer.text-overlay-visible span {
+    color: rgba(15, 23, 42, 0.78);
+    font-weight: 700;
+    mix-blend-mode: multiply;
+  }
+
   /* Card flip animation */
   .card-scene {
     perspective: 1000px;
@@ -125,12 +230,27 @@
 
   /* Card styles */
   .card {
-    @apply bg-white dark:bg-neuron-900/40 rounded-xl border border-neuron-200 dark:border-neuron-800 shadow-sm p-6;
+    @apply rounded-xl border shadow-sm p-6;
+    background: var(--neuron-surface);
+    border-color: var(--neuron-border);
   }
 
   /* Input styles */
   .input {
-    @apply w-full px-3 py-2 rounded-lg border border-neuron-200 dark:border-neuron-700 bg-white dark:bg-neuron-900/50 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-neuron-500 focus:border-transparent transition-colors text-sm;
+    @apply w-full px-3 py-2 rounded-lg border text-sm transition-colors;
+    background: color-mix(in srgb, var(--neuron-surface) 92%, var(--neuron-surface-muted));
+    border-color: var(--neuron-border);
+    color: var(--neuron-text);
+  }
+
+  .input::placeholder {
+    color: var(--neuron-text-muted);
+  }
+
+  .input:focus {
+    outline: none;
+    border-color: var(--neuron-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--neuron-focus) 18%, transparent);
   }
 
   /* Badge styles */

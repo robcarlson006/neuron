@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import ExportModal from '../components/ExportModal'
 import LocalAISection from '../components/LocalAISection'
 import LectureSettingsSection from '../components/LectureSettingsSection'
 import { ACHIEVEMENT_DEFS } from '../lib/achievements'
+import type { GoogleCalendarRuntimeStatus } from '../types'
 
 // ── Pomodoro config modal ────────────────────────────────────────────────────
 function PomodoroModal({ onClose }: { onClose: () => void }): React.JSX.Element {
@@ -260,6 +262,15 @@ interface SettingsProps {
   onStartDemo?: () => void
 }
 
+const SETTINGS_SECTIONS = [
+  ['profile', 'Profile'], ['calendar', 'Calendar'], ['study', 'Study'], ['timers', 'Timers'], ['ai', 'AI'],
+  ['lecture', 'Lecture'], ['data', 'Data'], ['help', 'Help'], ['updates', 'Updates']
+] as const
+
+export function scrollToSettingsSection(id: string): void {
+  document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 type UpdateStatus =
   | 'idle'
   | 'checking'
@@ -276,7 +287,19 @@ interface UpdateInfo {
   releaseUrl: string
 }
 
+interface UpdateDownloadState {
+  status: 'idle' | 'downloading' | 'downloaded' | 'error'
+  version: string
+  downloadUrl: string | null
+  releaseUrl: string
+  progress: number
+  filePath: string
+  error: string
+}
+
 export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Element {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const {
     user,
     setUser,
@@ -297,6 +320,10 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [showPomodoroModal, setShowPomodoroModal] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
   const [userLevelData, setUserLevelData] = useState<{ xp: number; level: number } | null>(null)
+  const [googleClientId, setGoogleClientId] = useState('')
+  const [googleClientIdSaved, setGoogleClientIdSaved] = useState(false)
+  const [googleClientIdTest, setGoogleClientIdTest] = useState<{ valid: boolean; message: string } | null>(null)
+  const [googleCalendarStatus, setGoogleCalendarStatus] = useState<GoogleCalendarRuntimeStatus | null>(null)
 
   // Version / update state
   const [desiredRetention, setDesiredRetention] = useState(90)
@@ -325,7 +352,36 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [downloadedPath, setDownloadedPath] = useState('')
   const [updateError, setUpdateError] = useState('')
   const [installMethod, setInstallMethod] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
   const progressListenerSet = useRef(false)
+
+  function applyDownloadState(state: UpdateDownloadState): void {
+    if (state.status === 'idle') return
+    if (state.version) {
+      setUpdateInfo(previous => ({
+        latestVersion: state.version,
+        downloadUrl: state.downloadUrl ?? previous?.downloadUrl ?? null,
+        releaseUrl: state.releaseUrl || previous?.releaseUrl || ''
+      }))
+    }
+    setDownloadProgress(state.progress)
+    setDownloadedPath(state.filePath || '')
+    setUpdateError(state.error || '')
+    setUpdateStatus(state.status)
+  }
+
+  async function runSettingsAction(label: string, action: () => Promise<void>): Promise<void> {
+    setPendingAction(label)
+    setActionError('')
+    try {
+      await action()
+    } catch (err) {
+      setActionError((err as Error).message || `${label} failed.`)
+    } finally {
+      setPendingAction(null)
+    }
+  }
 
   // Multi-Key Vault state
   const [vaultGeminiKey, setVaultGeminiKey] = useState('')
@@ -336,8 +392,8 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const [hasOpenaiKey, setHasOpenaiKey] = useState(false)
   const [hasDeepseekKey, setHasDeepseekKey] = useState(false)
   const [hasGroqKey, setHasGroqKey] = useState(false)
-  const [visionProvider, setVisionProvider] = useState<'gemini' | 'openai' | 'local' | 'auto'>('gemini')
-  const [visionModel, setVisionModel] = useState('gemini-2.0-flash')
+  const [visionProvider, setVisionProvider] = useState<'gemini' | 'openai' | 'deepseek' | 'local' | 'auto'>('deepseek')
+  const [visionModel, setVisionModel] = useState('deepseek-flash')
   const [vaultSaved, setVaultSaved] = useState(false)
   const [showVaultKey, setShowVaultKey] = useState<Record<string, boolean>>({})
   const [vaultTestStatus, setVaultTestStatus] = useState<
@@ -370,6 +426,10 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
     window.electronAPI.getMeta('preferred_arch').then(v => {
       if (v) setPreferredArch(v as 'auto' | 'arm64' | 'x64')
     }).catch(() => {})
+    window.electronAPI.getMeta('google_calendar_client_id').then(v => {
+      if (v) setGoogleClientId(v)
+    }).catch(() => {})
+    window.electronAPI.googleCalendar?.getStatus?.().then(setGoogleCalendarStatus).catch(() => {})
     setReminderLoaded(true)
 
     // Load AI config
@@ -411,8 +471,18 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
       window.electronAPI.onDownloadProgress((pct) => setDownloadProgress(pct))
     }
 
+    window.electronAPI.getUpdateState?.().then(applyDownloadState).catch(() => {})
+    window.electronAPI.onUpdateState?.(applyDownloadState)
+
     loadUserLevel()
   }, [])
+
+  useEffect(() => {
+    const section = searchParams.get('section')
+    if (!section) return
+    const timeout = window.setTimeout(() => scrollToSettingsSection(section), 0)
+    return () => window.clearTimeout(timeout)
+  }, [searchParams])
 
   // Persist reminder time changes (skip initial load to avoid overwriting)
   useEffect(() => {
@@ -421,66 +491,103 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   }, [reminderTime, reminderLoaded])
 
   async function handleSaveFSRS(): Promise<void> {
-    await window.electronAPI.setMeta('desired_retention', (desiredRetention / 100).toString())
-    await window.electronAPI.setMeta('interleave_queue', interleave ? 'true' : 'false')
-    setSavedFSRS(true)
-    setTimeout(() => setSavedFSRS(false), 1500)
+    await runSettingsAction('Save algorithm settings', async () => {
+      await window.electronAPI.setMeta('desired_retention', (desiredRetention / 100).toString())
+      await window.electronAPI.setMeta('interleave_queue', interleave ? 'true' : 'false')
+      setSavedFSRS(true)
+      setTimeout(() => setSavedFSRS(false), 1500)
+    })
+  }
+
+  async function handleTestGoogleClientId(): Promise<void> {
+    await runSettingsAction('Test Google Calendar configuration', async () => {
+      if (!window.electronAPI.googleCalendar?.validateClientId) {
+        setGoogleClientIdTest({ valid: false, message: 'Restart Neuron to load the Google Calendar setup tools.' })
+        return
+      }
+      const result = await window.electronAPI.googleCalendar.validateClientId(googleClientId)
+      setGoogleClientIdTest(result)
+    })
+  }
+
+  async function handleSaveGoogleClientId(): Promise<void> {
+    await runSettingsAction('Save Google Calendar configuration', async () => {
+      if (!window.electronAPI.googleCalendar?.validateClientId) {
+        setGoogleClientIdTest({ valid: false, message: 'Restart Neuron to load the Google Calendar setup tools.' })
+        return
+      }
+      const result = await window.electronAPI.googleCalendar.validateClientId(googleClientId)
+      setGoogleClientIdTest(result)
+      if (!result.valid) return
+      await window.electronAPI.setMeta('google_calendar_client_id', googleClientId.trim())
+      setGoogleClientIdSaved(true)
+      setTimeout(() => setGoogleClientIdSaved(false), 1800)
+      window.electronAPI.googleCalendar.getStatus?.().then(setGoogleCalendarStatus).catch(() => {})
+    })
   }
 
   async function handleCheckForUpdates(): Promise<void> {
-    setUpdateStatus('checking')
-    setUpdateError('')
-    setUpdateInfo(null)
-    try {
-      const result = await window.electronAPI.checkGitHub()
-      if (result.updateAvailable) {
-        setUpdateInfo({
-          latestVersion: result.latestVersion,
-          downloadUrl: result.downloadUrl,
-          releaseUrl: result.releaseUrl
-        })
-        setUpdateStatus('available')
-      } else {
-        setUpdateStatus('up-to-date')
+    await runSettingsAction('Check for updates', async () => {
+      setUpdateStatus('checking')
+      setUpdateError('')
+      setUpdateInfo(null)
+      try {
+        const result = await window.electronAPI.checkGitHub()
+        if (result.updateAvailable) {
+          setUpdateInfo({
+            latestVersion: result.latestVersion,
+            downloadUrl: result.downloadUrl,
+            releaseUrl: result.releaseUrl
+          })
+          setUpdateStatus('available')
+        } else {
+          setUpdateStatus('up-to-date')
+        }
+      } catch (err) {
+        setUpdateError((err as Error).message ?? 'Could not check for updates.')
+        setUpdateStatus('error')
+        throw err
       }
-    } catch (err) {
-      setUpdateError((err as Error).message ?? 'Could not check for updates.')
-      setUpdateStatus('error')
-    }
+    })
   }
 
   async function handleDownload(): Promise<void> {
-    if (!updateInfo?.downloadUrl) {
-      // No direct download — open releases page
-      window.electronAPI.openReleasePage(updateInfo!.releaseUrl)
-      return
-    }
-    setUpdateStatus('downloading')
-    setDownloadProgress(0)
-    const result = await window.electronAPI.downloadUpdate(
-      updateInfo.downloadUrl,
-      updateInfo.latestVersion
-    )
-    if (result.success && result.filePath) {
-      setDownloadedPath(result.filePath)
-      setUpdateStatus('downloaded')
-    } else {
-      setUpdateError(result.error ?? 'Download failed.')
-      setUpdateStatus('error')
-    }
+    await runSettingsAction('Download update', async () => {
+      if (!updateInfo?.downloadUrl) {
+        if (updateInfo?.releaseUrl) window.electronAPI.openReleasePage(updateInfo.releaseUrl)
+        return
+      }
+      setUpdateStatus('downloading')
+      setDownloadProgress(0)
+      const result = await window.electronAPI.downloadUpdate(
+        updateInfo.downloadUrl,
+        updateInfo.latestVersion,
+        updateInfo.releaseUrl
+      )
+      if (result.success && result.filePath) {
+        setDownloadedPath(result.filePath)
+        setUpdateStatus('downloaded')
+      } else {
+        setUpdateError(result.error ?? 'Download failed.')
+        setUpdateStatus('error')
+        throw new Error(result.error ?? 'Download failed.')
+      }
+    })
   }
 
   async function handleInstall(): Promise<void> {
-    if (!downloadedPath) return
-    setUpdateStatus('installing')
-    const result = await window.electronAPI.installDownloadedUpdate(downloadedPath)
-    if (result.success) {
-      setInstallMethod(result.method)
-      // On mac/script the app will quit automatically; show message in case it doesn't
-    } else {
-      setUpdateError('Install failed. Try opening the file manually.')
-      setUpdateStatus('error')
-    }
+    await runSettingsAction('Install update', async () => {
+      if (!downloadedPath) return
+      setUpdateStatus('installing')
+      const result = await window.electronAPI.installDownloadedUpdate(downloadedPath)
+      if (result.success) {
+        setInstallMethod(result.method)
+      } else {
+        setUpdateError('Install failed. Try opening the file manually.')
+        setUpdateStatus('error')
+        throw new Error('Install failed. Try opening the file manually.')
+      }
+    })
   }
 
   function handleCancelDownload(): void {
@@ -499,27 +606,27 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   const detectedArch = typeof process !== 'undefined' && process.arch ? process.arch : 'unknown'
 
   async function handleSavePreferredArch(): Promise<void> {
-    await window.electronAPI.setMeta('preferred_arch', preferredArch)
+    await runSettingsAction('Save download architecture', async () => {
+      await window.electronAPI.setMeta('preferred_arch', preferredArch)
+    })
   }
 
   async function handleSaveName(): Promise<void> {
     if (!name.trim() || !user) return
-    try {
+    await runSettingsAction('Save profile', async () => {
       const updated = await window.electronAPI.saveUser(name.trim())
       setUser(updated)
       setSavedName(true)
       setTimeout(() => setSavedName(false), 2000)
-    } catch (err) {
-      console.error(err)
-    }
+    })
   }
 
   async function handleTestAIConnection(): Promise<void> {
-    setAiConnectionStatus('testing')
-    setAiConnectionMessage('')
-    setAiConnectionLatency(undefined)
-    const cleanKey = aiApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
-    try {
+    await runSettingsAction('Test AI connection', async () => {
+      setAiConnectionStatus('testing')
+      setAiConnectionMessage('')
+      setAiConnectionLatency(undefined)
+      const cleanKey = aiApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
       const result = await window.electronAPI.testAIConnection({
         provider: aiProvider,
         baseUrl: aiBaseUrl,
@@ -539,30 +646,30 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         setAiSaved(true)
         setTimeout(() => setAiSaved(false), 2500)
       }
-    } catch (err) {
-      setAiConnectionStatus('error')
-      setAiConnectionMessage((err as Error).message ?? 'Connection test failed')
-    }
+      if (!result.success) throw new Error(result.message || 'Connection test failed')
+    })
   }
 
   async function handleSaveAIConfig(): Promise<void> {
-    const cleanKey = aiApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
-    await window.electronAPI.saveAIConfig({
-      provider: aiProvider,
-      baseUrl: aiBaseUrl,
-      model: aiModel,
-      apiKey: apiKeyModified && cleanKey ? cleanKey : undefined
+    await runSettingsAction('Save AI configuration', async () => {
+      const cleanKey = aiApiKey.trim().replace(/^["'`]|["'`]$/g, '').replace(/^Bearer\s+/i, '').trim()
+      await window.electronAPI.saveAIConfig({
+        provider: aiProvider,
+        baseUrl: aiBaseUrl,
+        model: aiModel,
+        apiKey: apiKeyModified && cleanKey ? cleanKey : undefined
+      })
+      if (apiKeyModified && cleanKey) {
+        setHasApiKey(true)
+        setApiKeyModified(false)
+        const masked = cleanKey.length > 8
+          ? cleanKey.substring(0, 7) + '••••••••' + cleanKey.substring(cleanKey.length - 4)
+          : '••••••••••••'
+        setAiApiKey(masked)
+      }
+      setAiSaved(true)
+      setTimeout(() => setAiSaved(false), 2500)
     })
-    if (apiKeyModified && cleanKey) {
-      setHasApiKey(true)
-      setApiKeyModified(false)
-      const masked = cleanKey.length > 8
-        ? cleanKey.substring(0, 7) + '••••••••' + cleanKey.substring(cleanKey.length - 4)
-        : '••••••••••••'
-      setAiApiKey(masked)
-    }
-    setAiSaved(true)
-    setTimeout(() => setAiSaved(false), 2500)
   }
 
   function handleOpenExternalLink(url: string, e: React.MouseEvent): void {
@@ -577,8 +684,8 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   }
 
   async function handleTestVaultKey(provider: 'gemini' | 'openai' | 'deepseek' | 'groq'): Promise<void> {
-    setVaultTestStatus(prev => ({ ...prev, [provider]: { status: 'testing' } }))
-    try {
+    await runSettingsAction(`Test ${provider} API key`, async () => {
+      setVaultTestStatus(prev => ({ ...prev, [provider]: { status: 'testing' } }))
       let keyOverride: string | undefined
       if (provider === 'gemini' && vaultModified.gemini && vaultGeminiKey.trim()) keyOverride = vaultGeminiKey.trim()
       if (provider === 'openai' && vaultModified.openai && vaultOpenaiKey.trim()) keyOverride = vaultOpenaiKey.trim()
@@ -596,21 +703,14 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         if (provider === 'deepseek') setHasDeepseekKey(true)
         if (provider === 'groq') setHasGroqKey(true)
       } else {
-        setVaultTestStatus(prev => ({
-          ...prev,
-          [provider]: { status: 'error', message: result.message }
-        }))
+        setVaultTestStatus(prev => ({ ...prev, [provider]: { status: 'error', message: result.message } }))
+        throw new Error(result.message || 'Connection test failed')
       }
-    } catch (err: any) {
-      setVaultTestStatus(prev => ({
-        ...prev,
-        [provider]: { status: 'error', message: err?.message || 'Connection test failed' }
-      }))
-    }
+    })
   }
 
   async function handleSaveVault(): Promise<void> {
-    try {
+    await runSettingsAction('Save API keys and routing', async () => {
       await window.electronAPI.saveMultiKeyVault({
         geminiKey: vaultModified.gemini ? vaultGeminiKey : undefined,
         openaiKey: vaultModified.openai ? vaultOpenaiKey : undefined,
@@ -634,22 +734,41 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
       }
       setVaultSaved(true)
       setTimeout(() => setVaultSaved(false), 2500)
-    } catch (err) {
-      console.error('Failed to save multi-key vault:', err)
-    }
+    })
   }
 
   return (
-    <div className="p-8 max-w-2xl page-enter">
+    <div className="mx-auto w-full max-w-6xl p-5 page-enter sm:p-8">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">Settings</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Manage your preferences and account.</p>
       </div>
 
+      {actionError && (
+        <div role="alert" className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError('')} className="text-xs font-semibold hover:underline">Dismiss</button>
+        </div>
+      )}
+
+      <nav aria-label="Settings sections" className="sticky top-0 z-20 mb-5 flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white/90 p-1.5 shadow-sm backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/90">
+        {SETTINGS_SECTIONS.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            data-settings-section={id}
+            onClick={() => scrollToSettingsSection(id)}
+            className="whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-violet-50 hover:text-violet-700 dark:text-slate-400 dark:hover:bg-violet-950/40 dark:hover:text-violet-200"
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
       <div className="space-y-5">
         {/* Profile section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-profile" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-4">Profile</h2>
           <div>
             <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-2">
@@ -665,7 +784,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               />
               <button
                 onClick={handleSaveName}
-                disabled={!name.trim() || name === user?.name}
+                disabled={!name.trim() || name === user?.name || pendingAction !== null}
                 className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors flex-shrink-0 ${
                   savedName
                     ? 'bg-emerald-600 text-white'
@@ -678,8 +797,38 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           </div>
         </section>
 
+        <section id="settings-calendar" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Google Calendar</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Connect Google Calendar with read-only access. This uses a Google OAuth Desktop client ID, not your Google email address.</p>
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Runtime status</span>
+              <span className={googleCalendarStatus?.clientIdConfigured && googleCalendarStatus.schemaReady ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+                {googleCalendarStatus?.clientIdConfigured && googleCalendarStatus.schemaReady ? 'Authorization ready' : googleCalendarStatus?.error || 'Configuration required'}
+              </span>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Local client ID override</label>
+              <input type="text" className="input w-full text-xs font-mono" value={googleClientId} onChange={event => { setGoogleClientId(event.target.value); setGoogleClientIdTest(null) }} placeholder="123456789.apps.googleusercontent.com" autoComplete="off" />
+              <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">A packaged build may already include a default client ID. This override is stored locally for development or testing.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => void handleTestGoogleClientId()} disabled={pendingAction !== null} className="btn-secondary text-xs">{pendingAction === 'Test Google Calendar configuration' ? 'Testing…' : 'Test configuration'}</button>
+              <button type="button" onClick={() => void handleSaveGoogleClientId()} disabled={pendingAction !== null} className="btn-primary text-xs">{googleClientIdSaved ? '✓ Saved' : pendingAction === 'Save Google Calendar configuration' ? 'Saving…' : 'Save client ID'}</button>
+              <button type="button" onClick={() => window.electronAPI.openExternal('https://console.cloud.google.com/apis/credentials')} className="btn-secondary text-xs">Open Google Cloud</button>
+            </div>
+            {googleClientIdTest && <p className={`text-xs ${googleClientIdTest.valid ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{googleClientIdTest.message}</p>}
+            <ol className="list-decimal list-inside space-y-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+              <li>Enable Google Calendar API in Google Cloud.</li>
+              <li>Configure the OAuth consent screen and add yourself as a test user.</li>
+              <li>Create an OAuth client with application type Desktop app.</li>
+              <li>Paste the client ID here, save it, then reopen the Calendar page.</li>
+            </ol>
+          </div>
+        </section>
+
         {/* Data Management */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-data" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-3">Data Management</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
             Export your cards, schedules, and deadlines as a JSON file, or import data from a previous export.
@@ -695,7 +844,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
 
         {/* Appearance section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-appearance" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-4">Appearance</h2>
           <div className="flex items-center justify-between">
             <div>
@@ -726,7 +875,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
 
         {/* Practice Lab & Calculator section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-study" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Practice Lab & Calculator</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
             Choose your default on-screen calculator layout for practice problems.
@@ -778,7 +927,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
 
         {/* Study algorithm — FSRS */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-study-algorithm" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Study Algorithm</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
             Neuron uses FSRS-5 with Bayesian Knowledge Tracing per concept.
@@ -820,14 +969,15 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
           </div>
           <button
             onClick={handleSaveFSRS}
+            disabled={pendingAction !== null}
             className={`w-full py-2 rounded-lg text-white text-sm font-medium transition-colors ${savedFSRS ? 'bg-emerald-600' : 'bg-violet-600 hover:bg-violet-700'}`}
           >
-            {savedFSRS ? '✓ Saved' : 'Save Algorithm Settings'}
+            {savedFSRS ? '✓ Saved' : pendingAction === 'Save algorithm settings' ? 'Saving…' : 'Save Algorithm Settings'}
           </button>
         </section>
 
         {/* Reminders section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-reminders" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-4">Reminders</h2>
           <div className="flex items-center justify-between">
             <div>
@@ -846,7 +996,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
 
         {/* Add-ons section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-timers" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Add-ons</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
             Optional features you can enable to enhance your study sessions.
@@ -929,7 +1079,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
 
         {/* AI Assistant Section: Local AI vs Cloud AI */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-ai" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div>
               <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">AI Assistant</h2>
@@ -981,6 +1131,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
 
           {aiMode === 'local' ? (
             <LocalAISection
+              autoSetup
               onSelectModel={(url, model) => {
                 setAiProvider('openai-compatible')
                 setAiBaseUrl(url)
@@ -1223,7 +1374,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                 <button
                   type="button"
                   onClick={handleTestAIConnection}
-                  disabled={aiConnectionStatus === 'testing'}
+                  disabled={aiConnectionStatus === 'testing' || pendingAction !== null}
                   className="px-4 py-2 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors"
                 >
                   Test Connection
@@ -1231,11 +1382,12 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                 <button
                   type="button"
                   onClick={handleSaveAIConfig}
+                  disabled={pendingAction !== null}
                   className={`flex-1 px-4 py-2 rounded-xl text-white text-xs font-semibold transition-colors ${
                     aiSaved ? 'bg-emerald-600' : 'bg-violet-600 hover:bg-violet-700'
                   }`}
                 >
-                  {aiSaved ? '✓ Saved' : 'Save Cloud Configuration'}
+                  {aiSaved ? '✓ Saved' : pendingAction === 'Save AI configuration' ? 'Saving…' : 'Save Cloud Configuration'}
                 </button>
               </div>
             </div>
@@ -1243,7 +1395,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
 
         {/* API Keys Vault & Feature Routing Section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-ai-vault" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
             <div>
               <div className="flex items-center gap-2">
@@ -1292,6 +1444,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                 >
                   <option value="gemini">Google Gemini (Google AI Studio) — Recommended for LaTeX & Math</option>
                   <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+                  <option value="deepseek">DeepSeek Flash (document OCR & diagrams)</option>
                   <option value="auto">Auto-detect (Gemini if key saved, else OpenAI, else Local)</option>
                   <option value="local">Apple Vision / Local OCR (Offline, no key required)</option>
                 </select>
@@ -1307,7 +1460,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                   className="input w-full text-xs font-mono bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 disabled:opacity-50"
                   value={visionModel}
                   onChange={e => setVisionModel(e.target.value)}
-                  placeholder={visionProvider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.0-flash'}
+                  placeholder={visionProvider === 'openai' ? 'gpt-4o-mini' : visionProvider === 'deepseek' ? 'deepseek-flash' : 'gemini-2.0-flash'}
                 />
               </div>
             </div>
@@ -1659,22 +1812,25 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
             <button
               type="button"
               onClick={handleSaveVault}
+              disabled={pendingAction !== null}
               className={`px-5 py-2.5 rounded-xl text-white text-xs font-semibold transition-all shadow-xs ${
                 vaultSaved
                   ? 'bg-emerald-600 shadow-emerald-500/20'
                   : 'bg-violet-600 hover:bg-violet-700 shadow-violet-500/20'
               }`}
             >
-              {vaultSaved ? '✓ Saved API Keys & Feature Routing' : 'Save Keys & Feature Routing'}
+              {vaultSaved ? '✓ Saved API Keys & Feature Routing' : pendingAction === 'Save API keys and routing' ? 'Saving…' : 'Save Keys & Feature Routing'}
             </button>
           </div>
         </section>
 
         {/* Lecture Recording & Transcription Section */}
-        <LectureSettingsSection />
+        <div id="settings-lecture" className="scroll-mt-20">
+          <LectureSettingsSection />
+        </div>
 
         {/* Data Storage section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-data-storage" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-2">Data Storage</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
             Your data is stored locally in SQLite. No data ever leaves your device.
@@ -1696,7 +1852,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         <LocalRAGSection />
 
         {/* Progress & Achievements */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-progress" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-3">Progress & Achievements</h2>
           {userLevelData ? (
             <div className="mb-3">
@@ -1719,7 +1875,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
         </section>
 
         {/* Help section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-help" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-1">Help</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
             Replay the guided walkthrough to learn about every feature in Neuron.
@@ -1731,10 +1887,17 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
             <span>🎓</span>
             Start Feature Tour
           </button>
+          <button
+            type="button"
+            onClick={() => navigate('/help')}
+            className="ml-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            Browse Help & Learn
+          </button>
         </section>
 
         {/* About & Updates section */}
-        <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
+        <section id="settings-updates" className="scroll-mt-20 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50 mb-4">About & Updates</h2>
 
           {/* Architecture selector (macOS only) */}
@@ -1760,6 +1923,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
                   </select>
                   <button
                     onClick={handleSavePreferredArch}
+                    disabled={pendingAction !== null}
                     className="px-2 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded transition-colors"
                   >
                     Save
@@ -1790,6 +1954,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
             {(updateStatus === 'idle' || updateStatus === 'up-to-date' || updateStatus === 'error') && (
               <button
                 onClick={handleCheckForUpdates}
+                disabled={pendingAction !== null}
                 className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
               >
                 Check for Updates
@@ -1842,6 +2007,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               <div className="flex gap-2">
                 <button
                   onClick={handleDownload}
+                  disabled={pendingAction !== null}
                   className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold transition-colors"
                 >
                   {updateInfo.downloadUrl ? 'Download & Install' : 'Open Download Page ↗'}
@@ -1895,6 +2061,7 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
               <div className="flex gap-2">
                 <button
                   onClick={handleInstall}
+                  disabled={pendingAction !== null}
                   className="flex-1 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
                 >
                   {isMac ? 'Install & Relaunch' : 'Run Installer'}

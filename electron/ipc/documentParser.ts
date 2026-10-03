@@ -4,7 +4,7 @@ import JSZip from 'jszip'
 import mammoth from 'mammoth'
 import pdfParse from 'pdf-parse'
 import { cleanExtractedText, getFileType, SupportedFileType } from '../../src/lib/fileParser'
-import { extractTextFromImage, ocrScannedPdf } from './ocrHelper'
+import { extractTextFromImage, ocrPdfPages } from './ocrHelper'
 
 /**
  * Decodes XML / HTML character entities into readable Unicode characters.
@@ -18,6 +18,61 @@ export function decodeXmlEntities(str: string): string {
     .replace(/&apos;/g, "'")
     .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+}
+
+function renderOmml(xml: string): string {
+  const text = (fragment: string): string => decodeXmlEntities(fragment.replace(/<[^>]+>/g, ''))
+  const content = (tag: string): string => {
+    const match = xml.match(new RegExp(`<m:${tag}\\b[^>]*>([\\s\\S]*?)</m:${tag}>`, 'i'))
+    return match ? renderOmml(match[1]) : ''
+  }
+
+  if (/<m:f\b/i.test(xml)) {
+    const fraction = xml.match(/<m:f\b[^>]*>([\s\S]*?)<\/m:f>/i)?.[1] || ''
+    const numerator = fraction.match(/<m:num\b[^>]*>([\s\S]*?)<\/m:num>/i)?.[1] || ''
+    const denominator = fraction.match(/<m:den\b[^>]*>([\s\S]*?)<\/m:den>/i)?.[1] || ''
+    return `\\frac{${renderOmml(numerator)}}{${renderOmml(denominator)}}`
+  }
+  if (/<m:sSup\b/i.test(xml)) {
+    const base = content('e') || content('r')
+    const exponent = xml.match(/<m:sup\b[^>]*>([\s\S]*?)<\/m:sup>/i)?.[1] || ''
+    return `${base}^{${renderOmml(exponent)}}`
+  }
+  if (/<m:sSub\b/i.test(xml)) {
+    const base = content('e') || content('r')
+    const subscript = xml.match(/<m:sub\b[^>]*>([\s\S]*?)<\/m:sub>/i)?.[1] || ''
+    return `${base}_{${renderOmml(subscript)}}`
+  }
+  if (/<m:rad\b/i.test(xml)) {
+    const degree = content('deg')
+    const radicand = content('e')
+    return degree ? `\\sqrt[${degree}]{${radicand}}` : `\\sqrt{${radicand}}`
+  }
+  if (/<m:t\b/i.test(xml)) return text(xml.replace(/<m:t\b[^>]*>/i, '').replace(/<\/m:t>/i, ''))
+  return xml
+    .replace(/<m:br\b[^>]*\/?>(?:<\/m:br>)?/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ')
+}
+
+function extractDocxParagraphsWithMath(docXml: string): string[] {
+  const paragraphs: string[] = []
+  const pRegex = /<w:p\b[\s\S]*?<\/w:p>/gi
+  let match: RegExpExecArray | null
+  while ((match = pRegex.exec(docXml)) !== null) {
+    let paragraph = match[0]
+      .replace(/<m:oMathPara\b[\s\S]*?<\/m:oMathPara>/gi, (math) => renderOmml(math))
+      .replace(/<m:oMath\b[\s\S]*?<\/m:oMath>/gi, (math) => renderOmml(math))
+      .replace(/<w:tab\b[^>]*\/?>(?:<\/w:tab>)?/gi, '\t')
+      .replace(/<w:br\b[^>]*\/?>(?:<\/w:br>)?/gi, '\n')
+      .replace(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/gi, (_, value: string) => decodeXmlEntities(value))
+      .replace(/<[^>]+>/g, '')
+      .trim()
+    if (paragraph) paragraphs.push(paragraph)
+  }
+  return paragraphs
 }
 
 /**
@@ -177,9 +232,18 @@ export async function parsePPTX(input: string | Buffer): Promise<string> {
 export async function parseDOCX(input: string | Buffer): Promise<string> {
   const buffer = typeof input === 'string' ? fs.readFileSync(input) : input
 
+  let docXml = ''
+  try {
+    const zip = await JSZip.loadAsync(buffer)
+    docXml = await zip.file('word/document.xml')?.async('text') || ''
+  } catch {}
+
+  const xmlParagraphs = docXml ? extractDocxParagraphsWithMath(docXml) : []
+  const containsOfficeMath = /<m:oMath(?:Para)?\b/i.test(docXml)
+
   try {
     const result = await mammoth.extractRawText({ buffer })
-    if (result.value && result.value.trim().length > 0) {
+    if (result.value && result.value.trim().length > 0 && !containsOfficeMath) {
       return cleanExtractedText(result.value)
     }
   } catch (err) {
@@ -188,17 +252,8 @@ export async function parseDOCX(input: string | Buffer): Promise<string> {
 
   // JSZip fallback for DOCX
   try {
-    const zip = await JSZip.loadAsync(buffer)
-    const docXml = await zip.file('word/document.xml')?.async('text')
     if (docXml) {
-      const paragraphs: string[] = []
-      const pRegex = /<w:p[\s>][\s\S]*?<\/w:p>/g
-      let pMatch: RegExpExecArray | null
-      while ((pMatch = pRegex.exec(docXml)) !== null) {
-        const tMatches = pMatch[0].match(/<w:t(?:\s+[^>]*)?>([\s\S]*?)<\/w:t>/g) || []
-        const line = tMatches.map(t => decodeXmlEntities(t.replace(/<[^>]+>/g, ''))).join('')
-        if (line.trim()) paragraphs.push(line.trim())
-      }
+      const paragraphs = xmlParagraphs.length > 0 ? xmlParagraphs : []
       if (paragraphs.length > 0) {
         return cleanExtractedText(paragraphs.join('\n\n'))
       }
@@ -214,30 +269,56 @@ export async function parseDOCX(input: string | Buffer): Promise<string> {
 export async function parsePDF(input: string | Buffer): Promise<string> {
   const buffer = typeof input === 'string' ? fs.readFileSync(input) : input
   let extracted = ''
+  let pages: Array<{ pageNumber: number; text: string }> = []
 
   try {
-    const data = await pdfParse(buffer)
+    // Keep the renderer's natural page boundaries so the Cornell workspace can
+    // attach notes/highlights to actual PDF pages instead of guessed paragraph
+    // groups. The OCR fallback below already emits the same marker format.
+    const data = await pdfParse(buffer, {
+      pagerender: async (pageData: { pageIndex?: number; getTextContent: () => Promise<{ items: Array<{ str?: string }> }> }) => {
+        const content = await pageData.getTextContent()
+        const pageNumber = (pageData.pageIndex ?? 0) + 1
+        const pageText = content.items.map((item) => item.str || '').join(' ').trim()
+        pages.push({ pageNumber, text: pageText })
+        return `--- Page ${pageNumber} ---\n${pageText}`
+      }
+    })
     extracted = cleanExtractedText(data.text || '')
   } catch (err) {
     console.warn('pdf-parse digital text extraction failed, checking for scanned pages/OCR:', err)
   }
 
-  // If sufficient digital text was extracted (at least 50 chars), return it immediately
-  if (extracted.length >= 50) {
-    return extracted
-  }
-
-  // If digital text is missing or sparse (< 50 chars), this is a scanned PDF
-  // or combined screenshots. Run the OCR / Vision page extraction pipeline.
+  // OCR only pages that are likely to contain missing equations. This avoids
+  // the old document-wide 50-character shortcut, which incorrectly treated a
+  // mixed formula sheet as fully readable because its labels were extractable.
   if (typeof input === 'string' && fs.existsSync(input)) {
+    const filename = path.basename(input).toLowerCase()
+    const formulaNamed = /(formula|equation|cheat.?sheet|reference)/i.test(filename)
+    const requestedPages = new Set(
+      pages
+        .filter(page => shouldSupplementWithOcr(page.text, formulaNamed))
+        .map(page => page.pageNumber)
+    )
+    if (requestedPages.size > 0 || extracted.length < 50) {
     try {
-      console.log(`PDF digital text has only ${extracted.length} chars. Running OCR on scanned/image pages: ${input}`)
-      const ocrResult = await ocrScannedPdf(input)
-      if (ocrResult && ocrResult.length >= 10) {
-        return ocrResult
+      const ocrPages = extracted.length < 50
+        ? await ocrPdfPages(input)
+        : await ocrPdfPages(input, requestedPages)
+      const merged = pages.map(page => {
+        const ocrText = ocrPages.get(page.pageNumber)
+        if (!ocrText) return `--- Page ${page.pageNumber} ---\n${page.text}`
+        if (!page.text) return `--- Page ${page.pageNumber} ---\n${ocrText}`
+        return `--- Page ${page.pageNumber} ---\n${page.text}\n[Formula OCR]\n${ocrText}`
+      })
+      if (merged.length > 0) return cleanExtractedText(merged.join('\n\n'))
+      if (extracted.length < 50) {
+        const ocrResult = cleanExtractedText(Array.from(ocrPages.entries()).map(([page, text]) => `--- Page ${page} ---\n${text}`).join('\n\n'))
+        if (ocrResult.length >= 10) return ocrResult
       }
     } catch (ocrErr) {
       console.warn('OCR on scanned PDF failed:', ocrErr)
+    }
     }
   }
 
@@ -248,6 +329,15 @@ export async function parsePDF(input: string | Buffer): Promise<string> {
   const fallback = extractBinaryStrings(buffer)
   if (fallback.length > 50) return cleanExtractedText(fallback)
   throw new Error('Failed to parse PDF document: no readable digital text or images recognized.')
+}
+
+export function shouldSupplementWithOcr(pageText: string, formulaNamed = false): boolean {
+  const text = pageText.trim()
+  if (!text) return true
+  const letters = (text.match(/[A-Za-z]/g) || []).length
+  const mathSignals = (text.match(/[=+\-*/^_∑∫√]|\\(?:frac|sqrt|sum|int|alpha|beta|gamma|Delta)\b/g) || []).length
+  const lowTextDensity = text.length < 160 || letters / Math.max(1, text.length) < 0.35
+  return formulaNamed ? lowTextDensity || mathSignals > 0 : text.length < 50 || (lowTextDensity && mathSignals > 0)
 }
 
 /**
@@ -287,6 +377,63 @@ export function parseHTML(htmlContent: string): string {
       .replace(/&gt;/gi, '>')
       .replace(/&quot;/gi, '"')
   )
+}
+
+/**
+ * Extracts EPUB spine content in reading order. EPUB is a ZIP container whose
+ * OPF manifest/spine identifies the XHTML documents that form the book. This
+ * intentionally extracts readable text for indexing; visual rendering and
+ * annotation locators belong to the renderer adapter layer.
+ */
+export async function parseEPUB(input: string | Buffer): Promise<string> {
+  const buffer = typeof input === 'string' ? fs.readFileSync(input) : input
+  const zip = await JSZip.loadAsync(buffer)
+  const containerFile = zip.file('META-INF/container.xml')
+  if (!containerFile) throw new Error('Invalid EPUB: missing META-INF/container.xml')
+
+  const containerXml = await containerFile.async('text')
+  const rootfileMatch = containerXml.match(/full-path\s*=\s*["']([^"']+)["']/i)
+  if (!rootfileMatch) throw new Error('Invalid EPUB: missing OPF rootfile')
+
+  const opfPath = rootfileMatch[1].replace(/^\/+/, '')
+  const opfFile = zip.file(opfPath)
+  if (!opfFile) throw new Error('Invalid EPUB: OPF rootfile not found')
+  const opfXml = await opfFile.async('text')
+  const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : ''
+
+  const manifest = new Map<string, string>()
+  const itemRegex = /<item\b[^>]*>/gi
+  let itemMatch: RegExpExecArray | null
+  while ((itemMatch = itemRegex.exec(opfXml)) !== null) {
+    const idMatch = itemMatch[0].match(/\bid\s*=\s*["']([^"']+)["']/i)
+    const hrefMatch = itemMatch[0].match(/\bhref\s*=\s*["']([^"']+)["']/i)
+    if (!idMatch || !hrefMatch) continue
+    let href = hrefMatch[1]
+    try { href = decodeURIComponent(href) } catch { /* preserve malformed but usable paths */ }
+    manifest.set(idMatch[1], href)
+  }
+
+  const spineIds: string[] = []
+  const spineMatch = opfXml.match(/<spine\b[^>]*>([\s\S]*?)<\/spine>/i)
+  const itemrefRegex = /<itemref\b[^>]*\bidref\s*=\s*["']([^"']+)["'][^>]*>/gi
+  let itemrefMatch: RegExpExecArray | null
+  while (spineMatch && (itemrefMatch = itemrefRegex.exec(spineMatch[1])) !== null) {
+    spineIds.push(itemrefMatch[1])
+  }
+
+  const sections: string[] = []
+  for (const id of spineIds) {
+    const href = manifest.get(id)
+    if (!href) continue
+    const normalizedPath = path.posix.normalize(path.posix.join(opfDir.replace(/\\/g, '/'), href))
+    const chapterFile = zip.file(normalizedPath)
+    if (!chapterFile) continue
+    const chapterText = parseHTML(await chapterFile.async('text'))
+    if (chapterText) sections.push(`--- Chapter ${sections.length + 1} ---\n${chapterText}`)
+  }
+
+  if (sections.length === 0) throw new Error('Invalid EPUB: no readable spine content found')
+  return sections.join('\n\n')
 }
 
 /**
@@ -347,6 +494,10 @@ export async function parseFileToText(filePath: string): Promise<{
       contentText = parseHTML(raw)
       break
     }
+
+    case 'epub':
+      contentText = await parseEPUB(filePath)
+      break
 
     case 'txt':
     case 'md':

@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../../store/appStore'
-import type { CalendarEventType, Subject } from '../../types'
+import type { CalendarEvent, CalendarEventType, Subject } from '../../types'
 import { EVENT_TYPE_ICONS } from './DayScheduleTimeline'
 
 interface AddEventModalProps {
@@ -8,6 +8,10 @@ interface AddEventModalProps {
   onClose: () => void
   onEventSaved: () => void
   initialDate?: string
+  initialType?: CalendarEventType
+  initialStartTime?: string
+  initialDurationMinutes?: number
+  eventToEdit?: CalendarEvent | null
   subjects: Subject[]
 }
 
@@ -25,20 +29,39 @@ export default function AddEventModal({
   onClose,
   onEventSaved,
   initialDate,
+  initialType = 'lecture',
+  initialStartTime = '10:00',
+  initialDurationMinutes = 75,
+  eventToEdit = null,
   subjects
 }: AddEventModalProps): React.JSX.Element | null {
   const { user, addToast } = useAppStore()
   const todayStr = new Date().toISOString().split('T')[0]
 
-  const [title, setTitle] = useState('')
-  const [eventType, setEventType] = useState<CalendarEventType>('lecture')
-  const [subjectId, setSubjectId] = useState<number | ''>(subjects[0]?.id || '')
-  const [date, setDate] = useState(initialDate || todayStr)
-  const [startTime, setStartTime] = useState('10:00')
-  const [endTime, setEndTime] = useState('11:15')
+  const [title, setTitle] = useState(eventToEdit?.title || '')
+  const [eventType, setEventType] = useState<CalendarEventType>(eventToEdit?.event_type || initialType)
+  const [subjectId, setSubjectId] = useState<number | ''>(eventToEdit?.subject_id || subjects[0]?.id || '')
+  const [date, setDate] = useState(eventToEdit?.start_time.slice(0, 10) || initialDate || todayStr)
+  const [startTime, setStartTime] = useState(eventToEdit?.start_time.slice(11, 16) || initialStartTime)
+  const [endTime, setEndTime] = useState(eventToEdit?.end_time.slice(11, 16) || initialStartTime)
+  const [focusAction, setFocusAction] = useState(eventToEdit?.focus_action || 'review')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!isOpen) return
+    const start = eventToEdit?.start_time.slice(11, 16) || initialStartTime
+    const [hours, minutes] = start.split(':').map(Number)
+    const endTotal = hours * 60 + minutes + (eventToEdit?.focus_minutes || initialDurationMinutes)
+    setTitle(eventToEdit?.title || (initialType === 'study' ? 'Focus block' : ''))
+    setEventType(eventToEdit?.event_type || initialType)
+    setSubjectId(eventToEdit?.subject_id || subjects[0]?.id || '')
+    setDate(eventToEdit?.start_time.slice(0, 10) || initialDate || todayStr)
+    setStartTime(start)
+    setEndTime(`${String(Math.floor(endTotal / 60) % 24).padStart(2, '0')}:${String(endTotal % 60).padStart(2, '0')}`)
+    setFocusAction(eventToEdit?.focus_action || 'review')
+  }, [isOpen, eventToEdit, initialDate, initialStartTime, initialDurationMinutes, initialType, subjects])
 
   if (!isOpen) return null
 
@@ -52,6 +75,7 @@ export default function AddEventModal({
       const endIso = `${date}T${endTime}:00`
 
       await window.electronAPI.calendar.saveEvent(user.id, {
+        id: eventToEdit?.id,
         title: title.trim(),
         event_type: eventType,
         subject_id: subjectId === '' ? undefined : Number(subjectId),
@@ -60,6 +84,8 @@ export default function AddEventModal({
         location: location.trim() || undefined,
         description: description.trim() || undefined,
         all_day: 0
+        , focus_minutes: eventType === 'study' ? Math.max(5, Math.round((new Date(`${date}T${endTime}`).getTime() - new Date(`${date}T${startTime}`).getTime()) / 60000)) : null
+        , focus_action: eventType === 'study' ? focusAction as 'review' | 'tutor' | 'practice' | 'reading' | 'custom' : null
       })
 
       addToast({
@@ -86,7 +112,7 @@ export default function AddEventModal({
       <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         <div className="p-5 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
           <h2 className="font-semibold text-slate-900 dark:text-slate-100 text-base">
-            Add Calendar Event
+            {eventToEdit ? 'Edit calendar item' : eventType === 'study' ? 'Plan a study block' : 'Add calendar event'}
           </h2>
           <button
             onClick={onClose}
@@ -148,6 +174,19 @@ export default function AddEventModal({
               </select>
             </div>
           </div>
+
+          {eventType === 'study' && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Focus mode</label>
+              <select value={focusAction} onChange={e => setFocusAction(e.target.value as typeof focusAction)} className="input text-sm w-full">
+                <option value="review">Review due cards</option>
+                <option value="tutor">Tutor drill</option>
+                <option value="practice">Practice problems</option>
+                <option value="reading">Read material</option>
+                <option value="custom">Custom focus</option>
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-3">
             <div>
@@ -227,7 +266,7 @@ export default function AddEventModal({
               disabled={saving || !title.trim()}
               className="btn-primary text-xs py-2 px-4"
             >
-              {saving ? 'Saving...' : 'Add Event'}
+              {saving ? 'Saving...' : eventToEdit ? 'Save changes' : eventType === 'study' ? 'Plan block' : 'Add event'}
             </button>
           </div>
         </form>

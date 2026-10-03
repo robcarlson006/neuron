@@ -22,6 +22,38 @@ export interface UpdateInfo {
   releaseNotes: string
 }
 
+export type UpdateDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'error'
+
+export interface UpdateDownloadState {
+  status: UpdateDownloadStatus
+  version: string
+  downloadUrl: string | null
+  releaseUrl: string
+  progress: number
+  filePath: string
+  error: string
+}
+
+const emptyDownloadState = (): UpdateDownloadState => ({
+  status: 'idle',
+  version: '',
+  downloadUrl: null,
+  releaseUrl: '',
+  progress: 0,
+  filePath: '',
+  error: ''
+})
+
+let updateDownloadState = emptyDownloadState()
+
+export function getUpdateDownloadState(): UpdateDownloadState {
+  return { ...updateDownloadState }
+}
+
+function publishDownloadState(): void {
+  getWindow()?.webContents.send('updater:state', getUpdateDownloadState())
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Compare semver strings. Returns true if latest > current. */
@@ -359,6 +391,9 @@ export function registerUpdaterHandlers(windowGetter: () => BrowserWindow | null
   // ── Get current version ──
   ipcMain.handle('updater:getVersion', () => app.getVersion())
 
+  // ── Get the process-owned download state so renderer navigation cannot lose it ──
+  ipcMain.handle('updater:getState', () => getUpdateDownloadState())
+
   // ── Check GitHub for latest release ──
   ipcMain.handle('updater:checkGitHub', async () => {
     try {
@@ -369,7 +404,11 @@ export function registerUpdaterHandlers(windowGetter: () => BrowserWindow | null
   })
 
   // ── Download update binary ──
-  ipcMain.handle('updater:download', async (_event, downloadUrl: string, version: string) => {
+  ipcMain.handle('updater:download', async (_event, downloadUrl: string, version: string, releaseUrl = '') => {
+    if (updateDownloadState.status === 'downloading') {
+      return { success: false, error: 'An update download is already in progress.' }
+    }
+
     const platform = process.platform
     const ext      = platform === 'darwin' ? 'dmg' : platform === 'win32' ? 'exe' : 'AppImage'
     const fileName = `Neuron-${version}-update.${ext}`
@@ -377,13 +416,41 @@ export function registerUpdaterHandlers(windowGetter: () => BrowserWindow | null
     // Save to ~/Downloads so the user can easily find it if needed
     const destPath = join(os.homedir(), 'Downloads', fileName)
 
+    updateDownloadState = {
+      status: 'downloading',
+      version,
+      downloadUrl,
+      releaseUrl,
+      progress: 0,
+      filePath: destPath,
+      error: ''
+    }
+    publishDownloadState()
+
     try {
-      await downloadFile(downloadUrl, destPath)
+      await downloadFile(downloadUrl, destPath, (progress) => {
+        updateDownloadState = { ...updateDownloadState, progress }
+        publishDownloadState()
+      })
+      updateDownloadState = {
+        ...updateDownloadState,
+        status: 'downloaded',
+        progress: 100,
+        filePath: destPath,
+        error: ''
+      }
+      publishDownloadState()
       // Notify renderer download is ready
       getWindow()?.webContents.send('updater:downloaded', { filePath: destPath, version })
       getWindow()?.webContents.send('update:downloaded', version)
       return { success: true, filePath: destPath }
     } catch (err) {
+      updateDownloadState = {
+        ...updateDownloadState,
+        status: 'error',
+        error: (err as Error).message
+      }
+      publishDownloadState()
       getWindow()?.webContents.send('updater:error', (err as Error).message)
       getWindow()?.webContents.send('update:error', (err as Error).message)
       return { success: false, error: (err as Error).message }
@@ -429,9 +496,12 @@ export function registerUpdaterHandlers(windowGetter: () => BrowserWindow | null
   // ── Clean up a downloaded file ──
   ipcMain.handle('updater:cleanupFile', (_event, filePath: string) => {
     try { unlinkSync(filePath) } catch { /* ignore */ }
+    if (updateDownloadState.filePath === filePath) {
+      updateDownloadState = emptyDownloadState()
+      publishDownloadState()
+    }
   })
 
   // Start periodic background check
   startPeriodicUpdateCheck()
 }
-

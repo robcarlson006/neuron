@@ -1,8 +1,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import { createHash } from 'crypto'
 import type Database from 'better-sqlite3'
 import type { BrowserWindow } from 'electron'
 import { parseFileToText } from './documentParser'
+import { indexMaterialById, isRAGDatabaseReady } from './ragHandlers'
 import type { FolderSyncResult, FolderSyncEvent } from '../../src/types'
 
 export const SUPPORTED_EXTENSIONS = new Set([
@@ -16,7 +18,15 @@ export const SUPPORTED_EXTENSIONS = new Set([
   '.markdown',
   '.rtf',
   '.html',
-  '.csv'
+  '.csv',
+  '.epub',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.heic',
+  '.bmp',
+  '.tiff'
 ])
 
 /**
@@ -42,6 +52,14 @@ export function isSupportedFile(filename: string): boolean {
 export function getRelativePath(baseDir: string, filePath: string): string {
   const rel = path.relative(baseDir, filePath)
   return rel.replace(/\\/g, '/')
+}
+
+/** Computes the canonical content identity used by document annotations. */
+export async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash('sha256')
+  const stream = fs.createReadStream(filePath)
+  for await (const chunk of stream) hash.update(chunk)
+  return hash.digest('hex')
 }
 
 /**
@@ -102,11 +120,13 @@ export class FolderSyncService {
   private static getWindow: (() => BrowserWindow | null) | null = null
   private static watchers = new Map<number, fs.FSWatcher>()
   private static debounceTimers = new Map<number, NodeJS.Timeout>()
+  private static pollingTimers = new Map<number, NodeJS.Timeout>()
   private static watchedFolders = new Map<number, string>()
   private static activeSyncs = new Map<number, Promise<FolderSyncResult>>()
 
   static isSupportedFile = isSupportedFile
   static getRelativePath = getRelativePath
+  static sha256File = sha256File
   static scanDirectory = scanDirectory
 
   /**
@@ -212,15 +232,17 @@ export class FolderSyncService {
       // Query existing materials for this subject
       const existingMaterials = db
         .prepare(
-          'SELECT id, filename, file_type, relative_path, file_mtime, file_size FROM materials WHERE subject_id = ?'
+          'SELECT id, filename, file_type, file_path, relative_path, file_mtime, file_size, file_sha256 FROM materials WHERE subject_id = ?'
         )
         .all(subjectId) as Array<{
           id: number
           filename: string
           file_type: string
+          file_path: string | null
           relative_path: string | null
           file_mtime: number | null
           file_size: number | null
+          file_sha256: string | null
         }>
 
       const matByRelPath = new Map<string, typeof existingMaterials[0]>()
@@ -247,6 +269,12 @@ export class FolderSyncService {
 
         const mtime = Math.round(stat.mtimeMs)
         const size = stat.size
+        let fileSha256: string
+        try {
+          fileSha256 = await sha256File(fullPath)
+        } catch {
+          continue
+        }
 
         const existing =
           matByRelPath.get(relPath) ||
@@ -258,10 +286,13 @@ export class FolderSyncService {
           // New file -> parse and insert
           try {
             const parsed = await parseFileToText(fullPath)
-            db.prepare(`
-              INSERT INTO materials (subject_id, filename, file_type, content_text, file_mtime, file_size, relative_path)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
-            `).run(subjectId, filename, parsed.fileType, parsed.contentText, mtime, size, relPath)
+            const inserted = db.prepare(`
+              INSERT INTO materials (subject_id, filename, file_type, content_text, file_path, file_mtime, file_size, file_sha256, relative_path)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(subjectId, filename, parsed.fileType, parsed.contentText, fullPath, mtime, size, fileSha256, relPath)
+            if (isRAGDatabaseReady()) {
+              try { await indexMaterialById(Number((inserted as { lastInsertRowid: number | bigint }).lastInsertRowid)) } catch (indexError) { console.warn(`Failed to index ${relPath}:`, indexError) }
+            }
             added.push(relPath)
           } catch (err) {
             console.error(`Failed to parse file ${fullPath}:`, err)
@@ -270,19 +301,33 @@ export class FolderSyncService {
           // Modified file check
           const mtimeChanged = existing.file_mtime == null || existing.file_mtime !== mtime
           const sizeChanged = existing.file_size == null || existing.file_size !== size
+          const contentChanged = existing.file_sha256 != null && existing.file_sha256 !== fileSha256
 
-          if (mtimeChanged || sizeChanged) {
+          if (mtimeChanged || sizeChanged || contentChanged) {
             try {
               const parsed = await parseFileToText(fullPath)
               db.prepare(`
                 UPDATE materials
-                SET content_text = ?, file_mtime = ?, file_size = ?, relative_path = ?
+                SET content_text = ?, file_path = ?, file_mtime = ?, file_size = ?, file_sha256 = ?, relative_path = ?
                 WHERE id = ?
-              `).run(parsed.contentText, mtime, size, relPath, existing.id)
+              `).run(parsed.contentText, fullPath, mtime, size, fileSha256, relPath, existing.id)
+              if (isRAGDatabaseReady()) {
+                try { await indexMaterialById(existing.id) } catch (indexError) { console.warn(`Failed to index ${relPath}:`, indexError) }
+              }
               updated.push(relPath)
             } catch (err) {
               console.error(`Failed to re-parse file ${fullPath}:`, err)
             }
+          } else if (existing.file_path !== fullPath || existing.relative_path !== relPath || existing.file_sha256 !== fileSha256) {
+            // Repair legacy/imported rows whose content is current but whose
+            // canonical source path was never persisted (or whose linked
+            // folder moved). Visual viewers and future resyncs depend on this
+            // path even when the source bytes have not changed.
+            db.prepare(`
+              UPDATE materials
+              SET file_path = ?, relative_path = ?, file_sha256 = ?
+              WHERE id = ?
+            `).run(fullPath, relPath, fileSha256, existing.id)
           }
         }
       }
@@ -366,6 +411,10 @@ export class FolderSyncService {
       watcher.on('error', (err) => {
         console.error(`Watcher error for subject ${subjectId}:`, err)
         FolderSyncService.stopWatching(subjectId)
+        // macOS can reject recursive watchers when the process reaches its
+        // per-process descriptor limit. Keep the linked folder live by
+        // falling back to a bounded polling sync instead of silently stopping.
+        FolderSyncService.startPollingFallback(subjectId, folderPath)
         if (FolderSyncService.db) {
           try {
             FolderSyncService.db
@@ -380,6 +429,18 @@ export class FolderSyncService {
     } catch (err) {
       console.error(`Failed to start watcher on ${folderPath}:`, err)
     }
+  }
+
+  private static startPollingFallback(subjectId: number, folderPath: string): void {
+    if (FolderSyncService.pollingTimers.has(subjectId)) return
+    const timer = setInterval(() => {
+      if (!FolderSyncService.db) return
+      void FolderSyncService.scanAndSync(FolderSyncService.db, subjectId, folderPath).catch((err) => {
+        console.error(`Polling sync error for subject ${subjectId}:`, err)
+      })
+    }, 2000)
+    FolderSyncService.pollingTimers.set(subjectId, timer)
+    FolderSyncService.watchedFolders.set(subjectId, folderPath)
   }
 
   /**
@@ -398,6 +459,12 @@ export class FolderSyncService {
         watcher.close()
       } catch {}
       FolderSyncService.watchers.delete(subjectId)
+    }
+
+    const pollingTimer = FolderSyncService.pollingTimers.get(subjectId)
+    if (pollingTimer) {
+      clearInterval(pollingTimer)
+      FolderSyncService.pollingTimers.delete(subjectId)
     }
 
     FolderSyncService.watchedFolders.delete(subjectId)
@@ -419,6 +486,11 @@ export class FolderSyncService {
       FolderSyncService.watchers.delete(subjectId)
     }
 
+    for (const [subjectId, pollingTimer] of Array.from(FolderSyncService.pollingTimers.entries())) {
+      clearInterval(pollingTimer)
+      FolderSyncService.pollingTimers.delete(subjectId)
+    }
+
     FolderSyncService.watchedFolders.clear()
   }
 
@@ -426,7 +498,7 @@ export class FolderSyncService {
    * Returns whether a watcher is active and the current sync status of the subject.
    */
   static getStatus(subjectId: number): { isWatching: boolean; status: string } {
-    const isWatching = FolderSyncService.watchers.has(subjectId)
+    const isWatching = FolderSyncService.watchers.has(subjectId) || FolderSyncService.pollingTimers.has(subjectId)
     let status = 'idle'
     if (FolderSyncService.db) {
       try {

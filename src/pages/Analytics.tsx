@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import ProgressChart from '../components/ProgressChart'
 import LatexText from '../components/LatexText'
-import type { ReviewLog, Card, MCStats, ConceptMastery, RetentionForecastPoint, CompletedTaskStats } from '../types'
+import AnalyticsOverview from '../components/analytics/AnalyticsOverview'
+import type { ReviewLog, Card, MCStats, ConceptMastery, RetentionForecastPoint, CompletedTaskStats, AnalyticsSnapshot } from '../types'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 
 interface ReviewDataPoint {
@@ -73,16 +74,20 @@ export default function Analytics(): React.JSX.Element {
   const [topicSearchQuery, setTopicSearchQuery] = useState('')
   const [tierFilter, setTierFilter] = useState<'all' | 'mastered' | 'proficient' | 'developing' | 'struggling'>('all')
   const [sortBy, setSortBy] = useState<'lowest' | 'highest' | 'name' | 'reviews'>('lowest')
+  const [analyticsDays, setAnalyticsDays] = useState<7 | 30 | 90>(30)
+  const [analyticsSnapshot, setAnalyticsSnapshot] = useState<AnalyticsSnapshot | null>(null)
 
   useEffect(() => {
     if (user) loadAnalytics()
-  }, [user, subjects])
+  }, [user, subjects, analyticsDays])
 
   async function loadAnalytics(): Promise<void> {
     if (!user) return
     setLoading(true)
     try {
       const logs = await window.electronAPI.getReviewLogs(user.id, 30) as ReviewLog[]
+      const snapshot = await window.electronAPI.getAnalyticsSnapshot(user.id, analyticsDays)
+      setAnalyticsSnapshot(snapshot)
       setTotalReviews(logs.length)
       const correctCount = logs.filter(l => l.was_correct).length
       setCorrectRate(logs.length > 0 ? Math.round((correctCount / logs.length) * 100) : 0)
@@ -371,8 +376,37 @@ export default function Analytics(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Summary Stat Cards — Featuring Completed Tasks Count */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5 mb-8">
+      <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-3 dark:border-slate-800 dark:bg-slate-900/50 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Time window</p>
+          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">Compare activity with the previous period.</p>
+        </div>
+        <div className="flex w-fit items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800" role="group" aria-label="Analytics time window">
+          {[7, 30, 90].map(days => (
+            <button
+              key={days}
+              onClick={() => setAnalyticsDays(days as 7 | 30 | 90)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500 ${analyticsDays === days ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'}`}
+              aria-pressed={analyticsDays === days}
+            >
+              {days}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === 'overview' && analyticsSnapshot && (
+        <AnalyticsOverview
+          snapshot={analyticsSnapshot}
+          subjects={subjects}
+          weakCards={weakCards}
+          forecast={forecast}
+          onOpenMastery={() => setActiveTab('mastery')}
+        />
+      )}
+
+      {/* Legacy overview markup retained below as a compatibility reference while the new cockpit is validated. */}
+      {false && <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5 mb-8">
         <StatCard
           value={completedStats.totalCompleted || completedStats.completedTasksCount}
           label="Tasks Completed"
@@ -428,7 +462,7 @@ export default function Analytics(): React.JSX.Element {
           }
         />
         <StatCard
-          value={avgResponseMs !== null ? `${(avgResponseMs / 1000).toFixed(1)}s` : '—'}
+          value={avgResponseMs == null ? '—' : `${((avgResponseMs as number) / 1000).toFixed(1)}s`}
           label="Avg Response Time"
           color="slate"
           icon={
@@ -438,10 +472,10 @@ export default function Analytics(): React.JSX.Element {
             </svg>
           }
         />
-      </div>
+      </div>}
 
       {/* TAB 1: OVERVIEW */}
-      {activeTab === 'overview' && (
+      {false && activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Completed Milestones Banner */}
           <div className="bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 rounded-2xl border border-violet-200 dark:border-violet-800/60 p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

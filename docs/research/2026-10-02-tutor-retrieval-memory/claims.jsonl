@@ -1,0 +1,5 @@
+{"id":"claim-01","claim":"Long prompts are not equivalent to reliable document use; selective retrieval and evidence ordering are necessary.","status":"supported","sources":["src-01","src-02"]}
+{"id":"claim-02","claim":"Neuron should use hybrid retrieval with a sufficiency gate, optional reranking, and explicit source provenance.","status":"implementation-inference","sources":["src-02","src-03","src-04"]}
+{"id":"claim-03","claim":"Neuron should separate raw episodes, semantic learner facts, concept state, misconceptions, and teaching strategies.","status":"supported-synthesis","sources":["src-05","src-06","src-07"]}
+{"id":"claim-04","claim":"Tutor memory should select diagnostic retrieval and spaced review actions, not only personalize generated explanations.","status":"supported-synthesis","sources":["src-07","src-08","src-09"]}
+{"id":"claim-05","claim":"Memory quality must be evaluated with cross-session, temporal, causal, unsupported, and stale-memory cases.","status":"supported-synthesis","sources":["src-01","src-05","src-06"]}

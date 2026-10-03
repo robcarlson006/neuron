@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import type { Subject, CardFolder, ModuleCardGenType, ModuleCardGenOptions, Material } from '../types'
 import { CARD_GEN_PRESETS } from '../types'
-import LatexText from './LatexText'
-import { autoFormatMathLocal, preprocessLatexText } from '../lib/mathFormatter'
+import MarkdownRenderer from './MarkdownRenderer'
+import { autoFormatMathLocal, normalizeMathText } from '../lib/mathFormatter'
+import { Upload } from './icons'
 
 interface CardImportModalProps {
   isOpen: boolean
@@ -75,6 +76,7 @@ export default function CardImportModal({
   const [manualCardType, setManualCardType] = useState<'flashcard' | 'active_recall'>('flashcard')
   const [manualFolderId, setManualFolderId] = useState<number | null>(null)
   const [savingManual, setSavingManual] = useState(false)
+  const [isImportingAnki, setIsImportingAnki] = useState(false)
   const [isFormattingMath, setIsFormattingMath] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [detectedFormat, setDetectedFormat] = useState<string | null>(null)
@@ -161,7 +163,7 @@ export default function CardImportModal({
         const rawFront = chunk.slice(0, sepIndex).trim()
         const rawBack = chunk.slice(sepIndex + termSep.length).trim()
         if (!rawFront || !rawBack) return null
-        return { front: preprocessLatexText(rawFront), back: preprocessLatexText(rawBack) }
+        return { front: normalizeMathText(rawFront), back: normalizeMathText(rawBack) }
       })
       .filter((c): c is { front: string; back: string } => c !== null)
   }, [manualText, termSep, cardSep, eachLineIsCard])
@@ -170,13 +172,13 @@ export default function CardImportModal({
   useEffect(() => {
     if (!isOpen) return
     function handleKeyDown(e: KeyboardEvent): void {
-      if (e.key === 'Escape' && !isGenerating && !savingManual) {
+      if (e.key === 'Escape' && !isGenerating && !savingManual && !isImportingAnki) {
         onClose()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, isGenerating, savingManual, onClose])
+  }, [isOpen, isGenerating, savingManual, isImportingAnki, onClose])
 
   if (!isOpen) return null
 
@@ -547,6 +549,38 @@ export default function CardImportModal({
     }
   }
 
+  async function handleAnkiImport(): Promise<void> {
+    if (!selectedSubjectId || !window.electronAPI?.openFileDialog || !window.electronAPI?.parseAnkiDeck || !window.electronAPI?.importAnkiDeck) {
+      setErrorMessage('Select a subject before importing an Anki deck.')
+      return
+    }
+
+    setIsImportingAnki(true)
+    setErrorMessage(null)
+    try {
+      const filePath = await window.electronAPI.openFileDialog()
+      if (!filePath) return
+
+      const deck = await window.electronAPI.parseAnkiDeck(filePath)
+      if (!deck.cards || deck.cards.length === 0) {
+        setErrorMessage('No cards found in this Anki deck.')
+        return
+      }
+
+      const confirmed = confirm(`Import "${deck.name}" with ${deck.cardCount} cards?`)
+      if (!confirmed) return
+
+      const saved = await window.electronAPI.importAnkiDeck(deck, userId ?? 1, selectedSubjectId)
+      onSuccess?.(saved.length, 'import')
+      onClose()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to import Anki deck.'
+      setErrorMessage(message)
+    } finally {
+      setIsImportingAnki(false)
+    }
+  }
+
   const getFileIcon = (filename: string, fileType?: string): string => {
     const ext = fileType || filename.split('.').pop()?.toLowerCase()
     if (ext === 'pdf') return '📄'
@@ -559,7 +593,7 @@ export default function CardImportModal({
     <div
       className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-fade-in"
       onClick={() => {
-        if (!isGenerating && !savingManual) onClose()
+        if (!isGenerating && !savingManual && !isImportingAnki) onClose()
       }}
       role="dialog"
       aria-modal="true"
@@ -617,7 +651,7 @@ export default function CardImportModal({
               </button>
               <button
                 onClick={onClose}
-                disabled={isGenerating || savingManual}
+                disabled={isGenerating || savingManual || isImportingAnki}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
                 aria-label="Close"
               >
@@ -1357,23 +1391,31 @@ export default function CardImportModal({
                 <label className="block text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">
                   Import from file
                 </label>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 hover:border-violet-400 transition-colors text-sm text-slate-600 dark:text-slate-300 font-medium">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <path d="M7 1v8M7 1L4 4M7 1l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      <path d="M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    </svg>
-                    Choose file
-                  </div>
-                  <span className="text-xs text-slate-400 dark:text-slate-500">.txt · .csv · .tsv · .md</span>
-                  <input
-                    type="file"
-                    accept=".txt,.csv,.tsv,.md,.markdown"
-                    onChange={handleManualFileLoad}
-                    className="hidden"
-                    disabled={savingManual}
-                  />
-                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <div className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 hover:border-violet-400 transition-colors text-sm text-slate-600 dark:text-slate-300 font-medium">
+                      <Upload size={14} />
+                      Choose file
+                    </div>
+                    <span className="text-xs text-slate-400 dark:text-slate-500">.txt · .csv · .tsv · .md</span>
+                    <input
+                      type="file"
+                      accept=".txt,.csv,.tsv,.md,.markdown"
+                      onChange={handleManualFileLoad}
+                      className="hidden"
+                      disabled={savingManual || isImportingAnki}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAnkiImport}
+                    disabled={isImportingAnki || savingManual || !selectedSubjectId}
+                    className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-900/50"
+                  >
+                    {isImportingAnki ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" /> : <Upload size={14} />}
+                    {isImportingAnki ? 'Importing…' : 'Import Anki deck'}
+                  </button>
+                </div>
                 {detectedFormat && <p className="text-xs text-violet-600 dark:text-violet-400 mt-1.5">✓ {detectedFormat}</p>}
               </div>
 
@@ -1514,13 +1556,13 @@ export default function CardImportModal({
                         <div key={i} className="flex items-start gap-3 px-3 py-2 bg-white dark:bg-slate-800 text-xs">
                           <span className="text-slate-300 dark:text-slate-600 font-mono mt-0.5 w-5 flex-shrink-0">{i + 1}</span>
                           <div className="flex-1 min-w-0 flex items-start gap-2">
-                            <p className="font-medium text-slate-700 dark:text-slate-200 flex-1 truncate">
-                              <LatexText>{card.front}</LatexText>
-                            </p>
+                            <div className="font-medium text-slate-700 dark:text-slate-200 flex-1 truncate">
+                              <MarkdownRenderer content={card.front} />
+                            </div>
                             <span className="text-slate-300 dark:text-slate-600 flex-shrink-0">→</span>
-                            <p className="text-slate-500 dark:text-slate-400 flex-1 truncate">
-                              <LatexText>{card.back}</LatexText>
-                            </p>
+                            <div className="text-slate-500 dark:text-slate-400 flex-1 truncate">
+                              <MarkdownRenderer content={card.back} />
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -1541,7 +1583,7 @@ export default function CardImportModal({
           <button
             type="button"
             onClick={onClose}
-            disabled={isGenerating || savingManual}
+            disabled={isGenerating || savingManual || isImportingAnki}
             className="btn-secondary flex-1 disabled:opacity-50 text-xs cursor-pointer"
           >
             Cancel

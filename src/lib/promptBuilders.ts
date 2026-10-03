@@ -879,6 +879,7 @@ export function buildFormatMathEquationsPrompt(text: string): string {
 Your task is to take the provided text and convert any raw mathematical equations, formulas, variables, exponents, fractions, chemical formulas, or scientific expressions into properly formatted LaTeX.
 
 Guidelines:
+0. Use Neuron's canonical math contract: LaTeX source with single-dollar delimiters for inline math and double-dollar delimiters for display math.
 1. Wrap inline math expressions in single dollar signs, like $x^3$, $a^2 + b^2 = c^2$, $\\frac{a}{b}$, or $E = mc^2$.
 2. Wrap standalone or multi-line equations in double dollar signs ($$ ... $$) if appropriate.
 3. Keep non-mathematical text, punctuation, card structure, and separators (such as '...', ';', tabs, commas, newlines) EXACTLY intact.

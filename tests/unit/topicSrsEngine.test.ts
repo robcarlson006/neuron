@@ -4,6 +4,7 @@ import {
   updateTopicSrsState,
   getTopicsRetention,
   getSubjectRetentionSummary
+  , recordTopicReviewEvent
 } from '../../src/lib/memory/topicSrsEngine'
 import { DB_SCHEMA, MIGRATIONS_SQL } from '../../src/lib/db'
 
@@ -116,5 +117,23 @@ describe('Topic-SRS Engine', () => {
     expect(computeEstimatedMinutesForRetention(0.70)).toBeGreaterThanOrEqual(15)
     expect(computeEstimatedMinutesForRetention(0.30)).toBeGreaterThanOrEqual(20)
     expect(computeEstimatedMinutesForRetention(0.05)).toBeLessThanOrEqual(30)
+  })
+
+  test('records an auditable review event without changing scheduler state', () => {
+    const before = db.prepare('SELECT COUNT(*) as count FROM topic_spaced_memory WHERE topic_id = ?').get(topic1Id) as { count: number }
+    const eventId = recordTopicReviewEvent(db, {
+      topicId: topic1Id,
+      userId,
+      subjectId,
+      mode: 'manual',
+      assistanceLevel: 'unassessed',
+      evidenceStatus: 'unassessed'
+    })
+    const after = db.prepare('SELECT COUNT(*) as count FROM topic_spaced_memory WHERE topic_id = ?').get(topic1Id) as { count: number }
+    const event = db.prepare('SELECT * FROM topic_review_events WHERE id = ?').get(eventId) as { mode: string; evidence_status: string }
+
+    expect(event.mode).toBe('manual')
+    expect(event.evidence_status).toBe('unassessed')
+    expect(after.count).toBe(before.count)
   })
 })

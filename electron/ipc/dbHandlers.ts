@@ -7,6 +7,7 @@ import {
   qualityToRating,
   adjustRatingByResponseTime,
   boostForExam,
+  explainReviewDecision,
   projectRetention,
   retrievability,
   DEFAULT_FSRS_PARAMS,
@@ -15,8 +16,12 @@ import {
 import { bktUpdate } from '../../src/lib/bkt'
 import { deleteSubjectCascade, deleteCardCascade, deleteCardsCascade } from '../../src/lib/db'
 import { cleanCardBrackets } from '../../src/lib/cardParser'
+import { normalizeMathText } from '../../src/lib/mathFormatter'
 import { FolderSyncService } from './folderSyncService'
 import { getOrCreateMaterialFolder, syncCardsToMaterialFolders } from './materialFolderHelper'
+import { getMaterialVisualPageCount, resolveMaterialVisualPath } from './documentPreviewService'
+import { readFileSync } from 'fs'
+import { indexMaterialById, isRAGDatabaseReady } from './ragHandlers'
 import type {
   User,
   Subject,
@@ -28,7 +33,13 @@ import type {
   Diagnostic,
   ConceptMastery,
   ConceptDependency,
-  SM2Result
+  SM2Result,
+  SaveSubjectNoteInput,
+  SubjectNote,
+  AnalyticsSnapshot,
+  AnalyticsDailyPoint,
+  AnalyticsModeStats,
+  AnalyticsSubjectStats
 } from '../../src/types'
 
 let db: Database.Database
@@ -83,8 +94,8 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:saveSubject', (_event, subject: Partial<Subject>) => {
     if (subject.id) {
       db.prepare(
-        'UPDATE subjects SET name = ?, status = ?, course_code = ? WHERE id = ?'
-      ).run(subject.name, subject.status, subject.course_code || null, subject.id)
+        'UPDATE subjects SET name = ?, status = ?, course_code = ?, subject_icon = ?, color = ? WHERE id = ?'
+      ).run(subject.name, subject.status, subject.course_code || null, subject.subject_icon || 'book-open', subject.color || '#8b5cf6', subject.id)
 
       // If subject is marked as archived, remove all flashcards associated with it
       if (subject.status === 'archived') {
@@ -97,16 +108,38 @@ export function registerDbHandlers(): void {
       return db.prepare('SELECT * FROM subjects WHERE id = ?').get(subject.id) as Subject
     } else {
       const result = db.prepare(
-        'INSERT INTO subjects (user_id, name, status, course_code, created_at) VALUES (?, ?, ?, ?, ?)'
+        'INSERT INTO subjects (user_id, name, status, course_code, subject_icon, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ).run(
         subject.user_id,
         subject.name,
         subject.status || 'active',
         subject.course_code || null,
+        subject.subject_icon || 'book-open',
+        subject.color || '#8b5cf6',
         new Date().toISOString()
       )
       return db.prepare('SELECT * FROM subjects WHERE id = ?').get(result.lastInsertRowid) as Subject
     }
+  })
+
+  ipcMain.handle('db:getSubjectNote', (_event, subjectId: number): SubjectNote | null => {
+    return (db.prepare('SELECT * FROM subject_notes WHERE subject_id = ?').get(subjectId) as SubjectNote | undefined) || null
+  })
+
+  ipcMain.handle('db:saveSubjectNote', (_event, input: SaveSubjectNoteInput): SubjectNote => {
+    if (!Number.isInteger(input.subject_id) || !db.prepare('SELECT id FROM subjects WHERE id = ?').get(input.subject_id)) {
+      throw new Error('Subject not found')
+    }
+    const body = typeof input.body === 'string' ? normalizeMathText(input.body) : ''
+    const links = Array.isArray(input.links) ? input.links : []
+    const now = new Date().toISOString()
+    const existing = db.prepare('SELECT id FROM subject_notes WHERE subject_id = ?').get(input.subject_id) as { id: number } | undefined
+    if (existing) {
+      db.prepare('UPDATE subject_notes SET body = ?, links_json = ?, updated_at = ? WHERE id = ?').run(body, JSON.stringify(links), now, existing.id)
+      return db.prepare('SELECT * FROM subject_notes WHERE id = ?').get(existing.id) as SubjectNote
+    }
+    const result = db.prepare('INSERT INTO subject_notes (subject_id, body, links_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(input.subject_id, body, JSON.stringify(links), now, now)
+    return db.prepare('SELECT * FROM subject_notes WHERE id = ?').get(result.lastInsertRowid) as SubjectNote
   })
 
   ipcMain.handle('db:deleteSubject', (_event, subjectId: number) => {
@@ -133,8 +166,8 @@ export function registerDbHandlers(): void {
   })
 
   ipcMain.handle('db:saveCard', (_event, card: Partial<Card>) => {
-    const cleanFront = cleanCardBrackets(card.front || '')
-    const cleanBack = cleanCardBrackets(card.back || '')
+    const cleanFront = normalizeMathText(cleanCardBrackets(card.front || ''))
+    const cleanBack = normalizeMathText(cleanCardBrackets(card.back || ''))
     const cleanConcept = card.concept ? cleanCardBrackets(card.concept) : null
 
     let folderId = card.folder_id ?? null
@@ -205,8 +238,8 @@ export function registerDbHandlers(): void {
     const savedCards: Card[] = []
     const saveMany = db.transaction(() => {
       for (const card of cards) {
-        const cleanFront = cleanCardBrackets(card.front || '')
-        const cleanBack = cleanCardBrackets(card.back || '')
+        const cleanFront = normalizeMathText(cleanCardBrackets(card.front || ''))
+        const cleanBack = normalizeMathText(cleanCardBrackets(card.back || ''))
         const cleanConcept = card.concept ? cleanCardBrackets(card.concept) : null
 
         let folderId = card.folder_id ?? null
@@ -424,12 +457,49 @@ export function registerDbHandlers(): void {
     return db.prepare('SELECT * FROM materials WHERE id = ?').get(materialId) || null
   })
 
-  ipcMain.handle('db:saveMaterial', (_event, material: { subject_id: number; filename: string; file_type: string; content_text: string }) => {
+  ipcMain.handle('db:saveMaterial', async (_event, material: { subject_id: number; filename: string; file_type: string; content_text: string; file_path?: string | null }) => {
     const result = db.prepare(
-      'INSERT INTO materials (subject_id, filename, file_type, content_text, uploaded_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(material.subject_id, material.filename, material.file_type, material.content_text, new Date().toISOString())
+      'INSERT INTO materials (subject_id, filename, file_type, content_text, file_path, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(material.subject_id, material.filename, material.file_type, material.content_text, material.file_path || null, new Date().toISOString())
+    try {
+      if (isRAGDatabaseReady()) await indexMaterialById(Number(result.lastInsertRowid))
+    } catch (error) {
+      // The material remains searchable through grounded retrieval's transient
+      // fallback if indexing cannot complete (for example, a provider timeout).
+      console.warn('Material saved but indexing was deferred:', error)
+    }
     return { id: result.lastInsertRowid }
   })
+
+  ipcMain.handle('db:getMaterialFileUrl', (_event, materialId: number): string | null => {
+    const row = db.prepare('SELECT file_path FROM materials WHERE id = ?').get(materialId) as { file_path?: string | null } | undefined
+    if (!row?.file_path) return null
+    // Keep the renderer URL opaque; the main process resolves the canonical path.
+    return `neuron-file://material/${materialId}`
+  })
+
+  ipcMain.handle('db:getMaterialVisualUrl', (_event, materialId: number): string | null => {
+    const row = db.prepare('SELECT file_path FROM materials WHERE id = ?').get(materialId) as { file_path?: string | null } | undefined
+    if (!row?.file_path) return null
+    return `neuron-file://visual/${materialId}`
+  })
+
+  // PDF.js cannot consistently issue range/fetch requests against Electron's
+  // custom neuron-file protocol from the renderer. Keep the file path private
+  // and return only the resolved preview bytes through the narrow IPC boundary.
+  ipcMain.handle('db:getMaterialVisualBytes', async (_event, materialId: number): Promise<Uint8Array | null> => {
+    const previewPath = await resolveMaterialVisualPath(db, materialId)
+    if (!previewPath) return null
+    try {
+      return new Uint8Array(readFileSync(previewPath))
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('db:getMaterialVisualPageCount', (_event, materialId: number): Promise<number | null> =>
+    getMaterialVisualPageCount(db, materialId)
+  )
 
   ipcMain.handle('db:deleteMaterial', (_event, materialId: number) => {
     db.prepare('DELETE FROM materials WHERE id = ?').run(materialId)
@@ -543,6 +613,7 @@ export function registerDbHandlers(): void {
     const cardRow = db.prepare('SELECT subject_id, concept, folder_id FROM cards WHERE id = ?').get(cardId) as { subject_id: number; concept: string | null; folder_id: number | null } | undefined
     let finalInterval = next.interval
     let finalDueDate = next.dueDate
+    let examBoosted = false
     if (cardRow) {
       const today = new Date().toISOString().split('T')[0]
       const upcoming = db.prepare(
@@ -556,6 +627,7 @@ export function registerDbHandlers(): void {
         )
         const boosted = boostForExam(finalInterval, daysUntil)
         if (boosted < finalInterval) {
+          examBoosted = true
           finalInterval = boosted
           const dueDate = new Date()
           dueDate.setDate(dueDate.getDate() + boosted)
@@ -635,7 +707,26 @@ export function registerDbHandlers(): void {
       ease_factor: legacyEase,
       due_date: finalDueDate
     }
-    return { sm2Result, success: true, fsrs: { stability: next.stability, difficulty: next.difficulty, state: next.state, retention: desiredRetention } }
+    const currentRetrievability = mem.lastReview
+      ? retrievability(Math.max(0, (Date.now() - new Date(mem.lastReview).getTime()) / 86400000), mem.stability)
+      : 0
+    return {
+      sm2Result,
+      success: true,
+      fsrs: {
+        stability: next.stability,
+        difficulty: next.difficulty,
+        state: next.state,
+        retention: desiredRetention,
+        reason: explainReviewDecision({
+          dueDate: sched.due_date,
+          retrievability: currentRetrievability,
+          rating,
+          lapses: next.lapses,
+          examBoosted
+        })
+      }
+    }
   })
 
   // Concept mastery (BKT posteriors)
@@ -658,10 +749,19 @@ export function registerDbHandlers(): void {
   })
 
   ipcMain.handle('db:addConceptDependency', (_event, subjectId: number, prerequisiteConcept: string, targetConcept: string, weight: number = 1.0) => {
+    const subject = db.prepare('SELECT id FROM subjects WHERE id = ?').get(subjectId) as { id: number } | undefined
+    const prerequisite = typeof prerequisiteConcept === 'string' ? prerequisiteConcept.trim() : ''
+    const target = typeof targetConcept === 'string' ? targetConcept.trim() : ''
+    if (!subject) throw new Error('Subject not found')
+    if (!prerequisite || !target) throw new Error('Both concepts are required')
+    if (prerequisite.toLowerCase().replace(/\s+/g, ' ') === target.toLowerCase().replace(/\s+/g, ' ')) {
+      throw new Error('A concept cannot depend on itself')
+    }
+    if (!Number.isFinite(weight) || weight <= 0) throw new Error('Dependency weight must be positive')
     const res = db.prepare(
       `INSERT OR REPLACE INTO concept_dependencies (subject_id, prerequisite_concept, target_concept, weight)
        VALUES (?, ?, ?, ?)`
-    ).run(subjectId, prerequisiteConcept.trim(), targetConcept.trim(), weight)
+    ).run(subjectId, prerequisite, target, Math.min(weight, 1))
     return { success: true, id: Number(res.lastInsertRowid) }
   })
 
@@ -731,6 +831,220 @@ export function registerDbHandlers(): void {
       `SELECT date, reviews, correct, incorrect, avg_response_ms
        FROM review_daily WHERE user_id = ? AND date >= ? ORDER BY date ASC`
     ).all(userId, sinceStr) as { date: string; reviews: number; correct: number; incorrect: number; avg_response_ms: number | null }[]
+  })
+
+  ipcMain.handle('db:getAnalyticsSnapshot', (_event, userId: number, requestedDays: number = 30): AnalyticsSnapshot => {
+    const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30
+    const dateKey = (date: Date): string => date.toISOString().slice(0, 10)
+    const shiftDate = (date: Date, offset: number): Date => {
+      const next = new Date(date)
+      next.setUTCDate(next.getUTCDate() + offset)
+      return next
+    }
+    const today = new Date()
+    const endDate = dateKey(today)
+    const startDate = dateKey(shiftDate(today, -(days - 1)))
+    const previousEndDate = dateKey(shiftDate(new Date(`${startDate}T00:00:00.000Z`), -1))
+    const previousStartDate = dateKey(shiftDate(new Date(`${startDate}T00:00:00.000Z`), -days))
+    const endExclusive = dateKey(shiftDate(today, 1))
+
+    type ReviewAggregate = { date: string; reviews: number; correct: number; incorrect: number }
+    type SessionAggregate = { date: string; sessions: number; minutes: number | null; items: number; correct: number; total: number }
+    const reviewRows = db.prepare(`
+      SELECT date(reviewed_at) as date, COUNT(*) as reviews,
+        SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct,
+        SUM(CASE WHEN was_correct = 1 THEN 0 ELSE 1 END) as incorrect
+      FROM review_log
+      WHERE user_id = ? AND date(reviewed_at) >= ? AND date(reviewed_at) < ?
+      GROUP BY date(reviewed_at)
+    `).all(userId, startDate, endExclusive) as ReviewAggregate[]
+    const studyRows = db.prepare(`
+      SELECT date(started_at) as date, COUNT(*) as sessions,
+        SUM(CASE WHEN duration_minutes > 0 THEN duration_minutes ELSE 0 END) as minutes,
+        SUM(cards_reviewed) as items, SUM(correct_count) as correct, SUM(cards_reviewed) as total
+      FROM study_sessions
+      WHERE user_id = ? AND ended_at IS NOT NULL AND date(started_at) >= ? AND date(started_at) < ?
+      GROUP BY date(started_at)
+    `).all(userId, startDate, endExclusive) as SessionAggregate[]
+    const tutorRows = db.prepare(`
+      SELECT date(started_at) as date, COUNT(*) as sessions,
+        SUM(CASE WHEN duration_minutes > 0 THEN duration_minutes
+          WHEN ended_at IS NOT NULL THEN MAX(1, ROUND((strftime('%s', ended_at) - strftime('%s', started_at)) / 60.0))
+          ELSE 0 END) as minutes,
+        0 as items, 0 as correct, 0 as total
+      FROM tutor_sessions
+      WHERE user_id = ? AND (ended_at IS NOT NULL OR phase = 'complete')
+        AND date(started_at) >= ? AND date(started_at) < ?
+      GROUP BY date(started_at)
+    `).all(userId, startDate, endExclusive) as SessionAggregate[]
+    const practiceRows = db.prepare(`
+      SELECT date(started_at) as date, COUNT(*) as sessions,
+        SUM(CASE WHEN ended_at IS NOT NULL THEN MAX(1, ROUND((strftime('%s', ended_at) - strftime('%s', started_at)) / 60.0)) ELSE 0 END) as minutes,
+        SUM(completed_problems) as items, SUM(correct_problems) as correct, SUM(completed_problems) as total
+      FROM practice_sessions
+      WHERE user_id = ? AND ended_at IS NOT NULL AND date(started_at) >= ? AND date(started_at) < ?
+      GROUP BY date(started_at)
+    `).all(userId, startDate, endExclusive) as SessionAggregate[]
+    const focusRows = db.prepare(`
+      SELECT plan_date as date, COUNT(*) as sessions,
+        SUM(COALESCE(estimated_minutes, 0)) as minutes
+      FROM daily_plans
+      WHERE user_id = ? AND is_completed = 1 AND plan_date >= ? AND plan_date < ?
+      GROUP BY plan_date
+    `).all(userId, startDate, endExclusive) as (SessionAggregate & { minutes: number | null })[]
+
+    const dailyMap = new Map<string, AnalyticsDailyPoint>()
+    for (let offset = days - 1; offset >= 0; offset -= 1) {
+      const date = dateKey(shiftDate(today, -offset))
+      dailyMap.set(date, {
+        date, reviews: 0, correct: 0, incorrect: 0, accuracy: null,
+        study_minutes: 0, study_sessions: 0, tutor_minutes: 0, tutor_sessions: 0,
+        practice_minutes: 0, practice_sessions: 0, focus_blocks: 0
+      })
+    }
+    reviewRows.forEach(row => {
+      const point = dailyMap.get(row.date)
+      if (point) Object.assign(point, { reviews: row.reviews, correct: row.correct, incorrect: row.incorrect, accuracy: row.reviews ? row.correct / row.reviews : null })
+    })
+    studyRows.forEach(row => { const point = dailyMap.get(row.date); if (point) Object.assign(point, { study_minutes: row.minutes || 0, study_sessions: row.sessions }) })
+    tutorRows.forEach(row => { const point = dailyMap.get(row.date); if (point) Object.assign(point, { tutor_minutes: row.minutes || 0, tutor_sessions: row.sessions }) })
+    practiceRows.forEach(row => { const point = dailyMap.get(row.date); if (point) Object.assign(point, { practice_minutes: row.minutes || 0, practice_sessions: row.sessions }) })
+    focusRows.forEach(row => { const point = dailyMap.get(row.date); if (point) point.focus_blocks = row.sessions })
+
+    const sumRows = (rows: SessionAggregate[]): SessionAggregate => rows.reduce((sum, row) => ({
+      date: '', sessions: sum.sessions + Number(row.sessions || 0), minutes: sum.minutes === null || row.minutes === null ? (sum.minutes || 0) + (row.minutes || 0) : sum.minutes + row.minutes,
+      items: sum.items + Number(row.items || 0), correct: sum.correct + Number(row.correct || 0), total: sum.total + Number(row.total || 0)
+    }), { date: '', sessions: 0, minutes: 0, items: 0, correct: 0, total: 0 })
+    const currentReviewTotal = reviewRows.reduce((sum, row) => sum + row.reviews, 0)
+    const currentCorrectTotal = reviewRows.reduce((sum, row) => sum + row.correct, 0)
+    const currentStudy = sumRows(studyRows)
+    const currentTutor = sumRows(tutorRows)
+    const currentPractice = sumRows(practiceRows)
+    const currentFocus = sumRows(focusRows)
+    const currentSessions = currentStudy.sessions + currentTutor.sessions + currentPractice.sessions + currentFocus.sessions
+    const previousReviewRows = db.prepare(`
+      SELECT COUNT(*) as reviews, SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
+      FROM review_log WHERE user_id = ? AND date(reviewed_at) >= ? AND date(reviewed_at) < ?
+    `).get(userId, previousStartDate, startDate) as { reviews: number; correct: number }
+    const previousStudy = db.prepare(`
+      SELECT COUNT(*) as sessions, SUM(CASE WHEN duration_minutes > 0 THEN duration_minutes ELSE 0 END) as minutes
+      FROM study_sessions WHERE user_id = ? AND ended_at IS NOT NULL AND date(started_at) >= ? AND date(started_at) < ?
+    `).get(userId, previousStartDate, startDate) as { sessions: number; minutes: number | null }
+    const previousTutor = db.prepare(`
+      SELECT COUNT(*) as sessions,
+        SUM(CASE WHEN duration_minutes > 0 THEN duration_minutes
+          WHEN ended_at IS NOT NULL THEN MAX(1, ROUND((strftime('%s', ended_at) - strftime('%s', started_at)) / 60.0))
+          ELSE 0 END) as minutes
+      FROM tutor_sessions WHERE user_id = ? AND (ended_at IS NOT NULL OR phase = 'complete') AND date(started_at) >= ? AND date(started_at) < ?
+    `).get(userId, previousStartDate, startDate) as { sessions: number; minutes: number | null }
+    const previousPractice = db.prepare(`
+      SELECT COUNT(*) as sessions,
+        SUM(CASE WHEN ended_at IS NOT NULL THEN MAX(1, ROUND((strftime('%s', ended_at) - strftime('%s', started_at)) / 60.0)) ELSE 0 END) as minutes
+      FROM practice_sessions WHERE user_id = ? AND ended_at IS NOT NULL AND date(started_at) >= ? AND date(started_at) < ?
+    `).get(userId, previousStartDate, startDate) as { sessions: number; minutes: number | null }
+    const previousFocus = db.prepare(`
+      SELECT COUNT(*) as sessions, SUM(COALESCE(estimated_minutes, 0)) as minutes
+      FROM daily_plans WHERE user_id = ? AND is_completed = 1 AND plan_date >= ? AND plan_date < ?
+    `).get(userId, previousStartDate, startDate) as { sessions: number; minutes: number | null }
+    const previousSessions = Number(previousStudy.sessions || 0) + Number(previousTutor.sessions || 0) + Number(previousPractice.sessions || 0) + Number(previousFocus.sessions || 0)
+    const previousMinutes = Number(previousStudy.minutes || 0) + Number(previousTutor.minutes || 0) + Number(previousPractice.minutes || 0) + Number(previousFocus.minutes || 0)
+
+    const subjectIds = (db.prepare("SELECT id FROM subjects WHERE user_id = ? AND status != 'archived'").all(userId) as { id: number }[]).map(row => row.id)
+    const currentSubjectReviews = db.prepare(`
+      SELECT c.subject_id, COUNT(*) as reviews, SUM(CASE WHEN rl.was_correct = 1 THEN 1 ELSE 0 END) as correct
+      FROM review_log rl JOIN cards c ON c.id = rl.card_id
+      WHERE rl.user_id = ? AND date(rl.reviewed_at) >= ? AND date(rl.reviewed_at) < ?
+      GROUP BY c.subject_id
+    `).all(userId, startDate, endExclusive) as { subject_id: number; reviews: number; correct: number }[]
+    const previousSubjectReviews = db.prepare(`
+      SELECT c.subject_id, COUNT(*) as reviews, SUM(CASE WHEN rl.was_correct = 1 THEN 1 ELSE 0 END) as correct
+      FROM review_log rl JOIN cards c ON c.id = rl.card_id
+      WHERE rl.user_id = ? AND date(rl.reviewed_at) >= ? AND date(rl.reviewed_at) < ?
+      GROUP BY c.subject_id
+    `).all(userId, previousStartDate, startDate) as { subject_id: number; reviews: number; correct: number }[]
+    const currentSubjectStudy = db.prepare(`
+      SELECT subject_id, COUNT(*) as sessions, SUM(CASE WHEN duration_minutes > 0 THEN duration_minutes ELSE 0 END) as minutes
+      FROM study_sessions WHERE user_id = ? AND ended_at IS NOT NULL AND subject_id IS NOT NULL AND date(started_at) >= ? AND date(started_at) < ? GROUP BY subject_id
+    `).all(userId, startDate, endExclusive) as { subject_id: number; sessions: number; minutes: number | null }[]
+    const previousSubjectStudy = db.prepare(`
+      SELECT subject_id, SUM(CASE WHEN duration_minutes > 0 THEN duration_minutes ELSE 0 END) as minutes
+      FROM study_sessions WHERE user_id = ? AND ended_at IS NOT NULL AND subject_id IS NOT NULL AND date(started_at) >= ? AND date(started_at) < ? GROUP BY subject_id
+    `).all(userId, previousStartDate, startDate) as { subject_id: number; minutes: number | null }[]
+    const retentionRows = db.prepare(`
+      SELECT c.subject_id, cs.stability, cs.interval, cs.last_reviewed_at
+      FROM card_schedule cs JOIN cards c ON c.id = cs.card_id
+      WHERE cs.user_id = ? AND cs.last_reviewed_at IS NOT NULL
+    `).all(userId) as { subject_id: number; stability: number | null; interval: number; last_reviewed_at: string }[]
+    const subjectMetrics = new Map<number, { retentionSum: number; retentionCount: number; cards: number; mastered: number }>()
+    const nowMs = Date.now()
+    retentionRows.forEach(row => {
+      const stability = row.stability && row.stability > 0 ? row.stability : Math.max(1, row.interval)
+      const elapsed = Math.max(0, (nowMs - new Date(row.last_reviewed_at).getTime()) / 86400000)
+      const current = subjectMetrics.get(row.subject_id) || { retentionSum: 0, retentionCount: 0, cards: 0, mastered: 0 }
+      current.retentionSum += retrievability(elapsed, stability)
+      current.retentionCount += 1
+      current.cards += 1
+      current.mastered += row.interval >= 21 ? 1 : 0
+      subjectMetrics.set(row.subject_id, current)
+    })
+    const currentReviewsBySubject = new Map(currentSubjectReviews.map(row => [row.subject_id, row]))
+    const previousReviewsBySubject = new Map(previousSubjectReviews.map(row => [row.subject_id, row]))
+    const currentStudyBySubject = new Map(currentSubjectStudy.map(row => [row.subject_id, row]))
+    const previousStudyBySubject = new Map(previousSubjectStudy.map(row => [row.subject_id, row]))
+    const subjects: AnalyticsSubjectStats[] = subjectIds.map(subjectId => {
+      const currentReviews = currentReviewsBySubject.get(subjectId)
+      const previousReviews = previousReviewsBySubject.get(subjectId)
+      const currentStudySubject = currentStudyBySubject.get(subjectId)
+      const previousStudySubject = previousStudyBySubject.get(subjectId)
+      const metrics = subjectMetrics.get(subjectId)
+      return {
+        subject_id: subjectId,
+        reviews: Number(currentReviews?.reviews || 0),
+        correct: Number(currentReviews?.correct || 0),
+        accuracy: currentReviews?.reviews ? Number(currentReviews.correct) / Number(currentReviews.reviews) : null,
+        study_minutes: currentStudySubject?.minutes == null ? null : Number(currentStudySubject.minutes),
+        sessions: Number(currentStudySubject?.sessions || 0),
+        retention: metrics?.retentionCount ? metrics.retentionSum / metrics.retentionCount : null,
+        mastery: metrics?.cards ? metrics.mastered / metrics.cards : 0,
+        previous_reviews: Number(previousReviews?.reviews || 0),
+        previous_correct: Number(previousReviews?.correct || 0),
+        previous_study_minutes: previousStudySubject?.minutes == null ? null : Number(previousStudySubject.minutes)
+      }
+    })
+    const allRetention = retentionRows.reduce((sum, row) => {
+      const stability = row.stability && row.stability > 0 ? row.stability : Math.max(1, row.interval)
+      const elapsed = Math.max(0, (nowMs - new Date(row.last_reviewed_at).getTime()) / 86400000)
+      return sum + retrievability(elapsed, stability)
+    }, 0)
+    const maintenance = db.prepare(`
+      SELECT
+        SUM(CASE WHEN date(due_date) <= date(?) THEN 1 ELSE 0 END) as due_cards,
+        SUM(CASE WHEN date(due_date) < date(?) THEN 1 ELSE 0 END) as overdue_cards,
+        SUM(CASE WHEN date(due_date) > date(?) AND date(due_date) <= date(?, '+3 day') THEN 1 ELSE 0 END) as fading_cards
+      FROM card_schedule WHERE user_id = ?
+    `).get(endDate, endDate, endDate, endDate, userId) as { due_cards: number | null; overdue_cards: number | null; fading_cards: number | null }
+
+    const daily = Array.from(dailyMap.values())
+    const mode = (name: AnalyticsModeStats['mode'], aggregate: SessionAggregate): AnalyticsModeStats => ({
+      mode: name, sessions: aggregate.sessions, minutes: aggregate.minutes && aggregate.minutes > 0 ? aggregate.minutes : null,
+      items: aggregate.items, correct: aggregate.correct, total: aggregate.total
+    })
+    return {
+      range_days: days, start_date: startDate, end_date: endDate, previous_start_date: previousStartDate, previous_end_date: previousEndDate,
+      daily,
+      modes: [mode('flashcards', currentStudy), mode('tutor', currentTutor), mode('practice', currentPractice), mode('focus', currentFocus)],
+      subjects,
+      totals: {
+        reviews: currentReviewTotal, correct: currentCorrectTotal, accuracy: currentReviewTotal ? currentCorrectTotal / currentReviewTotal : null,
+        study_minutes: Number(currentStudy.minutes || 0) + Number(currentTutor.minutes || 0) + Number(currentPractice.minutes || 0) + Number(currentFocus.minutes || 0),
+        sessions: currentSessions, current_retention: retentionRows.length ? allRetention / retentionRows.length : null
+      },
+      previous_totals: {
+        reviews: Number(previousReviewRows.reviews || 0), correct: Number(previousReviewRows.correct || 0), accuracy: previousReviewRows.reviews ? Number(previousReviewRows.correct || 0) / Number(previousReviewRows.reviews) : null,
+        study_minutes: previousMinutes, sessions: previousSessions
+      },
+      maintenance: { due_cards: Number(maintenance?.due_cards || 0), overdue_cards: Number(maintenance?.overdue_cards || 0), fading_cards: Number(maintenance?.fading_cards || 0) }
+    }
   })
 
   // Interleaved due queue — round-robin across concept/folder buckets

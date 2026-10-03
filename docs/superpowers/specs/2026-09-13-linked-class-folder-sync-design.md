@@ -47,7 +47,7 @@ Location: `electron/ipc/folderSyncService.ts`
 - Temporary download extensions (e.g. `.crdownload`, `.download`, `.tmp`) and hidden/system files (`.DS_Store`, `._*`, `~$*`) are excluded.
 
 #### Supported File Extensions
-`.pdf`, `.docx`, `.doc`, `.pptx`, `.ppt`, `.txt`, `.md`, `.markdown`, `.rtf`, `.html`, `.csv`.
+`.pdf`, `.docx`, `.doc`, `.pptx`, `.ppt`, `.txt`, `.md`, `.markdown`, `.rtf`, `.html`, `.csv`, `.epub`, and common image formats (`.png`, `.jpg`, `.jpeg`, `.webp`, `.heic`, `.bmp`, `.tiff`).
 
 #### Ingestion & Change Detection
 For each supported file:

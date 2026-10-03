@@ -1,5 +1,6 @@
 import type {
-  PracticeProblem
+  PracticeProblem,
+  ExtractedPracticeProblem
 } from "../types"
 import type { DomainClassificationResult, EpistemicArchetype } from "./classification/domainClassifier"
 
@@ -399,6 +400,101 @@ Output ONLY a valid JSON object matching this schema:
   "identified_errors": [],
   "key_principles": ["Principle applied"],
   "suggested_next_action": "continue"
+}`
+}
+
+export function buildGuidedPracticeEvaluationPrompt(
+  problem: PracticeProblem,
+  phase: string,
+  subgoalIndex: number,
+  learnerResponse: string,
+  hintLevel: number
+): string {
+  return `You are a rigorous but encouraging university STEM tutor guiding a learner through a problem.
+
+PROBLEM:
+${problem.problem_text}
+
+REFERENCE SOLUTION:
+${problem.solution_steps || problem.final_answer || 'No reference solution available.'}
+
+SUBGOALS:
+${problem.subgoals_json || '[]'}
+
+CURRENT PHASE: ${phase}
+CURRENT SUBGOAL INDEX: ${subgoalIndex}
+CURRENT HINT LEVEL: ${hintLevel} (0 independent, 1 strategy question, 2 principle/formula, 3 targeted next-step guidance, 4 worked step)
+LEARNER RESPONSE:
+${learnerResponse}
+
+Evaluate only the learner's response. Do not reveal the final answer unless the current hint level is 4 or the learner has explicitly supplied a complete solution. Ask for a concrete learner action after every explanation. Return ONLY JSON:
+{
+  "status": "correct|partial|incorrect|unassessed",
+  "error_type": "correct|execution_slip|conceptual_misconception|boundary_condition_error|unit_mismatch|other",
+  "feedback": "specific feedback on the learner's reasoning",
+  "next_move": "advance|retry|explain|review",
+  "hint_level": 0,
+  "learner_prompt": "the next concrete thing the learner should write or decide",
+  "principles": ["relevant principle"],
+  "identified_errors": ["specific error or misconception"]
+}`
+}
+
+export function buildGuidedHintPrompt(
+  problem: PracticeProblem,
+  phase: string,
+  hintLevel: number,
+  learnerResponse?: string
+): string {
+  return `You are a Socratic university STEM tutor. Give exactly one graduated hint for the problem below.
+
+PROBLEM:
+${problem.problem_text}
+
+REFERENCE SOLUTION:
+${problem.solution_steps || problem.final_answer || 'Unavailable.'}
+
+PHASE: ${phase}
+REQUESTED HINT LEVEL: ${hintLevel}
+LEARNER'S CURRENT WORK:
+${learnerResponse || '(none yet)'}
+
+Hint policy:
+1 = ask what quantity, principle, or relationship matters; do not name the answer.
+2 = identify the relevant principle or formula and explain why it applies; do not perform the final calculation.
+3 = point to the next concrete intermediate step and ask the learner to complete it.
+4 = show one worked intermediate step, then ask the learner to continue. Never skip directly to the final answer.
+
+Return ONLY JSON: {"hint":"...","learner_prompt":"..."}`
+}
+
+export function buildPracticeProblemCriticPrompt(problem: ExtractedPracticeProblem): string {
+  return `You are an independent assessment-quality reviewer. Do not rewrite the item.
+
+Review this generated practice problem for answerability, source-groundedness, solution consistency, and pedagogical usefulness.
+
+PROBLEM:
+${problem.problem_text}
+
+WORKED SOLUTION:
+${problem.solution_steps}
+
+FINAL ANSWER:
+${problem.final_answer}
+
+SUBGOALS:
+${JSON.stringify(problem.subgoals || [])}
+
+Return ONLY JSON:
+{
+  "approved": true,
+  "issues": [],
+  "checks": {
+    "answerable": true,
+    "solution_consistent": true,
+    "subgoals_aligned": true,
+    "appropriate_difficulty": true
+  }
 }`
 }
 

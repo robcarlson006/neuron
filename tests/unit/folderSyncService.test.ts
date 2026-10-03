@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { createHash } from 'crypto'
 import {
   FolderSyncService,
   isSupportedFile,
@@ -69,6 +70,8 @@ describe('FolderSyncService', () => {
       expect(isSupportedFile('doc.rtf')).toBe(true)
       expect(isSupportedFile('index.html')).toBe(true)
       expect(isSupportedFile('data.csv')).toBe(true)
+      expect(isSupportedFile('textbook.epub')).toBe(true)
+      expect(isSupportedFile('diagram.png')).toBe(true)
     })
 
     it('rejects hidden and system files', () => {
@@ -85,8 +88,6 @@ describe('FolderSyncService', () => {
     })
 
     it('rejects unsupported extensions and download temp files', () => {
-      expect(isSupportedFile('photo.png')).toBe(false)
-      expect(isSupportedFile('image.jpg')).toBe(false)
       expect(isSupportedFile('archive.zip')).toBe(false)
       expect(isSupportedFile('script.js')).toBe(false)
       expect(isSupportedFile('program.py')).toBe(false)
@@ -145,6 +146,7 @@ describe('FolderSyncService', () => {
       expect(relPaths).toEqual([
         'Week 1/Slides/presentation.pptx',
         'Week 1/lecture.docx',
+        'image.png',
         'notes.md',
         'syllabus.pdf'
       ].sort())
@@ -202,14 +204,17 @@ describe('FolderSyncService', () => {
       const txtMat = materials.find((m) => m.filename === 'cell_biology.txt')
       expect(txtMat).toBeDefined()
       expect(txtMat.file_type).toBe('txt')
+      expect(txtMat.file_path).toBe(path.join(week1Dir, 'cell_biology.txt'))
       expect(txtMat.content_text).toContain('Cells are the basic unit of life.')
       expect(txtMat.relative_path).toBe('Week 1/cell_biology.txt')
       expect(txtMat.file_size).toBeGreaterThan(0)
       expect(txtMat.file_mtime).toBeGreaterThan(0)
+      expect(txtMat.file_sha256).toBe(createHash('sha256').update(fs.readFileSync(path.join(week1Dir, 'cell_biology.txt'))).digest('hex'))
 
       const mdMat = materials.find((m) => m.filename === 'syllabus.md')
       expect(mdMat).toBeDefined()
       expect(mdMat.file_type).toBe('md')
+      expect(mdMat.file_path).toBe(path.join(tempDir, 'syllabus.md'))
       expect(mdMat.content_text).toContain('# Course Syllabus')
       expect(mdMat.relative_path).toBe('syllabus.md')
 
@@ -227,6 +232,31 @@ describe('FolderSyncService', () => {
           updated: []
         })
       )
+    })
+
+    it('repairs a missing source path even when the file content is unchanged', async () => {
+      db.prepare(`
+        INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
+        VALUES (1, 1, 'Biology 101', 'active', ?)
+      `).run(tempDir)
+
+      const filePath = path.join(tempDir, 'slides.pptx')
+      fs.writeFileSync(filePath, 'source placeholder')
+      const stat = fs.statSync(filePath)
+      db.prepare(`
+        INSERT INTO materials (subject_id, filename, file_type, content_text, file_mtime, file_size)
+        VALUES (1, 'slides.pptx', 'pptx', 'Previously extracted slide text', ?, ?)
+      `).run(Math.round(stat.mtimeMs), stat.size)
+
+      FolderSyncService.init(db, () => null as any)
+      const result = await FolderSyncService.scanAndSync(db, 1, tempDir)
+      const material = db.prepare("SELECT file_path, relative_path, content_text FROM materials WHERE filename = 'slides.pptx'").get() as any
+
+      expect(result.success).toBe(true)
+      expect(result.updatedCount).toBe(0)
+      expect(material.file_path).toBe(filePath)
+      expect(material.relative_path).toBe('slides.pptx')
+      expect(material.content_text).toBe('Previously extracted slide text')
     })
 
     it('detects modified files and updates content without creating duplicates', async () => {
@@ -277,6 +307,46 @@ describe('FolderSyncService', () => {
       const res2 = await FolderSyncService.scanAndSync(db, 1, tempDir)
       expect(res2.addedCount).toBe(0)
       expect(res2.updatedCount).toBe(0)
+    })
+
+    it('detects same-size content changes even when the mtime is preserved', async () => {
+      db.prepare(`
+        INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
+        VALUES (1, 1, 'Biology 101', 'active', ?)
+      `).run(tempDir)
+
+      const filePath = path.join(tempDir, 'stable.txt')
+      fs.writeFileSync(filePath, 'AAAA')
+      await FolderSyncService.scanAndSync(db, 1, tempDir)
+      const initial = db.prepare("SELECT file_mtime, file_size, file_sha256 FROM materials WHERE filename = 'stable.txt'").get() as any
+
+      fs.writeFileSync(filePath, 'BBBB')
+      const preservedTime = new Date(initial.file_mtime)
+      fs.utimesSync(filePath, preservedTime, preservedTime)
+      const result = await FolderSyncService.scanAndSync(db, 1, tempDir)
+      const updated = db.prepare("SELECT content_text, file_sha256 FROM materials WHERE filename = 'stable.txt'").get() as any
+
+      expect(result.updatedCount).toBe(1)
+      expect(updated.content_text).toBe('BBBB')
+      expect(updated.file_sha256).toBe(createHash('sha256').update('BBBB').digest('hex'))
+      expect(updated.file_sha256).not.toBe(initial.file_sha256)
+    })
+
+    it('never mutates linked source bytes while ingesting and resyncing', async () => {
+      db.prepare(`
+        INSERT INTO subjects (id, user_id, name, status, linked_folder_path)
+        VALUES (1, 1, 'Biology 101', 'active', ?)
+      `).run(tempDir)
+
+      const filePath = path.join(tempDir, 'source-notes.md')
+      fs.writeFileSync(filePath, '# Original notes\n\n$x^2 + y^2 = r^2$\n', 'utf8')
+      const hashBefore = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+
+      await FolderSyncService.scanAndSync(db, 1, tempDir)
+      await FolderSyncService.scanAndSync(db, 1, tempDir)
+
+      const hashAfter = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+      expect(hashAfter).toBe(hashBefore)
     })
 
     it('preserves database records when files are deleted on disk (Safe Sync)', async () => {

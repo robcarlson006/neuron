@@ -4,7 +4,8 @@ import {
   isValidMathString,
   convertAsciiMathToLatex,
   normalizeUnicodeMath,
-  repairMathSyntax
+  repairMathSyntax,
+  normalizeMathText
 } from '../../src/lib/mathFormatter'
 
 describe('mathFormatter', () => {
@@ -182,6 +183,23 @@ describe('mathFormatter', () => {
       const input = 'Quadratic...$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$'
       const result = autoFormatMathLocal(input)
       expect(result).toBe(input)
+    })
+  })
+
+  describe('normalizeMathText', () => {
+    it('canonicalizes alternate TeX delimiters while preserving code and currency', () => {
+      const input = 'Use \\(x^2\\) and \\[y = mx + b\\]. Code: `\\(not math\\)`. Cost: $4 to $8.'
+      expect(normalizeMathText(input)).toBe('Use $x^2$ and $$y = mx + b$$. Code: `\\(not math\\)`. Cost: $4 to $8.')
+    })
+
+    it('is idempotent for canonical LaTeX content', () => {
+      const input = 'Area is $A = \\pi r^2$ and\\n\\n$$\\frac{1}{2}bh$$'
+      expect(normalizeMathText(normalizeMathText(input))).toBe(normalizeMathText(input))
+    })
+
+    it('canonicalizes Anki tags and display environments', () => {
+      expect(normalizeMathText('[latex]\\frac{a}{b}[/latex]')).toBe('$$\\frac{a}{b}$$')
+      expect(normalizeMathText('\\begin{aligned}a&=b\\end{aligned}')).toBe('$$\\begin{aligned}a&=b\\end{aligned}$$')
     })
   })
 })

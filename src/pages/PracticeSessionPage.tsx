@@ -1,269 +1,84 @@
-import React, { useState, useEffect } from "react"
-import {
-  ArrowLeft,
-  Trophy
-} from "../components/icons"
-import PracticeProblemSolver from "../components/practice/PracticeProblemSolver"
-import PracticeTutorDiscussion from "../components/practice/PracticeTutorDiscussion"
-import type {
-  Subject,
-  User,
-  PracticeSession,
-  PracticeProblem,
-  PracticeEvaluationResult,
-  PracticeProblemAttempt,
-  CalculatorSkin
-} from "../types"
+import React, { useEffect, useState } from 'react'
+import { ArrowLeft, CheckCircle2, Trophy } from '../components/icons'
+import PracticeProblemSolver from '../components/practice/PracticeProblemSolver'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import type { CalculatorSkin, PracticeEvaluationResult, PracticeProblem, PracticeProblemAttempt, PracticeSession, Subject, User } from '../types'
 
-interface PracticeSessionPageProps {
-  subject: Subject
-  user: User | null
-  moduleId?: number
-  topicId?: number
-  problemCount?: number
-  calculatorSkin?: CalculatorSkin
-  onExit: () => void
-}
+interface PracticeSessionPageProps { subject: Subject; user: User | null; moduleId?: number; topicId?: number; problemCount?: number; mode?: 'standard' | 'guided'; difficulty?: number; learningGoal?: 'recommended' | 'reinforce' | 'review' | 'transfer'; calculatorSkin?: CalculatorSkin; onExit: () => void }
+interface HintItem { level: number; hint: string; learnerPrompt?: string }
 
-export default function PracticeSessionPage({
-  subject,
-  user,
-  moduleId,
-  topicId,
-  problemCount = 5,
-  calculatorSkin = "numworks",
-  onExit
-}: PracticeSessionPageProps): React.JSX.Element {
+export default function PracticeSessionPage({ subject, user, moduleId, topicId, problemCount = 5, difficulty, learningGoal, calculatorSkin = 'numworks', onExit }: PracticeSessionPageProps): React.JSX.Element {
   const [session, setSession] = useState<PracticeSession | null>(null)
   const [problems, setProblems] = useState<PracticeProblem[]>([])
-  const [currentIndex, setCurrentIndex] = useState<number>(0)
-  const [currentStep, setCurrentStep] = useState<"solving" | "discussion" | "summary">("solving")
-  const [latestSubmission, setLatestSubmission] = useState<{
-    userAnswer: string
-    evaluation: PracticeEvaluationResult
-    attempt?: PracticeProblemAttempt
-  } | null>(null)
-
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
-  const [isGeneratingVariant, setIsGeneratingVariant] = useState<boolean>(false)
-  const [loading, setLoading] = useState<boolean>(true)
-  const [sessionStartTime] = useState<number>(Date.now())
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [submission, setSubmission] = useState<{ userAnswer: string; evaluation: PracticeEvaluationResult; attempt?: PracticeProblemAttempt } | null>(null)
+  const [hints, setHints] = useState<HintItem[]>([])
+  const [solutionRevealed, setSolutionRevealed] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isHinting, setIsHinting] = useState(false)
+  const [isGeneratingVariant, setIsGeneratingVariant] = useState(false)
+  const [complete, setComplete] = useState(false)
+  const [startedAt] = useState(Date.now())
 
   useEffect(() => {
-    async function initSession() {
-      if (!window.electronAPI.practiceCreateSession) return
+    let cancelled = false
+    async function create(): Promise<void> {
       try {
-        setLoading(true)
-        const res = await window.electronAPI.practiceCreateSession({
-          subjectId: subject.id,
-          userId: user?.id || 1,
-          moduleId,
-          topicId,
-          problemCount
-        })
-
-        setSession(res.session)
-        setProblems(res.problems)
-      } catch (err) {
-        console.error("Failed to initialize practice session:", err)
-      } finally {
-        setLoading(false)
-      }
+        const result = await window.electronAPI.practiceCreateSession({ subjectId: subject.id, userId: user?.id || 1, moduleId, topicId, problemCount, difficulty, learningGoal })
+        if (!cancelled) { setSession(result.session); setProblems(result.problems) }
+      } catch (error) { console.error('Failed to initialize practice session:', error) } finally { if (!cancelled) setLoading(false) }
     }
+    void create()
+    return () => { cancelled = true }
+  }, [subject.id, user?.id, moduleId, topicId, problemCount, difficulty, learningGoal])
 
-    initSession()
-  }, [subject.id, user?.id, moduleId, topicId, problemCount])
+  const problem = problems[currentIndex]
+  const finish = async (): Promise<void> => { if (session) await window.electronAPI.practiceEndSession?.(session.id); setComplete(true) }
+  const next = (): void => { if (currentIndex + 1 < problems.length) { setCurrentIndex(index => index + 1); setSubmission(null); setHints([]); setSolutionRevealed(false) } else void finish() }
 
-  const currentProblem = problems[currentIndex]
-
-  const handleSubmitAnswer = async (userAnswer: string, timeSpentSeconds: number) => {
-    if (!session || !currentProblem || !window.electronAPI.practiceSubmitAttempt) return
+  const submitAnswer = async (answer: string, seconds: number): Promise<void> => {
+    if (!session || !problem) return
     setIsSubmitting(true)
     try {
-      const res = await window.electronAPI.practiceSubmitAttempt(
-        session.id,
-        currentProblem.id,
-        userAnswer,
-        timeSpentSeconds
-      )
-
-      if (res.success && res.evaluation) {
-        setLatestSubmission({
-          userAnswer,
-          evaluation: res.evaluation,
-          attempt: res.attempt
-        })
-        setCurrentStep("discussion")
-      }
-    } catch (err) {
-      console.error("Error submitting practice attempt:", err)
-    } finally {
-      setIsSubmitting(false)
-    }
+      const result = await window.electronAPI.practiceSubmitAttempt(session.id, problem.id, answer, seconds)
+      if (result.success && result.evaluation) setSubmission({ userAnswer: answer, evaluation: result.evaluation, attempt: result.attempt })
+    } catch (error) { console.error('Error submitting practice attempt:', error) } finally { setIsSubmitting(false) }
   }
 
-  const handleGenerateVariant = async () => {
-    if (!currentProblem || !window.electronAPI.practiceGenerateVariant) return
+  const requestHint = async (learnerResponse: string): Promise<void> => {
+    if (!session || !problem || hints.length >= 4) return
+    setIsHinting(true)
+    try {
+      const result = await window.electronAPI.practiceRequestGuidedHint(session.id, problem.id, learnerResponse)
+      if (result.success && result.hint) setHints(current => [...current, { level: result.hintLevel || current.length + 1, hint: result.hint || '', learnerPrompt: result.learnerPrompt }])
+    } catch (error) { console.error('Error requesting practice hint:', error) } finally { setIsHinting(false) }
+  }
+
+  const revealSolution = async (): Promise<void> => {
+    if (!session || !problem) return
+    await window.electronAPI.practiceRevealGuidedAnswer?.(session.id, problem.id)
+    setSolutionRevealed(true)
+  }
+
+  const generateVariant = async (): Promise<void> => {
+    if (!problem) return
     setIsGeneratingVariant(true)
     try {
-      const userStruggles = latestSubmission?.evaluation.identified_errors?.join("; ")
-      const res = await window.electronAPI.practiceGenerateVariant(currentProblem.id, userStruggles)
-      if (res.success && res.variant) {
-        // Insert variant directly as next problem
-        const updatedProblems = [...problems]
-        updatedProblems.splice(currentIndex + 1, 0, res.variant)
-        setProblems(updatedProblems)
-        setCurrentIndex(currentIndex + 1)
-        setCurrentStep("solving")
-        setLatestSubmission(null)
+      const result = await window.electronAPI.practiceGenerateVariant(problem.id, submission?.evaluation.identified_errors?.join('; '))
+      if (result.success && result.variant) {
+        setProblems(current => [...current.slice(0, currentIndex + 1), result.variant!, ...current.slice(currentIndex + 1)])
+        setCurrentIndex(index => index + 1)
+        setSubmission(null)
+        setHints([])
+        setSolutionRevealed(false)
       }
-    } catch (err) {
-      console.error("Error generating variant:", err)
-    } finally {
-      setIsGeneratingVariant(false)
-    }
+    } catch (error) { console.error('Error generating practice variant:', error) } finally { setIsGeneratingVariant(false) }
   }
 
-  const handleNextProblem = () => {
-    if (currentIndex + 1 < problems.length) {
-      setCurrentIndex((prev) => prev + 1)
-      setCurrentStep("solving")
-      setLatestSubmission(null)
-    } else {
-      handleFinishSession()
-    }
-  }
+  if (loading) return <div className="py-20 text-center text-sm text-slate-500">Preparing your practice session…</div>
+  if (complete) return <div className="mx-auto max-w-xl py-16 text-center"><div className="rounded-3xl border border-slate-200 bg-white p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900"><Trophy size={38} className="mx-auto text-amber-500" /><h1 className="mt-5 text-2xl font-semibold text-slate-950 dark:text-white">Practice session complete</h1><p className="mt-2 text-sm leading-6 text-slate-500">Your attempts, hints, and areas for review have been recorded.</p><div className="mt-8 grid grid-cols-2 gap-3"><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Problems practiced</p><p className="mt-1 text-2xl font-semibold">{problems.length}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Time spent</p><p className="mt-1 text-2xl font-semibold">{Math.max(1, Math.round((Date.now() - startedAt) / 60000))}m</p></div></div><button onClick={onExit} className="mt-8 inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-3 text-sm font-bold text-white hover:bg-violet-700"><CheckCircle2 size={15} /> Return to Practice Lab</button></div></div>
+  if (!problem) return <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 p-10 text-center dark:border-slate-800"><h2 className="font-semibold text-slate-950 dark:text-white">No problems in this selection</h2><p className="mt-2 text-sm text-slate-500">Choose another scope or add more problems to the library.</p><button onClick={onExit} className="mt-5 rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-bold text-white">Return to Practice Lab</button></div>
 
-  const handleFinishSession = async () => {
-    if (session && window.electronAPI.practiceEndSession) {
-      await window.electronAPI.practiceEndSession(session.id)
-    }
-    setCurrentStep("summary")
-  }
-
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-3">
-        <span className="w-8 h-8 border-3 border-violet-600 border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm font-semibold text-slate-600 dark:text-slate-400">Loading Practice Session…</p>
-      </div>
-    )
-  }
-
-  if (!currentProblem && currentStep !== "summary") {
-    return (
-      <div className="p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-lg mx-auto space-y-4">
-        <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">No Problems in Selection</h3>
-        <p className="text-xs text-slate-500">Please select a different module or drop in problem sets first.</p>
-        <button
-          onClick={onExit}
-          className="px-5 py-2.5 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700"
-        >
-          Return to Subject
-        </button>
-      </div>
-    )
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Summary View
-  // ──────────────────────────────────────────────────────────────────────────
-  if (currentStep === "summary") {
-    const totalTimeMinutes = Math.max(1, Math.round((Date.now() - sessionStartTime) / 60000))
-
-    return (
-      <div className="max-w-xl mx-auto py-8 px-4 animate-in zoom-in-95 duration-200">
-        <div className="p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-6">
-          {/* Trophy Badge */}
-          <div className="w-16 h-16 rounded-3xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto shadow-inner">
-            <Trophy size={32} />
-          </div>
-
-          <div>
-            <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100">Practice Session Complete!</h2>
-            <p className="text-xs text-slate-500 mt-1">
-              Your performance and topic strengths have been updated in AI memory.
-            </p>
-          </div>
-
-          {/* Stats Badges */}
-          <div className="grid grid-cols-2 gap-3 py-2">
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Problems Practiced</span>
-              <p className="text-2xl font-black text-slate-900 dark:text-slate-100 font-mono mt-1">
-                {problems.length}
-              </p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Time Spent</span>
-              <p className="text-2xl font-black text-slate-900 dark:text-slate-100 font-mono mt-1">
-                {totalTimeMinutes}m
-              </p>
-            </div>
-          </div>
-
-          <div className="pt-2">
-            <button
-              onClick={onExit}
-              className="w-full py-3.5 rounded-2xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-sm shadow-md transition-all active:scale-98"
-            >
-              Back to Subject Hub
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Active Session Solving / Discussion View
-  // ──────────────────────────────────────────────────────────────────────────
-  return (
-    <div className="space-y-6 pb-12 animate-in fade-in duration-150">
-      {/* Top Header Bar */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
-        <button
-          onClick={onExit}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-        >
-          <ArrowLeft size={14} />
-          <span>Exit Practice</span>
-        </button>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">
-            {subject.name} &bull; Practice Lab
-          </span>
-        </div>
-      </div>
-
-      {/* Main Mode Dispatch */}
-      {currentStep === "solving" ? (
-        <PracticeProblemSolver
-          problem={currentProblem}
-          problemIndex={currentIndex}
-          totalProblems={problems.length}
-          calculatorSkin={calculatorSkin}
-          onSubmit={handleSubmitAnswer}
-          onSkip={currentIndex + 1 < problems.length ? handleNextProblem : undefined}
-          isSubmitting={isSubmitting}
-        />
-      ) : (
-        latestSubmission && (
-          <PracticeTutorDiscussion
-            problem={currentProblem}
-            userAnswer={latestSubmission.userAnswer}
-            evaluation={latestSubmission.evaluation}
-            attempt={latestSubmission.attempt}
-            onNextProblem={handleNextProblem}
-            onGenerateVariant={handleGenerateVariant}
-            onFinishSession={handleFinishSession}
-            isGeneratingVariant={isGeneratingVariant}
-            hasNextProblem={currentIndex + 1 < problems.length}
-          />
-        )
-      )}
-    </div>
-  )
+  return <div className="space-y-6 pb-12"><div className="flex items-center justify-between border-b border-slate-200 pb-4 dark:border-slate-800"><button onClick={onExit} className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"><ArrowLeft size={15} /> Exit practice</button><span className="text-xs font-semibold text-slate-400">{subject.name}</span></div><PracticeProblemSolver problem={problem} problemIndex={currentIndex} totalProblems={problems.length} calculatorSkin={calculatorSkin} onSubmit={submitAnswer} onSkip={currentIndex + 1 < problems.length ? next : undefined} onNextProblem={next} onFinishSession={() => void finish()} onGenerateVariant={generateVariant} onRequestHint={requestHint} onRevealSolution={revealSolution} onRetry={() => setSubmission(null)} hints={hints} evaluation={submission?.evaluation || null} attempt={submission?.attempt} isSubmitting={isSubmitting} isHinting={isHinting} isGeneratingVariant={isGeneratingVariant} hasNextProblem={currentIndex + 1 < problems.length} />{solutionRevealed && <div className="mx-auto max-w-4xl rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm dark:border-rose-900/60 dark:bg-rose-950/30"><h2 className="font-semibold text-rose-900 dark:text-rose-200">Reference solution</h2>{problem.solution_steps && <div className="mt-3 leading-6 text-rose-950 dark:text-rose-100"><MarkdownRenderer content={problem.solution_steps} /></div>}{problem.final_answer && <p className="mt-4 font-semibold text-rose-900 dark:text-rose-200">Final answer: {problem.final_answer}</p>}</div>}</div>
 }

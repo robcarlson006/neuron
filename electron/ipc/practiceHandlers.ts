@@ -6,11 +6,15 @@ import {
   buildExtractPracticeProblemsPrompt,
   buildGenerateVariantPrompt,
   buildEvaluatePracticeAttemptPrompt,
+  buildGuidedPracticeEvaluationPrompt,
+  buildGuidedHintPrompt,
+  buildPracticeProblemCriticPrompt,
   buildAutonomousPracticeProblemPrompt
 } from "../../src/lib/practicePrompts"
-import { evaluatePracticeProblemQuality } from "../../src/lib/practiceValidator"
+import { evaluatePracticeProblemQuality, verifyGeneratedPracticeProblem } from "../../src/lib/practiceValidator"
 import { parseDocumentTopology } from "../../src/lib/coverage/documentTopologyParser"
 import { classifyMaterialDomain } from "../../src/lib/classification/domainClassifier"
+import { normalizeMathText } from "../../src/lib/mathFormatter"
 import { cleanMarkdownFences, safeParseAIJson } from "../../src/lib/jsonRepair"
 import {
   recordTopicAssessment,
@@ -26,8 +30,20 @@ import type {
   PracticeEvaluationResult,
   ExtractedPracticeProblem,
   AutonomousPracticeGenOptions,
-  AutonomousPracticeGenResult
+  AutonomousPracticeGenResult,
+  GuidedPracticeSessionConfig
 } from "../../src/types"
+import {
+  initialGuidedState,
+  nextHintLevel,
+  assistanceForHint,
+  applyGuidedEvaluation,
+  markSelfExplanation,
+  markTransferStarted,
+  markAnswerRevealed,
+  type GuidedEvaluation,
+  type GuidedSessionState
+} from "../../src/lib/guidedPractice"
 
 let db: Database.Database
 
@@ -48,6 +64,30 @@ function detectModality(filename?: string, content?: string): 'slides' | 'textbo
     return 'textbook'
   }
   return 'general'
+}
+
+function curateMaterialText(content: string, filename?: string, maxCharacters = 16000): string {
+  if (!content) return ''
+  if (content.length <= maxCharacters) return content
+  const topology = parseDocumentTopology(content, filename || 'source', 900)
+  const outline = topology.chunks.map((chunk, index) => `${index + 1}. ${chunk.title}`).join('\n')
+  const selected = topology.chunks.length <= 8
+    ? topology.chunks
+    : [
+        topology.chunks[0],
+        topology.chunks[Math.floor(topology.chunks.length * 0.2)],
+        topology.chunks[Math.floor(topology.chunks.length * 0.4)],
+        topology.chunks[Math.floor(topology.chunks.length * 0.6)],
+        topology.chunks[Math.floor(topology.chunks.length * 0.8)],
+        topology.chunks[topology.chunks.length - 1]
+      ].filter(Boolean)
+  let result = `SOURCE OUTLINE (${topology.chunks.length} sections):\n${outline}\n\nSELECTED SECTION EVIDENCE:\n`
+  for (const chunk of selected) {
+    const block = `\n=== ${chunk.title} ===\n${chunk.text}\n`
+    if (result.length + block.length > maxCharacters) break
+    result += block
+  }
+  return result
 }
 
 async function extractProblemsFromMaterialText(
@@ -222,15 +262,15 @@ export function registerPracticeHandlers(): void {
         problem.topic_id || null,
         problem.material_id || null,
         problem.title || "Practice Problem",
-        problem.problem_text || "",
-        problem.solution_steps || null,
-        problem.final_answer || null,
+        normalizeMathText(problem.problem_text || ""),
+        problem.solution_steps ? normalizeMathText(problem.solution_steps) : null,
+        problem.final_answer ? normalizeMathText(problem.final_answer) : null,
         problem.difficulty || 2,
         problem.principles_json || "[]",
         problem.is_ai_generated || 0,
         problem.parent_problem_id || null,
-        problem.stimulus || null,
-        problem.stem_lead_in || null,
+        problem.stimulus ? normalizeMathText(problem.stimulus) : null,
+        problem.stem_lead_in ? normalizeMathText(problem.stem_lead_in) : null,
         problem.options_json || null,
         problem.correct_key || null,
         problem.blooms_revised || null,
@@ -322,13 +362,13 @@ export function registerPracticeHandlers(): void {
             topicId || null,
             materialId,
             p.title || "Practice Problem",
-            p.problem_text,
-            p.solution_steps || null,
-            p.final_answer || null,
+            normalizeMathText(p.problem_text),
+            p.solution_steps ? normalizeMathText(p.solution_steps) : null,
+            p.final_answer ? normalizeMathText(p.final_answer) : null,
             p.difficulty || 2,
             JSON.stringify(p.principles || []),
-            p.stimulus || null,
-            p.stem_lead_in || null,
+            p.stimulus ? normalizeMathText(p.stimulus) : null,
+            p.stem_lead_in ? normalizeMathText(p.stem_lead_in) : null,
             p.options ? JSON.stringify(p.options) : null,
             p.correct_key || null,
             typeof p.cognitive_level === 'object' ? p.cognitive_level?.blooms_revised : (p.blooms_revised || null),
@@ -410,13 +450,13 @@ export function registerPracticeHandlers(): void {
             moduleId || null,
             topicId || null,
             p.title || "Practice Problem",
-            p.problem_text,
-            p.solution_steps || null,
-            p.final_answer || null,
+            normalizeMathText(p.problem_text),
+            p.solution_steps ? normalizeMathText(p.solution_steps) : null,
+            p.final_answer ? normalizeMathText(p.final_answer) : null,
             p.difficulty || 2,
             JSON.stringify(p.principles || []),
-            p.stimulus || null,
-            p.stem_lead_in || null,
+            p.stimulus ? normalizeMathText(p.stimulus) : null,
+            p.stem_lead_in ? normalizeMathText(p.stem_lead_in) : null,
             p.options ? JSON.stringify(p.options) : null,
             p.correct_key || null,
             typeof p.cognitive_level === 'object' ? p.cognitive_level?.blooms_revised : (p.blooms_revised || null),
@@ -475,8 +515,9 @@ export function registerPracticeHandlers(): void {
             difficulty, principles_json, is_ai_generated, parent_problem_id,
             stimulus, stem_lead_in, options_json, correct_key,
             blooms_revised, webbs_dok, discipline_paradigm,
-            subgoals_json, item_validation_json, quality_score, cover_test_passed
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            subgoals_json, item_validation_json, quality_score, cover_test_passed,
+            verification_status, verification_json, solution_steps_json, source_ref
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
 
         const res = stmt.run(
@@ -485,9 +526,9 @@ export function registerPracticeHandlers(): void {
           baseProblem.topic_id,
           baseProblem.material_id,
           parsed.title || `Variant: ${baseProblem.title}`,
-          parsed.problem_text,
-          parsed.solution_steps,
-          parsed.final_answer,
+          normalizeMathText(parsed.problem_text),
+          parsed.solution_steps ? normalizeMathText(parsed.solution_steps) : null,
+          parsed.final_answer ? normalizeMathText(parsed.final_answer) : null,
           parsed.difficulty || baseProblem.difficulty,
           JSON.stringify(parsed.principles || []),
           baseProblem.id,
@@ -567,7 +608,7 @@ export function registerPracticeHandlers(): void {
             | { filename: string; content_text: string }
             | undefined
           if (mat?.content_text) {
-            materialsText = mat.content_text.slice(0, 12000)
+            materialsText = curateMaterialText(mat.content_text, mat.filename)
             sampledFilename = mat.filename
           }
         } else if (moduleId) {
@@ -577,7 +618,7 @@ export function registerPracticeHandlers(): void {
           ).all(subjectId, moduleId) as { filename: string; content_text: string }[]
 
           if (mats.length > 0) {
-            materialsText = mats.map(m => m.content_text).filter(Boolean).join("\n\n---\n\n").slice(0, 12000)
+            materialsText = mats.map(m => `[DOCUMENT: ${m.filename}]\n${curateMaterialText(m.content_text, m.filename, 5000)}`).filter(Boolean).join("\n\n---\n\n").slice(0, 16000)
             sampledFilename = mats[0].filename
           }
         }
@@ -589,7 +630,7 @@ export function registerPracticeHandlers(): void {
           ).all(subjectId) as { filename: string; content_text: string }[]
 
           if (mats.length > 0) {
-            materialsText = mats.map(m => m.content_text).filter(Boolean).join("\n\n---\n\n").slice(0, 12000)
+            materialsText = mats.map(m => `[DOCUMENT: ${m.filename}]\n${curateMaterialText(m.content_text, m.filename, 5000)}`).filter(Boolean).join("\n\n---\n\n").slice(0, 16000)
             sampledFilename = mats[0].filename
           }
         }
@@ -676,6 +717,33 @@ export function registerPracticeHandlers(): void {
         for (const p of parsed.problems) {
           if (!p || !p.problem_text) continue
           const quality = evaluatePracticeProblemQuality(p)
+          const hasMinimumStructure = Boolean(p.solution_steps?.trim() && p.final_answer?.trim() && Array.isArray(p.subgoals) && p.subgoals.length >= 2)
+          let criticApproved = false
+          let criticEvidence: Record<string, unknown> = { approved: false, issues: ['Critic unavailable.'] }
+          if (hasMinimumStructure) {
+            try {
+              const criticText = await callAIMessages(
+                [{ role: 'user', content: buildPracticeProblemCriticPrompt(p) }],
+                aiConfig,
+                { type: 'json_object' }
+              )
+              criticEvidence = JSON.parse(cleanMarkdownFences(criticText)) as Record<string, unknown>
+              criticApproved = criticEvidence.approved === true
+            } catch (criticError) {
+              criticEvidence = { approved: false, issues: [`Critic error: ${String(criticError)}`] }
+            }
+          }
+
+          const verification = verifyGeneratedPracticeProblem(p, criticApproved)
+          if (verification.status === 'rejected') {
+            console.warn('Rejected generated practice item:', {
+              title: p.title,
+              score: quality.quality_score,
+              issues: verification.issues,
+              checks: verification.checks
+            })
+            continue
+          }
 
           const res = insertStmt.run(
             subjectId,
@@ -683,14 +751,14 @@ export function registerPracticeHandlers(): void {
             topicId || null,
             materialId || null,
             p.title || `${topicTitle || moduleTitle || subject.name} Practice`,
-            p.problem_text,
-            p.solution_steps || null,
-            p.final_answer || null,
+            normalizeMathText(p.problem_text),
+            p.solution_steps ? normalizeMathText(p.solution_steps) : null,
+            p.final_answer ? normalizeMathText(p.final_answer) : null,
             p.difficulty || 3,
             JSON.stringify(p.principles || []),
             parentExemplarId,
-            p.stimulus || null,
-            p.stem_lead_in || null,
+            p.stimulus ? normalizeMathText(p.stimulus) : null,
+            p.stem_lead_in ? normalizeMathText(p.stem_lead_in) : null,
             p.options ? JSON.stringify(p.options) : null,
             p.correct_key || null,
             typeof p.cognitive_level === 'object' ? p.cognitive_level?.blooms_revised : (p.blooms_revised || 'Apply'),
@@ -699,7 +767,11 @@ export function registerPracticeHandlers(): void {
             p.subgoals ? JSON.stringify(p.subgoals) : null,
             p.item_validation ? JSON.stringify(p.item_validation) : null,
             p.quality_score ?? quality.quality_score,
-            p.cover_test_passed !== undefined ? (p.cover_test_passed ? 1 : 0) : (quality.cover_test_passed ? 1 : 0)
+            p.cover_test_passed !== undefined ? (p.cover_test_passed ? 1 : 0) : (quality.cover_test_passed ? 1 : 0),
+            verification.status,
+            JSON.stringify({ ...criticEvidence, deterministic: verification.checks, issues: verification.issues }),
+            JSON.stringify((p.subgoals || []).map((goal, index) => ({ step: index + 1, subgoal: goal }))),
+            sampledFilename || null
           )
 
           const row = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(res.lastInsertRowid) as PracticeProblem
@@ -727,7 +799,7 @@ export function registerPracticeHandlers(): void {
   ipcMain.handle("practice:createSession", (_event, config: PracticeSessionConfig) => {
     try {
       // 1. Find candidate problems
-      let query = "SELECT * FROM practice_problems WHERE subject_id = ?"
+      let query = "SELECT * FROM practice_problems WHERE subject_id = ? AND (verification_status IS NULL OR verification_status <> 'rejected')"
       const params: unknown[] = [config.subjectId]
 
       if (config.topicId) {
@@ -738,7 +810,16 @@ export function registerPracticeHandlers(): void {
         params.push(config.moduleId)
       }
 
-      query += " ORDER BY is_ai_generated ASC, RANDOM()"
+      if (config.difficulty) {
+        query += " AND difficulty = ?"
+        params.push(config.difficulty)
+      }
+
+      query += config.learningGoal === 'transfer'
+        ? " ORDER BY is_ai_generated DESC, RANDOM()"
+        : config.learningGoal === 'reinforce'
+          ? " ORDER BY difficulty ASC, RANDOM()"
+          : " ORDER BY is_ai_generated ASC, RANDOM()"
       const allProblems = db.prepare(query).all(...params) as PracticeProblem[]
 
       const selectedProblems = config.problemCount && config.problemCount < 999
@@ -764,6 +845,134 @@ export function registerPracticeHandlers(): void {
     } catch (err) {
       console.error("practice:createSession error:", err)
       throw err
+    }
+  })
+
+  // ── 9a. Create Guided Practice Session ─────────────────────────────────
+  ipcMain.handle("practice:createGuidedSession", (_event, config: GuidedPracticeSessionConfig) => {
+    try {
+      let query = "SELECT * FROM practice_problems WHERE subject_id = ? AND (verification_status IS NULL OR verification_status <> 'rejected')"
+      const params: unknown[] = [config.subjectId]
+      if (config.topicId) { query += " AND topic_id = ?"; params.push(config.topicId) }
+      else if (config.moduleId) { query += " AND module_id = ?"; params.push(config.moduleId) }
+      query += " AND (cover_test_passed IS NULL OR cover_test_passed = 1) ORDER BY is_ai_generated ASC, RANDOM()"
+      const allProblems = db.prepare(query).all(...params) as PracticeProblem[]
+      const selectedProblems = config.problemCount && config.problemCount < 999 ? allProblems.slice(0, config.problemCount) : allProblems
+      let subgoalCount = 1
+      try { subgoalCount = Math.max(1, JSON.parse(selectedProblems[0]?.subgoals_json || '[]').length) } catch { /* use one checkpoint */ }
+      const state = initialGuidedState(subgoalCount)
+      const result = db.prepare(`INSERT INTO practice_sessions (subject_id, user_id, module_id, topic_id, total_problems, mode, guided_phase, guided_state_json) VALUES (?, ?, ?, ?, ?, 'guided', ?, ?)`).run(config.subjectId, config.userId, config.moduleId || null, config.topicId || null, selectedProblems.length, state.phase, JSON.stringify(state))
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(result.lastInsertRowid) as PracticeSession
+      return { session, problems: selectedProblems }
+    } catch (err) {
+      console.error("practice:createGuidedSession error:", err)
+      throw err
+    }
+  })
+
+  // ── 9b. Submit a Guided Step ────────────────────────────────────────────
+  ipcMain.handle("practice:submitGuidedStep", async (_event, sessionId: number, problemId: number, phase: string, learnerResponse: string) => {
+    try {
+      const problem = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(problemId) as PracticeProblem | undefined
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+      if (!problem || !session) throw new Error("Guided practice session or problem not found.")
+      const state = JSON.parse(session.guided_state_json || JSON.stringify(initialGuidedState(1))) as GuidedSessionState
+      const aiConfig = resolveAIConfig()
+      if (!aiConfig.apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+      const responseText = await callAIMessages([{ role: "user", content: buildGuidedPracticeEvaluationPrompt(problem, phase, state.currentSubgoal, learnerResponse, state.hintLevel) }], aiConfig, { type: "json_object" })
+      let evaluation: GuidedEvaluation
+      try { evaluation = JSON.parse(cleanMarkdownFences(responseText)) as GuidedEvaluation } catch { evaluation = { status: 'unassessed', feedback: responseText, next_move: 'review', hint_level: 0, learner_prompt: 'Review the worked solution and write one principle you can reuse.' } }
+      const nextState = applyGuidedEvaluation(state, evaluation)
+      db.prepare(`INSERT INTO practice_guidance_events (session_id, problem_id, phase, subgoal_index, learner_response, hint_level, evaluation_json, assistance_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(sessionId, problemId, phase, state.currentSubgoal, learnerResponse, nextState.hintLevel, JSON.stringify(evaluation), nextState.assistanceLevel)
+      db.prepare("UPDATE practice_sessions SET guided_phase = ?, guided_state_json = ? WHERE id = ?").run(nextState.phase, JSON.stringify(nextState), sessionId)
+      return { success: true, evaluation, state: nextState }
+    } catch (err) {
+      console.error("practice:submitGuidedStep error:", err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // ── 9c. Request the next graduated hint ─────────────────────────────────
+  ipcMain.handle("practice:requestGuidedHint", async (_event, sessionId: number, problemId: number, learnerResponse?: string) => {
+    try {
+      const problem = db.prepare("SELECT * FROM practice_problems WHERE id = ?").get(problemId) as PracticeProblem | undefined
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+      if (!problem || !session) throw new Error("Guided practice session or problem not found.")
+      const state = JSON.parse(session.guided_state_json || JSON.stringify(initialGuidedState(1))) as GuidedSessionState
+      const level = nextHintLevel(state.hintLevel)
+      const aiConfig = resolveAIConfig()
+      if (!aiConfig.apiKey) throw new Error("AI API key not configured. Go to Settings to configure your AI provider.")
+      const responseText = await callAIMessages([{ role: "user", content: buildGuidedHintPrompt(problem, state.phase, level, learnerResponse) }], aiConfig, { type: "json_object" })
+      let parsed: { hint?: string; learner_prompt?: string }
+      try { parsed = JSON.parse(cleanMarkdownFences(responseText)) } catch { parsed = { hint: responseText } }
+      const nextState = { ...state, hintLevel: level, assistanceLevel: assistanceForHint(level) }
+      db.prepare(`INSERT INTO practice_guidance_events (session_id, problem_id, phase, subgoal_index, learner_response, hint_level, evaluation_json, assistance_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(sessionId, problemId, state.phase, state.currentSubgoal, learnerResponse || null, level, JSON.stringify(parsed), nextState.assistanceLevel)
+      db.prepare("UPDATE practice_sessions SET guided_state_json = ? WHERE id = ?").run(JSON.stringify(nextState), sessionId)
+      return { success: true, hint: parsed.hint || responseText, learnerPrompt: parsed.learner_prompt, hintLevel: level, assistanceLevel: nextState.assistanceLevel, state: nextState }
+    } catch (err) {
+      console.error("practice:requestGuidedHint error:", err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle("practice:recordGuidedExplanation", (_event, sessionId: number, problemId: number, explanation: string) => {
+    try {
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+      if (!session) throw new Error("Guided practice session not found.")
+      const state = JSON.parse(session.guided_state_json || JSON.stringify(initialGuidedState(1))) as GuidedSessionState
+      const nextState = markSelfExplanation(state)
+      db.prepare(`INSERT INTO practice_guidance_events (session_id, problem_id, phase, subgoal_index, learner_response, hint_level, evaluation_json, assistance_level) VALUES (?, ?, 'explain', ?, ?, ?, ?, ?)`).run(sessionId, problemId, state.currentSubgoal, explanation, state.hintLevel, JSON.stringify({ explanation }), state.assistanceLevel)
+      db.prepare("UPDATE practice_sessions SET guided_phase = ?, guided_state_json = ? WHERE id = ?").run(nextState.phase, JSON.stringify(nextState), sessionId)
+      return { success: true, state: nextState }
+    } catch (err) {
+      console.error("practice:recordGuidedExplanation error:", err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle("practice:beginGuidedProblem", (_event, sessionId: number, problemId: number) => {
+    try {
+      const problem = db.prepare("SELECT subgoals_json FROM practice_problems WHERE id = ?").get(problemId) as { subgoals_json?: string } | undefined
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+      if (!problem || !session) throw new Error("Guided practice session or problem not found.")
+      let subgoalCount = 1
+      try { subgoalCount = Math.max(1, JSON.parse(problem.subgoals_json || '[]').length) } catch { /* use one checkpoint */ }
+      const state = initialGuidedState(subgoalCount)
+      db.prepare("UPDATE practice_sessions SET guided_phase = ?, guided_state_json = ? WHERE id = ?").run(state.phase, JSON.stringify(state), sessionId)
+      return { success: true, state }
+    } catch (err) {
+      console.error("practice:beginGuidedProblem error:", err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle("practice:startGuidedTransfer", (_event, sessionId: number, problemId: number) => {
+    try {
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+      if (!session) throw new Error("Guided practice session not found.")
+      const state = JSON.parse(session.guided_state_json || JSON.stringify(initialGuidedState(1))) as GuidedSessionState
+      const nextState = markTransferStarted(state)
+      db.prepare(`INSERT INTO practice_guidance_events (session_id, problem_id, phase, subgoal_index, hint_level, evaluation_json, assistance_level) VALUES (?, ?, 'transfer', ?, ?, ?, ?)`).run(sessionId, problemId, state.currentSubgoal, state.hintLevel, JSON.stringify({ transfer: true }), state.assistanceLevel)
+      db.prepare("UPDATE practice_sessions SET guided_phase = ?, guided_state_json = ? WHERE id = ?").run(nextState.phase, JSON.stringify(nextState), sessionId)
+      return { success: true, state: nextState }
+    } catch (err) {
+      console.error("practice:startGuidedTransfer error:", err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle("practice:revealGuidedAnswer", (_event, sessionId: number, problemId: number) => {
+    try {
+      const session = db.prepare("SELECT * FROM practice_sessions WHERE id = ?").get(sessionId) as PracticeSession | undefined
+      if (!session) throw new Error("Guided practice session not found.")
+      const state = JSON.parse(session.guided_state_json || JSON.stringify(initialGuidedState(1))) as GuidedSessionState
+      const nextState = markAnswerRevealed(state)
+      db.prepare(`INSERT INTO practice_guidance_events (session_id, problem_id, phase, subgoal_index, hint_level, evaluation_json, assistance_level) VALUES (?, ?, 'review', ?, ?, ?, 'direct_answer')`).run(sessionId, problemId, state.currentSubgoal, 4, JSON.stringify({ answer_revealed: true }))
+      db.prepare("UPDATE practice_sessions SET guided_phase = ?, guided_state_json = ? WHERE id = ?").run(nextState.phase, JSON.stringify(nextState), sessionId)
+      return { success: true, state: nextState }
+    } catch (err) {
+      console.error("practice:revealGuidedAnswer error:", err)
+      return { success: false, error: String(err) }
     }
   })
 

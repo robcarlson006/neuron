@@ -20,6 +20,10 @@ import ToastContainer from './components/tutor/ToastContainer'
 import ClassCreationWizard from './pages/classes/ClassCreationWizard'
 import FocusBlockTimerBanner from './components/tutor/FocusBlockTimerBanner'
 import FocusBlockTimeUpModal from './components/tutor/FocusBlockTimeUpModal'
+import MaterialStudyPage from './pages/MaterialStudyPage'
+import LectureNotetakerPage from './pages/LectureNotetakerPage'
+import GroundedHelper from './pages/GroundedHelper'
+import HelpCenter from './pages/HelpCenter'
 
 const api = window.electronAPI
 
@@ -73,6 +77,12 @@ function ClassRedirect(): React.JSX.Element {
     }
   }, [theme])
 
+  useEffect(() => {
+    const startTour = (): void => setShowDemo(true)
+    window.addEventListener('neuron:start-tour', startTour)
+    return () => window.removeEventListener('neuron:start-tour', startTour)
+  }, [setShowDemo])
+
   // Listen for auto-update events from main process
   useEffect(() => {
     api.onUpdaterAvailable((info) => {
@@ -103,6 +113,20 @@ function ClassRedirect(): React.JSX.Element {
     api.onDownloadProgress((pct) => {
       setDownloadProgress(pct)
     })
+    api.onUpdateState((state) => {
+      if (state.status === 'idle') return
+      setUpdateVersion(state.version)
+      setUpdateDownloadUrl(state.downloadUrl)
+      setUpdateReleaseUrl(state.releaseUrl)
+      setDownloadProgress(state.progress)
+      setDownloadedPath(state.filePath)
+      setUpdateAvailable(true)
+      setDismissed(false)
+      setDownloading(state.status === 'downloading')
+      setUpdateReady(state.status === 'downloaded')
+      setUpdateFailed(state.status === 'error')
+      setErrorMessage(state.error)
+    })
     api.onUpdaterError((msg) => {
       setErrorMessage(msg)
       setUpdateFailed(true)
@@ -124,7 +148,7 @@ function ClassRedirect(): React.JSX.Element {
     setDownloadProgress(0)
     setUpdateFailed(false)
     try {
-      const res = await api.downloadUpdate(updateDownloadUrl, updateVersion)
+      const res = await api.downloadUpdate(updateDownloadUrl, updateVersion, updateReleaseUrl)
       if (res.success && res.filePath) {
         setDownloadedPath(res.filePath)
         setUpdateReady(true)
@@ -284,12 +308,16 @@ function ClassRedirect(): React.JSX.Element {
                   <Route path="/" element={<Dashboard onNewSubject={() => setShowClassWizard(true)} onNewClass={() => setShowClassWizard(true)} />} />
                   <Route path="/class/:id" element={<ClassRedirect />} />
                   <Route path="/subject/:id" element={<UnifiedSubjectDetail />} />
+                  <Route path="/subject/:subjectId/material/:materialId" element={<MaterialStudyPage />} />
+                  <Route path="/subject/:subjectId/lecture/:lectureId/notes" element={<LectureNotetakerPage />} />
                   <Route path="/study/:subjectId" element={<StudySession />} />
                   <Route path="/study" element={<StudySession />} />
                   <Route path="/calendar" element={<Calendar />} />
                   <Route path="/diagnostics/:subjectId" element={<Diagnostics />} />
                   <Route path="/analytics" element={<Analytics />} />
                   <Route path="/tutor" element={<TutorHub />} />
+                  <Route path="/helper" element={<GroundedHelper />} />
+                  <Route path="/help" element={<HelpCenter />} />
                   <Route path="/tutor/general" element={<GeneralChat />} />
                   <Route path="/tutor/general/session/:sessionId" element={<GeneralChat />} />
                   <Route path="/tutor/:classId" element={<TutorSession />} />

@@ -4,7 +4,7 @@ import { join } from 'path'
 import { spawn, exec, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
-import type { LocalModelInfo, DownloadProgress, LocalEngineStatus } from '../../src/types'
+import type { LocalModelInfo, DownloadProgress, LocalEngineStatus, LocalAIHealth } from '../../src/types'
 import { getHardwareProfile } from './localHardware'
 import { saveAIConfig } from './aiConfigStore'
 
@@ -208,7 +208,13 @@ export function downloadLocalModel(modelId: string): Promise<{ success: boolean;
     }
 
     const expectedSizeBytes = model.sizeBytes
-    emitProgress(0, expectedSizeBytes, 0, 'downloading')
+    let existingBytes = 0
+    try {
+      if (existsSync(destTempPath)) existingBytes = statSync(destTempPath).size
+    } catch {
+      existingBytes = 0
+    }
+    emitProgress(existingBytes, expectedSizeBytes, expectedSizeBytes > 0 ? Math.min(99, Math.round((existingBytes / expectedSizeBytes) * 100)) : 0, 'downloading')
 
     function fetchWithRedirects(u: string, redirectCount = 0): void {
       if (redirectCount > 10) {
@@ -221,7 +227,9 @@ export function downloadLocalModel(modelId: string): Promise<{ success: boolean;
       const isHttps = u.startsWith('https:')
       const lib = isHttps ? https : http
 
-      const req = lib.get(u, { headers: { 'User-Agent': 'Neuron-App' } }, (res) => {
+      const rangeHeaders: Record<string, string> = { 'User-Agent': 'Neuron-App' }
+      if (existingBytes > 0) rangeHeaders.Range = `bytes=${existingBytes}-`
+      const req = lib.get(u, { headers: rangeHeaders }, (res) => {
         if (activeDownload?.cancelled) return
 
         if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
@@ -231,7 +239,7 @@ export function downloadLocalModel(modelId: string): Promise<{ success: boolean;
           }
         }
 
-        if (res.statusCode !== 200) {
+        if (res.statusCode !== 200 && res.statusCode !== 206) {
           activeDownload = null
           const msg = `Download failed with HTTP ${res.statusCode}`
           emitProgress(0, 0, 0, 'error', msg)
@@ -239,10 +247,15 @@ export function downloadLocalModel(modelId: string): Promise<{ success: boolean;
           return
         }
 
-        const totalBytes = parseInt(res.headers['content-length'] || `${expectedSizeBytes}`, 10)
-        let bytesDownloaded = 0
+        // Some mirrors ignore Range and return the full body. In that case,
+        // restart the temporary file rather than appending duplicate bytes.
+        const resumed = res.statusCode === 206 && existingBytes > 0
+        if (!resumed) existingBytes = 0
+        const responseBytes = parseInt(res.headers['content-length'] || '0', 10)
+        const totalBytes = resumed ? existingBytes + responseBytes : (responseBytes || expectedSizeBytes)
+        let bytesDownloaded = existingBytes
 
-        const fileStream = createWriteStream(destTempPath)
+        const fileStream = createWriteStream(destTempPath, { flags: resumed ? 'a' : 'w' })
         if (activeDownload) {
           activeDownload.fileStream = fileStream
         }
@@ -260,6 +273,11 @@ export function downloadLocalModel(modelId: string): Promise<{ success: boolean;
           fileStream.end()
           fileStream.on('finish', () => {
             try {
+              const downloadedBytes = statSync(destTempPath).size
+              const minimumExpectedBytes = Math.floor(expectedSizeBytes * 0.9)
+              if (downloadedBytes < minimumExpectedBytes) {
+                throw new Error(`Model integrity check failed: received ${downloadedBytes} of approximately ${expectedSizeBytes} bytes`)
+              }
               if (existsSync(destFinalPath)) {
                 unlinkSync(destFinalPath)
               }
@@ -460,6 +478,50 @@ export function getEngineStatus(): LocalEngineStatus {
   return { ...engineStatus }
 }
 
+/**
+ * Verifies that the local OpenAI-compatible server is actually usable, rather
+ * than merely having a child process alive. This catches failed model loads,
+ * stale ports, and servers that started without accepting chat requests.
+ */
+export async function getLocalAiHealth(port = engineStatus.port, modelId = engineStatus.activeModelId): Promise<LocalAIHealth> {
+  if (!port) return { readiness: 'failed', healthy: false, modelId, error: 'Local AI engine is not running.' }
+  const startedAt = Date.now()
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  try {
+    const models = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: controller.signal })
+    if (!models.ok) throw new Error(`Local engine health check failed (${models.status}).`)
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ollama' },
+      body: JSON.stringify({
+        model: modelId || 'local-model',
+        messages: [{ role: 'user', content: 'Reply with exactly one JSON object: {"ok":true}' }],
+        temperature: 0,
+        max_tokens: 32,
+        response_format: { type: 'json_object' }
+      }),
+      signal: controller.signal
+    })
+    if (!response.ok) throw new Error(`Local model test failed (${response.status}).`)
+    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+    const content = payload.choices?.[0]?.message?.content || ''
+    if (!content.includes('ok')) throw new Error('Local model returned an unexpected health-check response.')
+    return { readiness: 'ready', healthy: true, port, modelId, latencyMs: Date.now() - startedAt }
+  } catch (error) {
+    return {
+      readiness: 'degraded',
+      healthy: false,
+      port,
+      modelId,
+      latencyMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export function stopEngine(): { success: boolean } {
   if (engineProcess) {
     try {
@@ -512,6 +574,7 @@ export async function startEngine(modelId: string, port = 8080): Promise<{ succe
           '-m', modelPath,
           '--port', String(port),
           '--host', '127.0.0.1',
+          '--alias', model.id,
           '-c', '2048'
         ],
         {
@@ -532,7 +595,7 @@ export async function startEngine(modelId: string, port = 8080): Promise<{ succe
             saveAIConfig({
               provider: 'openai-compatible',
               baseUrl: `http://127.0.0.1:${port}`,
-              model: model.name
+              model: model.id
             })
             resolve({ success: true, port })
           }
@@ -548,7 +611,7 @@ export async function startEngine(modelId: string, port = 8080): Promise<{ succe
             saveAIConfig({
               provider: 'openai-compatible',
               baseUrl: `http://127.0.0.1:${port}`,
-              model: model.name
+              model: model.id
             })
             resolve({ success: true, port })
           }
@@ -584,7 +647,7 @@ export async function startEngine(modelId: string, port = 8080): Promise<{ succe
             saveAIConfig({
               provider: 'openai-compatible',
               baseUrl: `http://127.0.0.1:${port}`,
-              model: model.name
+              model: model.id
             })
             resolve({ success: true, port })
           } else {
@@ -623,6 +686,10 @@ export function registerLocalEngineHandlers(): void {
 
   ipcMain.handle('local-ai:get-engine-status', () => {
     return getEngineStatus()
+  })
+
+  ipcMain.handle('local-ai:get-health', (_e, port?: number, modelId?: string) => {
+    return getLocalAiHealth(port, modelId)
   })
 
   ipcMain.handle('local-ai:start-engine', (_e, modelId: string, port?: number) => {

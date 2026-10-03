@@ -21,10 +21,10 @@ function getTempDirectory(): string {
  * Check if the user has a Vision AI key available (Gemini or OpenAI).
  * Respects the configured vision_provider from the Multi-Key Vault.
  */
-function getVisionConfig(): { provider: 'gemini' | 'openai'; apiKey: string; model: string } | null {
+function getVisionConfig(): { provider: 'gemini' | 'openai' | 'deepseek'; apiKey: string; model: string } | null {
   try {
-    const visionProvider = readMeta('vision_provider') || 'auto'
-    const configuredVisionModel = readMeta('vision_model') || 'gemini-2.0-flash'
+    const visionProvider = readMeta('vision_provider') || 'deepseek'
+    const configuredVisionModel = readMeta('vision_model') || 'deepseek-flash'
 
     // If user explicitly chose local OCR, disable Cloud Vision
     if (visionProvider === 'local') {
@@ -47,6 +47,13 @@ function getVisionConfig(): { provider: 'gemini' | 'openai'; apiKey: string; mod
       }
     }
 
+    if (visionProvider === 'deepseek') {
+      const deepseekKey = getStoredKey('deepseek')
+      if (deepseekKey) {
+        return { provider: 'deepseek', apiKey: deepseekKey, model: configuredVisionModel.startsWith('deepseek-') ? configuredVisionModel : 'deepseek-flash' }
+      }
+    }
+
     // 3. Auto / Fallback: Check Gemini vault key first
     const vaultGeminiKey = getStoredKey('gemini')
     if (vaultGeminiKey) {
@@ -57,6 +64,11 @@ function getVisionConfig(): { provider: 'gemini' | 'openai'; apiKey: string; mod
     const vaultOpenaiKey = getStoredKey('openai')
     if (vaultOpenaiKey) {
       return { provider: 'openai', apiKey: vaultOpenaiKey, model: 'gpt-4o-mini' }
+    }
+
+    const vaultDeepseekKey = getStoredKey('deepseek')
+    if (vaultDeepseekKey) {
+      return { provider: 'deepseek', apiKey: vaultDeepseekKey, model: 'deepseek-flash' }
     }
 
     // 5. Fallback to main AI config key
@@ -74,6 +86,9 @@ function getVisionConfig(): { provider: 'gemini' | 'openai'; apiKey: string; mod
       return { provider: 'openai', apiKey: mainKey, model: aiConfig.model || 'gpt-4o-mini' }
     }
     if (mainKey && (mainKey.startsWith('sk-proj-') || (mainKey.startsWith('sk-') && !mainKey.startsWith('sk-ant-')))) {
+      if (aiConfig.baseUrl?.includes('deepseek.com')) {
+        return { provider: 'deepseek', apiKey: mainKey, model: 'deepseek-flash' }
+      }
       if (!aiConfig.baseUrl?.includes('deepseek.com')) {
         return { provider: 'openai', apiKey: mainKey, model: 'gpt-4o-mini' }
       }
@@ -190,6 +205,36 @@ async function transcribeWithOpenAIVision(
   const data = await response.json()
   const text = data.choices?.[0]?.message?.content || ''
   return text.trim()
+}
+
+/** Transcribe a selected region using DeepSeek's image-capable Flash model. */
+async function transcribeWithDeepSeekVision(
+  imageBuffer: Buffer,
+  mimeType: string,
+  apiKey: string,
+  model: string = 'deepseek-flash'
+): Promise<string> {
+  const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`
+  const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'Read this selected document region. Transcribe all visible text exactly, including equations, labels, table cells, and numbers. Preserve useful line breaks. Use standard LaTeX for mathematical expressions. Output only the transcription; do not describe the image.' },
+        { type: 'image_url', image_url: { url: dataUrl } }
+      ] }],
+      temperature: 0.2,
+      max_tokens: 4096
+    })
+  })
+  if (!response.ok) {
+    const errText = await response.text()
+    throw new Error(`DeepSeek Vision API error (${response.status}): ${errText.substring(0, 300)}`)
+  }
+  const data = await response.json()
+  const text = data.choices?.[0]?.message?.content || ''
+  return typeof text === 'string' ? text.trim() : ''
 }
 
 /**
@@ -335,7 +380,7 @@ export async function extractTextFromImage(input: string | Buffer): Promise<stri
               throw geminiErr
             }
           }
-        } else {
+        } else if (visionConfig.provider === 'openai') {
           try {
             visionText = await transcribeWithOpenAIVision(buffer, mimeType, visionConfig.apiKey, visionConfig.model)
           } catch (openaiErr) {
@@ -346,6 +391,17 @@ export async function extractTextFromImage(input: string | Buffer): Promise<stri
             } else {
               throw openaiErr
             }
+          }
+        } else {
+          try {
+            visionText = await transcribeWithDeepSeekVision(buffer, mimeType, visionConfig.apiKey, visionConfig.model)
+          } catch (deepseekErr) {
+            console.warn('DeepSeek Vision failed, checking for secondary Gemini/OpenAI key:', deepseekErr)
+            const geminiKey = getStoredKey('gemini')
+            const openaiKey = getStoredKey('openai')
+            if (geminiKey) visionText = await transcribeWithGeminiVision(buffer, mimeType, geminiKey, 'gemini-2.0-flash')
+            else if (openaiKey) visionText = await transcribeWithOpenAIVision(buffer, mimeType, openaiKey, 'gpt-4o-mini')
+            else throw deepseekErr
           }
         }
         if (visionText && visionText.trim().length >= 10) {
@@ -501,7 +557,7 @@ function run(argv) {
  * High-level extractor for scanned or image-based PDFs (e.g. combined screenshots).
  * Extracts or renders each page image, runs OCR / Vision extraction, and stitches them together.
  */
-export async function ocrScannedPdf(pdfPath: string): Promise<string> {
+export async function ocrPdfPages(pdfPath: string, requestedPages?: Set<number>): Promise<Map<number, string>> {
   const pageImagePaths = await renderPdfPagesToImages(pdfPath)
 
   if (pageImagePaths.length === 0) {
@@ -526,14 +582,15 @@ export async function ocrScannedPdf(pdfPath: string): Promise<string> {
     throw new Error('This PDF appears to be an image-only scan, but page images could not be rendered for OCR.')
   }
 
-  const pageTexts: string[] = []
+  const pageTexts = new Map<number, string>()
 
   for (let i = 0; i < pageImagePaths.length; i++) {
     const pagePath = pageImagePaths[i]
     try {
+      if (requestedPages && !requestedPages.has(i + 1)) continue
       const text = await extractTextFromImage(pagePath)
       if (text.trim().length > 0) {
-        pageTexts.push(`--- Page ${i + 1} ---\n${text}`)
+        pageTexts.set(i + 1, cleanExtractedText(text))
       }
     } catch (pageErr) {
       console.warn(`Failed to OCR PDF page ${i + 1}:`, pageErr)
@@ -544,9 +601,15 @@ export async function ocrScannedPdf(pdfPath: string): Promise<string> {
     }
   }
 
-  if (pageTexts.length === 0) {
+  if (pageTexts.size === 0) {
     throw new Error('Could not recognize any text from the scanned PDF pages.')
   }
 
-  return cleanExtractedText(pageTexts.join('\n\n'))
+  return pageTexts
+}
+
+/** OCR every rendered PDF page and return the same page-indexed result used by selective OCR. */
+export async function ocrScannedPdf(pdfPath: string): Promise<string> {
+  const pages = await ocrPdfPages(pdfPath)
+  return cleanExtractedText(Array.from(pages.entries()).map(([page, text]) => `--- Page ${page} ---\n${text}`).join('\n\n'))
 }

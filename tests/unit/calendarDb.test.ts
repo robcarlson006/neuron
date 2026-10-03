@@ -24,6 +24,18 @@ describe('Calendar Database Schema', () => {
     const eventsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='calendar_events'").get()
     expect(sourceTable).toBeDefined()
     expect(eventsTable).toBeDefined()
+    const accountsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='google_calendar_accounts'").get()
+    expect(accountsTable).toBeDefined()
+  })
+
+  test('stores Google source metadata without storing OAuth tokens on the source', () => {
+    db.prepare("INSERT INTO users (id, name) VALUES (1, 'Test User')").run()
+    db.prepare("INSERT INTO google_calendar_accounts (id, user_id, encrypted_refresh_token) VALUES (7, 1, 'encrypted')").run()
+    db.prepare("INSERT INTO calendar_sources (user_id, name, type, google_account_id, google_calendar_id, provider_metadata_json) VALUES (1, 'Study', 'google_oauth', 7, 'primary', '{\"primary\":true}')").run()
+    const source = db.prepare('SELECT * FROM calendar_sources WHERE google_account_id = 7').get() as any
+    expect(source.google_calendar_id).toBe('primary')
+    expect(source.provider_metadata_json).toContain('primary')
+    expect(source).not.toHaveProperty('encrypted_refresh_token')
   })
 
   test('inserts and retrieves calendar source and event with cascade delete', () => {

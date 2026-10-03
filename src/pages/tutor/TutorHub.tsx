@@ -4,7 +4,7 @@ import { useAppStore } from '../../store/appStore'
 import SessionConfigModal from '../../components/tutor/SessionConfigModal'
 import PostLecturePromptModal from '../../components/tutor/PostLecturePromptModal'
 import { navigateToFocusBlockItem } from '../../lib/focusBlockNav'
-import type { DailyPlan, SyllabusModule, CalendarScheduleContext } from '../../types'
+import type { DailyPlan, SyllabusModule, CalendarScheduleContext, TutorSession } from '../../types'
 
 type HubState = 'loading' | 'loaded' | 'error'
 
@@ -32,6 +32,7 @@ export default function TutorHub(): React.JSX.Element {
   const [showAllMaintenance, setShowAllMaintenance] = useState<boolean>(false)
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<number | 'all'>('all')
   const [durationMenuTopicId, setDurationMenuTopicId] = useState<number | null>(null)
+  const [resumableSession, setResumableSession] = useState<TutorSession | null>(null)
 
   const activeSubjects = subjects.filter(s => s.status !== 'archived')
 
@@ -64,6 +65,14 @@ export default function TutorHub(): React.JSX.Element {
       // Load daily plans
       const plans = await window.electronAPI.planGetDailyPlan(user.id, today) as (DailyPlan & { subject_name: string })[]
       setDailyPlans(plans)
+
+      try {
+        const sessions = await window.electronAPI.tutorListSessions(undefined, 25)
+        const active = sessions.find((session) => session.session_type === 'tutor' && session.phase !== 'complete' && !session.ended_at)
+        setResumableSession(active || null)
+      } catch {
+        setResumableSession(null)
+      }
 
       // Detect Calendar Schedule Context (Pre/Post event triggers)
       try {
@@ -264,6 +273,23 @@ export default function TutorHub(): React.JSX.Element {
       </div>
 
       {/* Smart Schedule Context Banner */}
+      {resumableSession && (
+        <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-violet-200 bg-violet-50/80 p-4 shadow-sm dark:border-violet-800/60 dark:bg-violet-950/30 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-300">Session in progress</p>
+            <p className="mt-1 truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{resumableSession.title || 'Continue your tutor session'}</p>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Your messages, timer, and tutor settings are saved automatically.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/tutor/${resumableSession.subject_id}/session/${resumableSession.id}`)}
+            className="shrink-0 rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-violet-700"
+          >
+            Resume session →
+          </button>
+        </div>
+      )}
+
       {scheduleContext && !dismissContextBanner && (
         <div className="mb-6">
           {scheduleContext.type === 'pre_event' ? (
@@ -583,6 +609,11 @@ export default function TutorHub(): React.JSX.Element {
                               📖 Syllabus Progress
                             </span>
                           )}
+                          {plan.action_type === 'new_content' && (
+                            <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-700/40 flex items-center gap-1">
+                              ✨ New content
+                            </span>
+                          )}
                           {plan.priority === 1 && !isCompleted && (
                             <span className="text-[10px] font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded-full">
                               High Yield
@@ -599,6 +630,12 @@ export default function TutorHub(): React.JSX.Element {
                         {plan.learning_objective && (
                           <p className={`text-xs mt-1 leading-relaxed ${isCompleted ? 'text-violet-700/80 dark:text-violet-300/80' : 'text-slate-500 dark:text-slate-400'}`}>
                             🎯 <span className="italic">{plan.learning_objective}</span>
+                          </p>
+                        )}
+                        {plan.reason_code && (
+                          <p className="text-[10px] mt-1 text-slate-400 dark:text-slate-500">
+                            Why now: {plan.reason_code.replaceAll('_', ' ')}
+                            {plan.success_criteria ? ` · Success: ${plan.success_criteria}` : ''}
                           </p>
                         )}
 
@@ -733,7 +770,7 @@ export default function TutorHub(): React.JSX.Element {
               {displayedTopics.map(t => {
                 const subj = subjects.find(s => s.id === t.subjectId)
                 const pct = Math.round(t.retrievability * 100)
-                const isCrit = t.retentionStatus === 'overdue'
+                const isCrit = t.retentionStatus === 'overdue' || t.reviewStatus === 'due_now'
 
                 return (
                   <div
@@ -771,7 +808,9 @@ export default function TutorHub(): React.JSX.Element {
 
                     <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 min-w-0">
-                        <span className="truncate">{t.daysOverdue > 0 ? `${t.daysOverdue}d overdue` : `Review due`}</span>
+                        <span className="truncate">
+                          {t.daysOverdue > 0 ? `${t.daysOverdue}d overdue` : t.reviewStatus === 'upcoming' ? `Upcoming · ${t.nextReviewDue}` : t.nextReviewDue ? `Due ${t.nextReviewDue}` : 'Review due'}
+                        </span>
                         <span>·</span>
                         <span className="font-semibold text-amber-700 dark:text-amber-400 whitespace-nowrap" title="Estimated ideal drill duration">
                           ⏱️ ~{t.estimatedMinutes || 15}m suggested

@@ -5,7 +5,7 @@ import { hasMathInput } from '../../lib/mathFormatter'
 import { Sigma, Calculator as CalcIcon } from '../icons'
 
 interface ChatInputProps {
-  onSend: (message: string) => void
+  onSend: (message: string) => void | Promise<void>
   onAttachFile?: () => void
   onSelectFromLibrary?: () => void
   onToggleCalculator?: () => void
@@ -14,6 +14,8 @@ interface ChatInputProps {
   attachedFile?: string | null
   onClearAttachment?: () => void
   refocusKey?: number
+  value?: string
+  onChange?: (value: string) => void
 }
 
 export default function ChatInput({
@@ -25,9 +27,17 @@ export default function ChatInput({
   placeholder,
   attachedFile,
   onClearAttachment,
-  refocusKey
+  refocusKey,
+  value: controlledValue,
+  onChange: onControlledChange
 }: ChatInputProps): React.JSX.Element {
-  const [input, setInput] = useState('')
+  const [uncontrolledInput, setUncontrolledInput] = useState('')
+  const isControlled = controlledValue !== undefined
+  const input = controlledValue ?? uncontrolledInput
+  const setInput = (next: string): void => {
+    if (!isControlled) setUncontrolledInput(next)
+    onControlledChange?.(next)
+  }
   const [showMathPalette, setShowMathPalette] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -52,7 +62,7 @@ export default function ChatInput({
 
   const handleInsertSnippet = (snippet: string) => {
     if (!textareaRef.current) {
-      setInput((prev) => prev + snippet)
+      setInput(input + snippet)
       return
     }
 
@@ -70,20 +80,24 @@ export default function ChatInput({
     }, 0)
   }
 
-  function handleSubmit(): void {
+  async function handleSubmit(): Promise<void> {
     const trimmed = input.trim()
     if (!trimmed || disabled) return
-    onSend(trimmed)
-    setInput('')
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
+    try {
+      await onSend(trimmed)
+      setInput('')
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+      }
+    } catch {
+      // Keep the draft visible when persistence or streaming fails.
     }
   }
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSubmit()
+      void handleSubmit()
     }
   }, [input, disabled])
 

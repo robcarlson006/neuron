@@ -75,4 +75,25 @@ describe('Unified Hybrid Adaptive Study Session', () => {
     expect(screen.getByText(/adaptive: flashcard/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /switch to active recall/i })).toBeInTheDocument()
   })
+
+  it('scopes a concept-linked study route to matching cards', async () => {
+    const scopedCards = [
+      { ...mockCards[0], concept: 'Photosynthesis' },
+      { ...mockCards[0], id: 2, front: 'What is respiration?', concept: 'Respiration' }
+    ]
+    window.electronAPI.getDueCards = jest.fn().mockResolvedValue(scopedCards)
+    window.electronAPI.getInterleavedDueCards = jest.fn().mockResolvedValue(scopedCards)
+    window.electronAPI.getAllCardsWithSchedule = jest.fn().mockResolvedValue(scopedCards)
+
+    render(
+      <MemoryRouter initialEntries={['/study/1?concept=Photosynthesis']}>
+        <Routes>
+          <Route path="/study/:subjectId" element={<StudySession />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByText('What is photosynthesis?')).toBeInTheDocument()
+    expect(screen.queryByText('What is respiration?')).not.toBeInTheDocument()
+  })
 })

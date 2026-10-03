@@ -23,6 +23,8 @@ export interface FSRSNext extends FSRSMemory {
   dueDate: string       // YYYY-MM-DD
 }
 
+export type ReviewDecisionReason = 'due_now' | 'retention_fading' | 'recent_lapse' | 'exam_boost' | 'scheduled'
+
 // FSRS-5 default weights (published defaults, optimised over large review corpora)
 export const FSRS5_DEFAULT_WEIGHTS: readonly number[] = [
   0.40255, 1.18385, 3.173, 15.69105,
@@ -226,6 +228,23 @@ export function boostForExam(interval: number, daysUntilExam: number): number {
     return Math.min(interval, Math.max(1, Math.floor(daysUntilExam / 2)))
   }
   return interval
+}
+
+/** Explain the dominant reason a review was scheduled, for learner-facing UI. */
+export function explainReviewDecision(input: {
+  dueDate?: string
+  retrievability?: number
+  rating?: FSRSRating
+  lapses?: number
+  examBoosted?: boolean
+}): ReviewDecisionReason {
+  if (input.examBoosted) return 'exam_boost'
+  if (input.rating === 1 || (input.lapses ?? 0) > 0 && input.rating === 2) return 'recent_lapse'
+  if ((input.dueDate && input.dueDate <= new Date().toISOString().split('T')[0]) || (input.retrievability != null && input.retrievability < 0.8)) {
+    return 'due_now'
+  }
+  if (input.retrievability != null && input.retrievability < 0.9) return 'retention_fading'
+  return 'scheduled'
 }
 
 /**

@@ -1,547 +1,87 @@
-import React, { useState, useEffect } from "react"
-import {
-  Sparkles,
-  Upload,
-  Play,
-  CheckCircle2,
-  Layers,
-  BookOpen,
-  ChevronRight,
-  ChevronDown,
-  Trash2,
-  Star,
-  Plus,
-  Search
-} from "../components/icons"
-import LatexText from "../components/LatexText"
-import PracticeUploadModal from "../components/practice/PracticeUploadModal"
-import PracticeSessionLauncher from "../components/practice/PracticeSessionLauncher"
-import AutoGeneratePracticeModal from "../components/practice/AutoGeneratePracticeModal"
-import type { Subject, SyllabusModule, ModuleTopic, PracticeProblem, User } from "../types"
+import React, { useEffect, useMemo, useState } from 'react'
+import { Activity, ArrowRight, BookOpen, CheckCircle2, Filter, Layers, Play, Search, ShieldCheck, Sparkles, Star, Trash2, Upload } from '../components/icons'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import PracticeUploadModal from '../components/practice/PracticeUploadModal'
+import PracticeSessionLauncher from '../components/practice/PracticeSessionLauncher'
+import AutoGeneratePracticeModal from '../components/practice/AutoGeneratePracticeModal'
+import type { Subject, SyllabusModule, ModuleTopic, PracticeProblem, User } from '../types'
 
-interface PracticeHubProps {
-  subject: Subject
-  user: User | null
-  onStartSession: (moduleId?: number, topicId?: number, count?: number) => void
-}
+type PracticeView = 'practice' | 'build' | 'library'
+interface PracticeHubProps { subject: Subject; user: User | null; onStartSession: (moduleId?: number, topicId?: number, count?: number, mode?: 'standard' | 'guided', options?: { difficulty?: number; learningGoal?: 'recommended' | 'reinforce' | 'review' | 'transfer' }) => void }
+const viewLabels: Record<PracticeView, string> = { practice: 'Practice', build: 'Build session', library: 'Problem library' }
 
-export default function PracticeHub({
-  subject,
-  user,
-  onStartSession
-}: PracticeHubProps): React.JSX.Element {
+function principlesOf(problem: PracticeProblem): string[] { try { return JSON.parse(problem.principles_json || '[]') as string[] } catch { return [] } }
+
+export default function PracticeHub({ subject, user, onStartSession }: PracticeHubProps): React.JSX.Element {
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
   const [problems, setProblems] = useState<PracticeProblem[]>([])
-  const [stats, setStats] = useState<{
-    totalProblems: number
-    totalSessions: number
-    totalCompleted: number
-    totalCorrect: number
-    accuracy: number
-  }>({ totalProblems: 0, totalSessions: 0, totalCompleted: 0, totalCorrect: 0, accuracy: 0 })
+  const [stats, setStats] = useState({ totalCompleted: 0, accuracy: 0 })
+  const [view, setView] = useState<PracticeView>(() => { const saved = window.localStorage.getItem(`neuron.practice.view.${subject.id}`); return saved === 'build' || saved === 'library' ? saved : 'practice' })
+  const [query, setQuery] = useState('')
+  const [moduleFilter, setModuleFilter] = useState<number | undefined>()
+  const [topicFilter, setTopicFilter] = useState<number | undefined>()
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [difficultyFilter, setDifficultyFilter] = useState('all')
+  const [selected, setSelected] = useState<PracticeProblem | null>(null)
+  const [showUpload, setShowUpload] = useState(false)
+  const [showGenerate, setShowGenerate] = useState(false)
+  const [generateTarget, setGenerateTarget] = useState<{ moduleId?: number; topicId?: number } | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const [searchQuery, setSearchQuery] = useState<string>("")
-  const [selectedTopicFilter, setSelectedTopicFilter] = useState<number | undefined>()
-  const [expandedModules, setExpandedModules] = useState<Record<number, boolean>>({})
-  const [showUploadModal, setShowUploadModal] = useState<boolean>(false)
-  const [showLauncherModal, setShowLauncherModal] = useState<boolean>(false)
-  const [showAutoGenModal, setShowAutoGenModal] = useState<boolean>(false)
-  const [autoGenTarget, setAutoGenTarget] = useState<{ moduleId?: number; topicId?: number } | null>(null)
-  const [previewProblem, setPreviewProblem] = useState<PracticeProblem | null>(null)
-  const [loading, setLoading] = useState<boolean>(true)
-
-  const loadData = async () => {
+  const loadData = async (): Promise<void> => {
     setLoading(true)
     try {
-      // 1. Load syllabus modules & topics
+      const loadedModules: (SyllabusModule & { topics?: ModuleTopic[] })[] = []
       if (window.electronAPI.syllabusListModules) {
-        const mods = await window.electronAPI.syllabusListModules(subject.id)
-        const modsWithTopics: (SyllabusModule & { topics?: ModuleTopic[] })[] = []
-        for (const m of mods) {
-          const tops = window.electronAPI.syllabusListTopics
-            ? await window.electronAPI.syllabusListTopics(m.id, user?.id)
-            : []
-          modsWithTopics.push({ ...m, topics: tops })
-        }
-        setModules(modsWithTopics)
-
-        // Expand first module by default
-        if (modsWithTopics.length > 0) {
-          setExpandedModules((prev) => ({ ...prev, [modsWithTopics[0].id]: true }))
-        }
+        const rows = await window.electronAPI.syllabusListModules(subject.id)
+        for (const module of rows) loadedModules.push({ ...module, topics: window.electronAPI.syllabusListTopics ? await window.electronAPI.syllabusListTopics(module.id, user?.id) : [] })
       }
-
-      // 2. Load practice problems
-      if (window.electronAPI.practiceListProblems) {
-        const probList = await window.electronAPI.practiceListProblems(subject.id)
-        setProblems(probList)
-      }
-
-      // 3. Load stats
-      if (window.electronAPI.practiceGetStats && user?.id) {
-        const s = await window.electronAPI.practiceGetStats(subject.id, user.id)
-        setStats(s)
-      }
-    } catch (err) {
-      console.error("Failed to load practice hub data:", err)
-    } finally {
-      setLoading(false)
-    }
+      setModules(loadedModules)
+      if (window.electronAPI.practiceListProblems) setProblems(await window.electronAPI.practiceListProblems(subject.id))
+      if (window.electronAPI.practiceGetStats && user?.id) { const next = await window.electronAPI.practiceGetStats(subject.id, user.id); setStats({ totalCompleted: next.totalCompleted, accuracy: next.accuracy }) }
+    } catch (error) { console.error('Failed to load practice lab:', error) } finally { setLoading(false) }
   }
 
-  useEffect(() => {
-    loadData()
-  }, [subject.id, user?.id])
+  useEffect(() => { void loadData() }, [subject.id, user?.id])
+  useEffect(() => { window.localStorage.setItem(`neuron.practice.view.${subject.id}`, view) }, [subject.id, view])
 
-  const toggleModule = (modId: number) => {
-    setExpandedModules((prev) => ({ ...prev, [modId]: !prev[modId] }))
-  }
-
-  const handleDeleteProblem = async (problemId: number, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!window.confirm("Are you sure you want to delete this practice problem?")) return
-    try {
-      if (window.electronAPI.practiceDeleteProblem) {
-        await window.electronAPI.practiceDeleteProblem(problemId)
-        setProblems((prev) => prev.filter((p) => p.id !== problemId))
-        if (previewProblem?.id === problemId) setPreviewProblem(null)
-      }
-    } catch (err) {
-      console.error("Error deleting problem:", err)
-    }
-  }
-
-  const filteredProblems = problems.filter((p) => {
-    if (selectedTopicFilter && p.topic_id !== selectedTopicFilter) return false
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      const titleMatch = p.title.toLowerCase().includes(q)
-      const textMatch = p.problem_text.toLowerCase().includes(q)
-      const principlesMatch = (p.principles_json || "").toLowerCase().includes(q)
-      return titleMatch || textMatch || principlesMatch
-    }
+  const activeModule = modules.find(module => module.id === moduleFilter)
+  const filteredProblems = useMemo(() => problems.filter(problem => {
+    if (moduleFilter && problem.module_id !== moduleFilter) return false
+    if (topicFilter && problem.topic_id !== topicFilter) return false
+    if (statusFilter !== 'all' && (problem.verification_status || 'legacy_unverified') !== statusFilter) return false
+    if (difficultyFilter !== 'all' && problem.difficulty !== Number(difficultyFilter)) return false
+    if (query.trim() && !`${problem.title} ${problem.problem_text} ${problem.principles_json} ${problem.source_ref || ''}`.toLowerCase().includes(query.trim().toLowerCase())) return false
     return true
-  })
+  }), [problems, moduleFilter, topicFilter, statusFilter, difficultyFilter, query])
 
-  return (
-    <div className="space-y-6 animate-in fade-in duration-150">
-      {/* Top Banner & Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* Stat 1: Total Problems */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Problems Available</p>
-            <p className="text-2xl font-black text-slate-900 dark:text-slate-100 font-mono mt-0.5">{problems.length}</p>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-violet-100 dark:bg-violet-950/50 text-violet-600 dark:text-violet-400 flex items-center justify-center">
-            <Layers size={18} />
-          </div>
-        </div>
+  const openGenerator = (moduleId?: number, topicId?: number) => { setGenerateTarget({ moduleId, topicId }); setShowGenerate(true) }
+  const deleteProblem = async (problemId: number): Promise<void> => { if (!window.confirm('Delete this practice problem?')) return; await window.electronAPI.practiceDeleteProblem?.(problemId); setProblems(current => current.filter(problem => problem.id !== problemId)); if (selected?.id === problemId) setSelected(null) }
 
-        {/* Stat 2: Problems Solved */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Solved</p>
-            <p className="text-2xl font-black text-slate-900 dark:text-slate-100 font-mono mt-0.5">{stats.totalCompleted}</p>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-            <CheckCircle2 size={18} />
-          </div>
-        </div>
+  if (loading) return <div className="py-20 text-center text-sm text-slate-500">Loading Practice Lab…</div>
 
-        {/* Stat 3: Accuracy */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Practice Accuracy</p>
-            <p className="text-2xl font-black text-slate-900 dark:text-slate-100 font-mono mt-0.5">
-              {stats.accuracy}%
-            </p>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-            <Sparkles size={18} />
-          </div>
-        </div>
+  return <div className="max-w-7xl mx-auto space-y-6 pb-12">
+    <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+      <div><p className="text-sm font-semibold text-violet-600 dark:text-violet-300">Practice Lab</p><h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">Build confidence by solving.</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">A calmer place to practice, get help one step at a time, and return to the ideas that need more work.</p></div>
+      <div className="flex items-center gap-5 text-sm text-slate-500 dark:text-slate-400"><span className="inline-flex items-center gap-1.5"><Layers size={15} /> {problems.length} problems</span><span className="inline-flex items-center gap-1.5"><CheckCircle2 size={15} /> {stats.totalCompleted} solved</span><span className="inline-flex items-center gap-1.5"><Activity size={15} /> {stats.accuracy}% accuracy</span></div>
+    </header>
 
-        {/* Stat 4: Quick Launch Button */}
-        <div className="p-4 rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-md flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-violet-200">Practice Lab</span>
-            <Sparkles size={16} className="text-violet-300" />
-          </div>
-          <div className="flex items-center gap-2 mt-2">
-            <button
-              onClick={() => setShowLauncherModal(true)}
-              disabled={problems.length === 0}
-              className="flex-1 py-2 px-3 rounded-xl bg-white text-violet-900 hover:bg-violet-50 font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-95 disabled:opacity-50"
-            >
-              <Play size={13} className="fill-current" />
-              <span>Start Drill</span>
-            </button>
-            <button
-              onClick={() => {
-                setAutoGenTarget(null)
-                setShowAutoGenModal(true)
-              }}
-              className="p-2 rounded-xl bg-violet-800/80 hover:bg-violet-800 text-white transition-colors"
-              title="Auto-Generate Practice Problems"
-            >
-              <Sparkles size={14} />
-            </button>
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="p-2 rounded-xl bg-violet-800/80 hover:bg-violet-800 text-white transition-colors"
-              title="Upload Problem Set"
-            >
-              <Upload size={14} />
-            </button>
-          </div>
-        </div>
-      </div>
+    <nav className="flex gap-1 border-b border-slate-200 dark:border-slate-800" role="tablist" aria-label="Practice Lab sections">{(Object.keys(viewLabels) as PracticeView[]).map(key => <button key={key} role="tab" aria-selected={view === key} onClick={() => setView(key)} className={`relative px-4 py-3 text-sm font-semibold transition-colors ${view === key ? 'text-violet-700 dark:text-violet-300' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}>{viewLabels[key]}{view === key && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-violet-600" />}</button>)}</nav>
 
-      {/* Main Content: Split Curriculum Hierarchy & Problem List */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Curriculum Modules & Topics */}
-        <div className="lg:col-span-1 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <BookOpen size={14} className="text-violet-500" />
-              <span>Curriculum Topics</span>
-            </h3>
-            <button
-              onClick={() => setSelectedTopicFilter(undefined)}
-              className={`text-[11px] font-semibold px-2 py-0.5 rounded-md transition-colors ${
-                selectedTopicFilter === undefined
-                  ? "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300"
-                  : "text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              View All ({problems.length})
-            </button>
-          </div>
+    {view === 'practice' && <section className="grid gap-5 lg:grid-cols-[1.3fr_0.7fr]">
+      <div className="rounded-3xl bg-slate-950 p-8 text-white shadow-lg dark:bg-slate-900 lg:p-10"><div className="max-w-2xl"><span className="inline-flex items-center gap-2 rounded-full bg-violet-400/15 px-3 py-1 text-xs font-semibold text-violet-200"><Sparkles size={13} /> Recommended practice</span><h2 className="mt-5 text-3xl font-semibold tracking-tight">Start with the ideas most likely to fade next.</h2><p className="mt-4 text-sm leading-6 text-slate-300">Neuron will mix weaker concepts with spaced maintenance items. You can ask for a hint whenever you need one without leaving the problem.</p><div className="mt-7 flex flex-wrap gap-3"><button onClick={() => onStartSession(undefined, undefined, 5, 'standard')} disabled={problems.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-violet-50 disabled:opacity-50"><Play size={15} className="fill-current" /> Start recommended</button><button onClick={() => setView('build')} className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10"><BookOpen size={15} /> Build a session</button></div>{problems.length === 0 && <p className="mt-4 text-xs text-violet-200">Add or generate a problem set to begin.</p>}</div></div>
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold text-slate-900 dark:text-white">Need a fresh set?</p><p className="mt-1 text-xs leading-5 text-slate-500">Generate from your course materials and learning gaps.</p></div><Sparkles size={20} className="text-violet-500" /></div><div className="mt-6 grid gap-2"><button onClick={() => openGenerator()} className="flex items-center justify-between rounded-xl bg-violet-50 px-4 py-3 text-left text-sm font-semibold text-violet-800 transition hover:bg-violet-100 dark:bg-violet-950/40 dark:text-violet-200"><span>Generate verified practice</span><ArrowRight size={15} /></button><button onClick={() => setShowUpload(true)} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200"><span>Upload a problem set</span><Upload size={15} /></button></div></div>
+    </section>}
 
-          <div className="space-y-2.5">
-            {modules.map((m) => {
-              const isExpanded = !!expandedModules[m.id]
-              const modProblems = problems.filter((p) => p.module_id === m.id)
+    {view === 'build' && <section className="space-y-4"><div><h2 className="text-xl font-semibold text-slate-950 dark:text-white">Build a practice session</h2><p className="mt-1 text-sm text-slate-500">Choose the scope and pace. Help is always available once you start.</p></div><PracticeSessionLauncher embedded subjectId={subject.id} userId={user?.id || 1} modules={modules} problems={problems} onClose={() => undefined} onStartSession={(moduleId, topicId, count, options) => onStartSession(moduleId, topicId, count, 'standard', options)} onOpenAutoGen={openGenerator} /></section>}
 
-              return (
-                <div
-                  key={m.id}
-                  className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs"
-                >
-                  <div
-                    onClick={() => toggleModule(m.id)}
-                    className="p-3.5 flex items-center justify-between cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">
-                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      </span>
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{m.title}</span>
-                    </div>
+    {view === 'library' && <section className="space-y-5">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center"><div className="relative flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search problems, principles, or source material" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 dark:border-slate-700 dark:bg-slate-800" /></div><div className="flex flex-wrap items-center gap-2"><Filter size={14} className="text-slate-400" /><select value={moduleFilter || ''} onChange={event => { setModuleFilter(event.target.value ? Number(event.target.value) : undefined); setTopicFilter(undefined) }} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"><option value="">All modules</option>{modules.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}</select><select value={topicFilter || ''} onChange={event => setTopicFilter(event.target.value ? Number(event.target.value) : undefined)} disabled={!activeModule} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800"><option value="">All topics</option>{activeModule?.topics?.map(topic => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"><option value="all">All statuses</option><option value="verified">Verified</option><option value="needs_review">Needs review</option><option value="legacy_unverified">Legacy</option></select><select value={difficultyFilter} onChange={event => setDifficultyFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"><option value="all">Any difficulty</option>{[1, 2, 3, 4, 5].map(level => <option key={level} value={level}>Difficulty {level}</option>)}</select></div></div>
+      <div className="flex items-center justify-between"><div><h2 className="text-xl font-semibold text-slate-950 dark:text-white">Problem library</h2><p className="mt-1 text-sm text-slate-500">{filteredProblems.length} of {problems.length} problems</p></div><div className="flex gap-2"><button onClick={() => setShowUpload(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200"><Upload size={13} /> Upload</button><button onClick={() => openGenerator(moduleFilter, topicFilter)} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700"><Sparkles size={13} /> Generate</button></div></div>
+      {filteredProblems.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 p-12 text-center dark:border-slate-700"><Layers size={28} className="mx-auto text-slate-300" /><h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-white">No problems match these filters</h3><p className="mt-1 text-xs text-slate-500">Try a broader search or generate a new set for this topic.</p></div> : <div className="grid gap-3">{filteredProblems.map(problem => { const isSelected = selected?.id === problem.id; const principles = principlesOf(problem); const status = problem.verification_status || 'legacy_unverified'; return <article key={problem.id} className={`rounded-2xl border bg-white transition dark:bg-slate-900 ${isSelected ? 'border-violet-500 shadow-md' : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'}`}><button onClick={() => setSelected(isSelected ? null : problem)} className="w-full p-5 text-left"><div className="flex items-start justify-between gap-4"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold text-slate-950 dark:text-white">{problem.title}</h3><span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${status === 'verified' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : status === 'needs_review' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'}`}>{status === 'verified' && <ShieldCheck size={10} />}{status.replace('_', ' ')}</span></div><p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{problem.problem_text}</p><div className="mt-3 flex flex-wrap items-center gap-2">{principles.slice(0, 4).map(principle => <span key={principle} className="rounded-md bg-slate-100 px-2 py-1 text-[10px] text-slate-500 dark:bg-slate-800">{principle}</span>)}{problem.source_ref && <span className="text-[10px] text-slate-400">From {problem.source_ref}</span>}</div></div><div className="flex shrink-0 items-center gap-1">{[1, 2, 3, 4, 5].map(level => <Star key={level} size={11} className={level <= problem.difficulty ? 'fill-amber-400 text-amber-400' : 'text-slate-300 dark:text-slate-700'} />)}</div></div></button>{isSelected && <div className="border-t border-slate-100 px-5 pb-5 pt-4 dark:border-slate-800"><div className="rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300"><MarkdownRenderer content={problem.stimulus || problem.problem_text} /></div><div className="mt-4 flex flex-wrap gap-2"><button onClick={() => onStartSession(problem.module_id || undefined, problem.topic_id || undefined, 1, 'standard')} className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white"><Play size={13} className="fill-current" /> Solve this</button><button onClick={() => openGenerator(problem.module_id || undefined, problem.topic_id || undefined)} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 px-3 py-2 text-xs font-bold text-violet-700 dark:border-violet-800 dark:text-violet-300"><Sparkles size={13} /> Make a variant</button><button onClick={() => void deleteProblem(problem.id)} className="inline-flex items-center gap-2 rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 dark:border-rose-900 dark:text-rose-300"><Trash2 size={13} /> Delete</button></div>{problem.solution_steps && <details className="mt-4"><summary className="cursor-pointer text-xs font-semibold text-slate-500">Preview solution structure</summary><div className="mt-2 text-sm text-slate-600 dark:text-slate-400"><MarkdownRenderer content={problem.solution_steps} /></div></details>}</div>}</article> })}</div>}
+    </section>}
 
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 font-mono text-slate-600 dark:text-slate-400">
-                        {modProblems.length}
-                      </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setAutoGenTarget({ moduleId: m.id })
-                          setShowAutoGenModal(true)
-                        }}
-                        title="Auto-generate practice for this module"
-                        className="p-1 rounded-md text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/50"
-                      >
-                        <Sparkles size={11} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onStartSession(m.id, undefined, 5)
-                        }}
-                        title="Practice this entire module"
-                        className="p-1 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
-                      >
-                        <Play size={12} className="fill-current" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {isExpanded && m.topics && m.topics.length > 0 && (
-                    <div className="px-3 pb-3 pt-1 border-t border-slate-100 dark:border-slate-800/60 space-y-1">
-                      {m.topics.map((t) => {
-                        const topProblems = problems.filter((p) => p.topic_id === t.id)
-                        const isSelected = selectedTopicFilter === t.id
-
-                        return (
-                          <div
-                            key={t.id}
-                            onClick={() => setSelectedTopicFilter(isSelected ? undefined : t.id)}
-                            className={`flex items-center justify-between p-2 rounded-lg text-xs cursor-pointer transition-all ${
-                              isSelected
-                                ? "bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 font-semibold"
-                                : "hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300"
-                            }`}
-                          >
-                            <span className="truncate pr-2">{t.title}</span>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <span className="text-[10px] font-mono opacity-60">({topProblems.length})</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setAutoGenTarget({ moduleId: m.id, topicId: t.id })
-                                  setShowAutoGenModal(true)
-                                }}
-                                title="Auto-generate practice for this topic"
-                                className="p-1 rounded text-violet-600 hover:bg-violet-100 dark:hover:bg-violet-900/60"
-                              >
-                                <Sparkles size={10} />
-                              </button>
-                              {topProblems.length > 0 && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onStartSession(m.id, t.id, 5)
-                                  }}
-                                  title="Drill this topic"
-                                  className="p-1 rounded text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900"
-                                >
-                                  <Play size={10} className="fill-current" />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Right Columns: Problems List & Preview Drawer */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* Action & Filter Bar */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search practice problems or formulas..."
-                className="w-full text-xs pl-9 pr-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
-              />
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => {
-                  setAutoGenTarget(selectedTopicFilter ? { topicId: selectedTopicFilter } : null)
-                  setShowAutoGenModal(true)
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-50 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/60 font-bold text-xs shadow-xs transition-colors"
-                title="Generate practice problems with AI"
-              >
-                <Sparkles size={13} className="text-violet-600 dark:text-violet-400" />
-                <span>Generate with AI</span>
-              </button>
-
-              <button
-                onClick={() => setShowUploadModal(true)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs shadow-xs transition-colors"
-              >
-                <Plus size={14} />
-                <span>Drop Problem Set</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Problems List */}
-          {loading ? (
-            <div className="p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center">
-              <div className="w-6 h-6 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : filteredProblems.length === 0 ? (
-            <div className="p-12 text-center rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-violet-100 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center mx-auto">
-                <Sparkles size={20} />
-              </div>
-              <div>
-                <h4 className="font-bold text-sm text-slate-900 dark:text-slate-100">No practice problems found</h4>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-                  Autonomously generate tailored problems from your curriculum, or drop in lecture problem sets and homework exercises!
-                </p>
-              </div>
-              <div className="flex items-center justify-center gap-2.5 pt-1">
-                <button
-                  onClick={() => {
-                    setAutoGenTarget(selectedTopicFilter ? { topicId: selectedTopicFilter } : null)
-                    setShowAutoGenModal(true)
-                  }}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700 shadow-xs"
-                >
-                  <Sparkles size={13} />
-                  <span>Generate with AI</span>
-                </button>
-                <button
-                  onClick={() => setShowUploadModal(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700"
-                >
-                  <Upload size={13} />
-                  <span>Upload Problem Set</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {filteredProblems.map((prob) => {
-                const isSelected = previewProblem?.id === prob.id
-                const principles: string[] = (() => {
-                  try {
-                    return JSON.parse(prob.principles_json || "[]")
-                  } catch {
-                    return []
-                  }
-                })()
-
-                return (
-                  <div
-                    key={prob.id}
-                    onClick={() => setPreviewProblem(isSelected ? null : prob)}
-                    className={`p-4 rounded-xl border transition-all cursor-pointer ${
-                      isSelected
-                        ? "border-violet-500 bg-violet-50/40 dark:bg-violet-950/20 shadow-sm"
-                        : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1.5 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                            #{prob.id}
-                          </span>
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">{prob.title}</h4>
-                          {prob.is_ai_generated === 1 && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-semibold flex items-center gap-0.5">
-                              <Sparkles size={9} /> Variant
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">
-                          <LatexText>{prob.problem_text}</LatexText>
-                        </div>
-
-                        {principles.length > 0 && (
-                          <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                            {principles.slice(0, 3).map((pr, i) => (
-                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
-                                {pr}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {/* Difficulty */}
-                        <div className="flex items-center gap-0.5 mr-2">
-                          {[1, 2, 3, 4, 5].map((s) => (
-                            <Star
-                              key={s}
-                              size={10}
-                              className={s <= prob.difficulty ? "fill-amber-400 text-amber-400" : "text-slate-300 dark:text-slate-700"}
-                            />
-                          ))}
-                        </div>
-
-                        <button
-                          onClick={(e) => handleDeleteProblem(prob.id, e)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
-                          title="Delete problem"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Expanded Preview Details */}
-                    {isSelected && (
-                      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3 text-xs animate-in fade-in duration-150">
-                        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 leading-relaxed font-sans text-slate-800 dark:text-slate-200">
-                          <LatexText>{prob.problem_text}</LatexText>
-                        </div>
-
-                        {prob.solution_steps && (
-                          <div className="p-3 rounded-xl bg-slate-100/70 dark:bg-slate-800/80 font-mono text-[11px] leading-relaxed">
-                            <span className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Solution Derivation:</span>
-                            <LatexText>{prob.solution_steps}</LatexText>
-                          </div>
-                        )}
-
-                        {prob.final_answer && (
-                          <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100">
-                            <span>Answer:</span>
-                            <LatexText>{prob.final_answer}</LatexText>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Modals */}
-      {showUploadModal && (
-        <PracticeUploadModal
-          subjectId={subject.id}
-          modules={modules}
-          onClose={() => setShowUploadModal(false)}
-          onSuccess={() => loadData()}
-        />
-      )}
-
-      {showLauncherModal && (
-        <PracticeSessionLauncher
-          subjectId={subject.id}
-          userId={user?.id || 1}
-          modules={modules}
-          problems={problems}
-          onClose={() => setShowLauncherModal(false)}
-          onStartSession={onStartSession}
-          onOpenAutoGen={(modId, topId) => {
-            setShowLauncherModal(false)
-            setAutoGenTarget({ moduleId: modId, topicId: topId })
-            setShowAutoGenModal(true)
-          }}
-        />
-      )}
-
-      {showAutoGenModal && (
-        <AutoGeneratePracticeModal
-          subjectId={subject.id}
-          userId={user?.id || 1}
-          modules={modules}
-          initialModuleId={autoGenTarget?.moduleId}
-          initialTopicId={autoGenTarget?.topicId || selectedTopicFilter}
-          onClose={() => {
-            setShowAutoGenModal(false)
-            setAutoGenTarget(null)
-          }}
-          onSuccess={(newProbs) => {
-            setProblems((prev) => [...newProbs, ...prev])
-            loadData()
-          }}
-        />
-      )}
-    </div>
-  )
+    {showUpload && <PracticeUploadModal subjectId={subject.id} modules={modules} onClose={() => setShowUpload(false)} onSuccess={() => { setShowUpload(false); void loadData() }} />}
+    {showGenerate && <AutoGeneratePracticeModal subjectId={subject.id} userId={user?.id || 1} modules={modules} initialModuleId={generateTarget?.moduleId} initialTopicId={generateTarget?.topicId} onClose={() => { setShowGenerate(false); setGenerateTarget(null) }} onSuccess={() => { setShowGenerate(false); setGenerateTarget(null); void loadData() }} />}
+  </div>
 }

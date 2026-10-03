@@ -20,6 +20,43 @@ export interface PracticeProblemQualityScorecard {
   }[]
 }
 
+export interface PracticeVerificationResult {
+  status: 'verified' | 'needs_review' | 'rejected'
+  issues: string[]
+  checks: Record<string, boolean>
+}
+
+/**
+ * Deterministic pre-flight checks for generated items. Model-supplied scores
+ * are useful signals, but never constitute verification on their own.
+ */
+export function verifyGeneratedPracticeProblem(
+  problem: ExtractedPracticeProblem | PracticeProblem,
+  criticApproved = false
+): PracticeVerificationResult {
+  const quality = evaluatePracticeProblemQuality(problem)
+  const issues = [...quality.issues]
+  const checks: Record<string, boolean> = {
+    required_content: Boolean(problem.problem_text?.trim() && problem.solution_steps?.trim() && problem.final_answer?.trim()),
+    cover_test: quality.cover_test_passed,
+    subgoals: 'subgoals' in problem && Array.isArray(problem.subgoals)
+      ? problem.subgoals.length >= 2
+      : Boolean('subgoals_json' in problem && problem.subgoals_json && problem.subgoals_json !== '[]'),
+    critic: criticApproved
+  }
+
+  if (!checks.required_content) issues.push('Missing a self-contained prompt, worked solution, or final answer.')
+  if (!checks.subgoals) issues.push('Problem needs at least two explicit solution subgoals.')
+  if (!checks.critic) issues.push('Independent critic did not approve this item.')
+
+  const deterministicPass = quality.valid && quality.quality_score >= 0.75 && checks.required_content && checks.cover_test && checks.subgoals
+  return {
+    status: deterministicPass && criticApproved ? 'verified' : deterministicPass ? 'needs_review' : 'rejected',
+    issues,
+    checks
+  }
+}
+
 /**
  * Haladyna & Downing Item-Writing Flaw (IWF) definitions
  */

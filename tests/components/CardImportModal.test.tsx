@@ -270,6 +270,79 @@ describe('CardImportModal', () => {
     expect(mockOnClose).toHaveBeenCalled()
   })
 
+  it('imports an Anki deck from the Manual & File Import tab', async () => {
+    const openFileDialog = jest.fn().mockResolvedValue('/tmp/neuroscience.apkg')
+    const parseAnkiDeck = jest.fn().mockResolvedValue({
+      name: 'Neuroscience deck',
+      cardCount: 2,
+      cards: [{ front: 'Q1', back: 'A1' }, { front: 'Q2', back: 'A2' }]
+    })
+    const importAnkiDeck = jest.fn().mockResolvedValue([{ id: 1 }, { id: 2 }])
+    window.electronAPI = {
+      ...window.electronAPI,
+      openFileDialog,
+      parseAnkiDeck,
+      importAnkiDeck
+    } as any
+    const confirmSpy = jest.spyOn(window, 'confirm').mockReturnValue(true)
+
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /manual & file import/i }))
+    fireEvent.click(screen.getByRole('button', { name: /import anki deck/i }))
+
+    await waitFor(() => {
+      expect(importAnkiDeck).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Neuroscience deck' }),
+        1,
+        10
+      )
+    })
+    expect(confirmSpy).toHaveBeenCalledWith('Import "Neuroscience deck" with 2 cards?')
+    expect(mockOnSuccess).toHaveBeenCalledWith(2, 'import')
+    expect(mockOnClose).toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('shows an error when Anki parsing fails', async () => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      openFileDialog: jest.fn().mockResolvedValue('/tmp/broken.apkg'),
+      parseAnkiDeck: jest.fn().mockRejectedValue(new Error('Invalid Anki package'))
+    } as any
+
+    await React.act(async () => {
+      render(
+        <CardImportModal
+          isOpen={true}
+          subjectId={10}
+          subjectName="Neuroscience 101"
+          userId={1}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      )
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /manual & file import/i }))
+    fireEvent.click(screen.getByRole('button', { name: /import anki deck/i }))
+
+    expect(await screen.findByText('Invalid Anki package')).toBeInTheDocument()
+    expect(mockOnSuccess).not.toHaveBeenCalled()
+    expect(mockOnClose).not.toHaveBeenCalled()
+  })
+
   it('allows subject selection when multiple subjects are passed', async () => {
     const multiSubjects: Subject[] = [
       { id: 1, user_id: 1, name: 'Biology', status: 'active', created_at: '' },
@@ -663,5 +736,3 @@ describe('CardImportModal', () => {
     expect(mockOnSuccess).toHaveBeenCalledWith(20, 'generate')
   })
 })
-
-

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { SubjectWithStats } from '../types'
+import { SubjectIcon } from './SubjectAppearancePicker'
 
 interface SubjectCardProps {
   data: SubjectWithStats
@@ -75,8 +76,11 @@ export default function SubjectCard({ data, onDelete, onStatusChange }: SubjectC
         {/* Header */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex-1 min-w-0 pr-2">
-            <h3 className="font-semibold text-slate-900 dark:text-slate-50 text-base truncate">
-              {subject.name}
+            <h3 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-50 text-base truncate">
+              <span className="subject-icon-frame subject-icon-frame-card" aria-hidden="true">
+                <SubjectIcon name={subject.subject_icon} color={subject.color} size={18} />
+              </span>
+              <span className="truncate">{subject.name}</span>
             </h3>
             {subject.course_code && (
               <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">

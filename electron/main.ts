@@ -7,26 +7,42 @@ import { DB_SCHEMA, MIGRATIONS_SQL } from '../src/lib/db'
 import { registerDbHandlers, setDatabase } from './ipc/dbHandlers'
 import { registerFileHandlers } from './ipc/fileHandlers'
 import { registerAIHandlers } from './ipc/aiHandlers'
-import { setAIDatabase } from './ipc/aiConfigStore'
+import { getAIConfig, isLocalEndpoint, setAIDatabase } from './ipc/aiConfigStore'
 import { registerTutorHandlers, setTutorDatabase } from './ipc/tutorHandlers'
 import { registerUpdaterHandlers } from './ipc/updaterHandlers'
-import { registerRAGHandlers, setRAGDatabase } from './ipc/ragHandlers'
+import { registerRAGHandlers, setRAGDatabase, ensureRAGIndexVersion } from './ipc/ragHandlers'
+import { registerGroundedHandlers, setGroundedDatabase } from './ipc/groundedHandlers'
 import { registerSyllabusHandlers, setSyllabusDatabase } from './ipc/syllabusHandlers'
 import { registerCardGenerationHandlers, setCardGenerationDatabase } from './ipc/cardGenHandlers'
 import { registerClassHandlers, setClassDatabase } from './ipc/classHandlers'
 import { registerCalendarHandlers, setCalendarDatabase } from './ipc/calendarHandlers'
-import { registerLocalEngineHandlers, setLocalEngineWindowGetter, stopEngine } from './ipc/localEngine'
+import { registerGoogleCalendarHandlers } from './ipc/googleCalendarHandlers'
+import { setGoogleCalendarDatabase } from './ipc/googleCalendarService'
+import { listLocalModels, registerLocalEngineHandlers, setLocalEngineWindowGetter, startEngine, stopEngine } from './ipc/localEngine'
 import { registerFolderHandlers, setFolderDatabase } from './ipc/folderHandlers'
 import { registerLectureHandlers, setLectureDatabase, setOnRecordingFinalized } from './ipc/lectureHandlers'
 import { registerPracticeHandlers, setPracticeDatabase } from './ipc/practiceHandlers'
+import { registerAnnotationHandlers, setAnnotationDatabase } from './ipc/annotationHandlers'
 import { LectureNotesService } from './ipc/lectureNotesService'
 import { LocalWhisperService } from './ipc/localWhisperService'
 import { TranscriptionService } from './ipc/transcriptionService'
 import { FolderSyncService } from './ipc/folderSyncService'
+import { resolveMaterialVisualChapterPath, resolveMaterialVisualPagePath, resolveMaterialVisualPath } from './ipc/documentPreviewService'
 
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'neuron-audio',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+      bypassCSP: true
+    }
+  },
+  {
+    scheme: 'neuron-file',
     privileges: {
       standard: true,
       secure: true,
@@ -178,6 +194,41 @@ function migrateCardsFolderForeignKey(): void {
   }
 }
 
+function verifyGoogleCalendarSchema(): void {
+  const requiredColumns = ['google_account_id', 'google_calendar_id', 'sync_token', 'provider_metadata_json', 'enabled']
+  try {
+    db.prepare(`CREATE TABLE IF NOT EXISTS google_calendar_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      encrypted_refresh_token TEXT NOT NULL,
+      scopes TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('connected', 'reauthorize_required', 'error')),
+      last_synced_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`).run()
+    for (const column of [
+      "ALTER TABLE calendar_sources ADD COLUMN google_account_id INTEGER",
+      "ALTER TABLE calendar_sources ADD COLUMN google_calendar_id TEXT",
+      "ALTER TABLE calendar_sources ADD COLUMN sync_token TEXT",
+      "ALTER TABLE calendar_sources ADD COLUMN provider_metadata_json TEXT NOT NULL DEFAULT '{}'",
+      "ALTER TABLE calendar_sources ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
+    ]) {
+      try { db.prepare(column).run() } catch { /* column already exists */ }
+    }
+    const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('google_calendar_accounts', 'calendar_sources')").all() as Array<{ name: string }>).map(row => row.name))
+    const columns = new Set((db.pragma('table_info(calendar_sources)') as Array<{ name: string }>).map(row => row.name))
+    const missing = requiredColumns.filter(column => !columns.has(column))
+    if (!tables.has('google_calendar_accounts') || !tables.has('calendar_sources') || missing.length > 0) {
+      throw new Error(`required tables or columns are missing${missing.length ? `: ${missing.join(', ')}` : ''}`)
+    }
+  } catch (error) {
+    console.error('[GoogleCalendar] database migration verification failed:', error)
+  }
+}
+
 function initDatabase(): void {
   const userDataPath = app.getPath('userData')
   const dbPath = join(userDataPath, 'studyhelper.db')
@@ -225,6 +276,7 @@ function initDatabase(): void {
   for (const migrationSql of MIGRATIONS_SQL) {
     try { db.prepare(migrationSql).run() } catch { /* column may already exist */ }
   }
+  verifyGoogleCalendarSchema()
 
   // Backfill: materials of subjects that already have a generated syllabus
   // were folded in by the old full-regeneration flow — mark them processed so
@@ -261,8 +313,11 @@ app.whenReady().then(async () => {
   registerFileHandlers()
   registerAIHandlers()
   registerRAGHandlers()
+  registerGroundedHandlers()
   setAIDatabase(db)
   setRAGDatabase(db)
+  void ensureRAGIndexVersion()
+  setGroundedDatabase(db)
   setTutorDatabase(db)
   registerTutorHandlers()
   setSyllabusDatabase(db)
@@ -273,6 +328,8 @@ app.whenReady().then(async () => {
   registerClassHandlers()
   setCalendarDatabase(db)
   registerCalendarHandlers()
+  setGoogleCalendarDatabase(db)
+  registerGoogleCalendarHandlers()
   registerUpdaterHandlers(() => mainWindow)
   setLocalEngineWindowGetter(() => mainWindow)
   registerLocalEngineHandlers()
@@ -280,6 +337,8 @@ app.whenReady().then(async () => {
   registerFolderHandlers()
   setPracticeDatabase(db)
   registerPracticeHandlers()
+  setAnnotationDatabase(db)
+  registerAnnotationHandlers()
   setLectureDatabase(db)
   registerLectureHandlers()
   TranscriptionService.setDatabase(db)
@@ -304,7 +363,56 @@ app.whenReady().then(async () => {
     }
   })
 
+  protocol.handle('neuron-file', (request) => {
+    try {
+      // Chromium includes the iframe fragment in custom-scheme requests. The
+      // fragment controls the PDF page/EPUB chapter in the renderer and must
+      // not prevent the main process from resolving the visual source.
+      const visualMatch = request.url.match(/^neuron-file:\/\/visual\/(\d+)(?:#.*)?$/)
+      if (visualMatch) {
+        return resolveMaterialVisualPath(db, Number(visualMatch[1])).then((filePath) => {
+          if (!filePath) return new Response('Visual preview not available', { status: 404 })
+          return net.fetch(pathToFileURL(filePath).toString())
+        })
+      }
+      const visualPageMatch = request.url.match(/^neuron-file:\/\/visual-page\/(\d+)\/(\d+)(?:\?.*)?$/)
+      if (visualPageMatch) {
+        return resolveMaterialVisualPagePath(db, Number(visualPageMatch[1]), Number(visualPageMatch[2])).then((filePath) => {
+          if (!filePath) return new Response('Visual page not available', { status: 404 })
+          return net.fetch(pathToFileURL(filePath).toString())
+        })
+      }
+      const visualChapterMatch = request.url.match(/^neuron-file:\/\/visual-epub-page\/(\d+)\/(\d+)(?:\?.*)?$/)
+      if (visualChapterMatch) {
+        return resolveMaterialVisualChapterPath(db, Number(visualChapterMatch[1]), Number(visualChapterMatch[2])).then((filePath) => {
+          if (!filePath) return new Response('Visual EPUB chapter not available', { status: 404 })
+          return net.fetch(pathToFileURL(filePath).toString())
+        })
+      }
+      const match = request.url.match(/^neuron-file:\/\/material\/(\d+)(?:#.*)?$/)
+      if (!match) return new Response('File not found', { status: 404 })
+      const row = db.prepare('SELECT file_path FROM materials WHERE id = ?').get(Number(match[1])) as { file_path?: string | null } | undefined
+      if (!row?.file_path) return new Response('File not found', { status: 404 })
+      return net.fetch(pathToFileURL(row.file_path).toString())
+    } catch (err) {
+      console.error('Failed to handle neuron-file request:', err)
+      return new Response('File not found', { status: 404 })
+    }
+  })
+
   createWindow()
+  // Restore a previously configured local engine when its model is already
+  // present. A fresh install keeps the default cloud configuration and does
+  // not download or spawn anything during startup.
+  const savedAIConfig = getAIConfig()
+  if (isLocalEndpoint(savedAIConfig.baseUrl)) {
+    const modelReady = listLocalModels().some((model) => model.id === savedAIConfig.model && model.status === 'ready')
+    if (modelReady) {
+      void startEngine(savedAIConfig.model).catch((error) => {
+        console.warn('Local AI restart recovery failed:', error)
+      })
+    }
+  }
   FolderSyncService.init(db, () => mainWindow)
 
   app.on('activate', function () {
@@ -325,4 +433,3 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   stopEngine()
 })
-

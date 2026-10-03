@@ -16,6 +16,7 @@ export type SupportedFileType =
   | 'rtf'
   | 'html'
   | 'json'
+  | 'epub'
   | 'image'
   | 'png'
   | 'jpg'
@@ -39,6 +40,7 @@ export function getFileType(filename: string): SupportedFileType | null {
   if (ext === 'rtf') return 'rtf'
   if (['html', 'htm'].includes(ext)) return 'html'
   if (ext === 'json') return 'json'
+  if (ext === 'epub') return 'epub'
   if (['png', 'jpg', 'jpeg', 'webp', 'heic', 'bmp', 'tiff'].includes(ext)) return 'image'
 
   return null

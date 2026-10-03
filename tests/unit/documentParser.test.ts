@@ -8,8 +8,10 @@ import {
   parseDOCX,
   parseRTF,
   parseHTML,
+  parseEPUB,
   extractBinaryStrings,
-  parseFileToText
+  parseFileToText,
+  shouldSupplementWithOcr
 } from '../../electron/ipc/documentParser'
 import { getFileType } from '../../src/lib/fileParser'
 
@@ -58,6 +60,7 @@ describe('documentParser', () => {
       expect(getFileType('iphone_photo.heic')).toBe('image')
       expect(getFileType('graph.bmp')).toBe('image')
       expect(getFileType('document.tiff')).toBe('image')
+      expect(getFileType('textbook.epub')).toBe('epub')
       expect(getFileType('unknown.xyz')).toBeNull()
     })
   })
@@ -121,6 +124,28 @@ describe('documentParser', () => {
     })
   })
 
+  describe('Office Math and adaptive PDF OCR', () => {
+    it('extracts Office Math formulas from DOCX XML', async () => {
+      const zip = new JSZip()
+      zip.file('word/document.xml', `<?xml version="1.0"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+          <w:body><w:p><w:r><w:t>Newton's law: </w:t></w:r>
+            <m:oMath><m:sSup><m:e><m:r><m:t>F</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath>
+          </w:p></w:body>
+        </w:document>`)
+      const text = await parseDOCX(await zip.generateAsync({ type: 'nodebuffer' }))
+      expect(text).toContain("Newton's law:")
+      expect(text).toContain('F^{2}')
+    })
+
+    it('selects sparse and math-heavy pages without OCRing ordinary prose pages', () => {
+      expect(shouldSupplementWithOcr('')).toBe(true)
+      expect(shouldSupplementWithOcr('A short label = x')).toBe(true)
+      expect(shouldSupplementWithOcr('This is a normal paragraph describing supply and demand in detail.', false)).toBe(false)
+      expect(shouldSupplementWithOcr('This is a formula sheet page with enough explanatory text to pass the old threshold.', true)).toBe(true)
+    })
+  })
+
   describe('parseRTF', () => {
     it('strips RTF control codes and preserves line breaks', () => {
       const rtf = '{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Arial;}} \\f0\\fs24 Biology Notes\\par Cell membrane is a lipid bilayer.\\par Hydrophobic tails face inward.}'
@@ -141,6 +166,21 @@ describe('documentParser', () => {
       expect(output).toContain('Mendelian inheritance patterns.')
       expect(output).not.toContain('body { color: red; }')
       expect(output).not.toContain('console.log')
+    })
+  })
+
+  describe('parseEPUB', () => {
+    it('follows the OPF spine order and extracts chapter text', async () => {
+      const zip = new JSZip()
+      zip.file('META-INF/container.xml', `<?xml version="1.0"?><container><rootfiles><rootfile full-path="OPS/package.opf"/></rootfiles></container>`)
+      zip.file('OPS/package.opf', `<package><manifest><item id="c2" href="chapter2.xhtml"/><item id="c1" href="chapter1.xhtml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>`)
+      zip.file('OPS/chapter1.xhtml', '<html><body><h1>Foundations</h1><p>Membrane potential.</p></body></html>')
+      zip.file('OPS/chapter2.xhtml', '<html><body><h1>Applications</h1><p>Action potentials.</p></body></html>')
+
+      const text = await parseEPUB(await zip.generateAsync({ type: 'nodebuffer' }))
+      expect(text.indexOf('Foundations')).toBeLessThan(text.indexOf('Applications'))
+      expect(text).toContain('Membrane potential.')
+      expect(text).toContain('Action potentials.')
     })
   })
 
@@ -191,6 +231,21 @@ describe('documentParser', () => {
       const result = await parseFileToText(txtPath)
       expect(result.fileType).toBe('txt')
       expect(result.contentText).toContain('Cardiovascular System:\nThe heart has four chambers.')
+    })
+
+    it('parses EPUB files from disk in spine order', async () => {
+      const epubPath = path.join(tempDir, 'test_textbook.epub')
+      const zip = new JSZip()
+      zip.file('META-INF/container.xml', `<?xml version="1.0"?><container><rootfiles><rootfile full-path="OPS/package.opf"/></rootfiles></container>`)
+      zip.file('OPS/package.opf', `<package><manifest><item id="first" href="first.xhtml"/><item id="second" href="second.xhtml"/></manifest><spine><itemref idref="first"/><itemref idref="second"/></spine></package>`)
+      zip.file('OPS/first.xhtml', '<html><body><h1>Chapter One</h1><p>Definitions first.</p></body></html>')
+      zip.file('OPS/second.xhtml', '<html><body><h1>Chapter Two</h1><p>Applications second.</p></body></html>')
+      fs.writeFileSync(epubPath, await zip.generateAsync({ type: 'nodebuffer' }))
+
+      const result = await parseFileToText(epubPath)
+      expect(result.fileType).toBe('epub')
+      expect(result.contentText.indexOf('Chapter One')).toBeLessThan(result.contentText.indexOf('Chapter Two'))
+      expect(result.contentText).toContain('Applications second.')
     })
 
     it('recognizes image files and delegates to OCR', async () => {

@@ -45,6 +45,7 @@ describe('LatexText', () => {
     it('renders inline math via KaTeX', () => {
       const { container } = render(<LatexText>Area is $x^2$ meters</LatexText>)
       expect(container.querySelector('.katex')).not.toBeNull()
+      expect(container.querySelector('math')).not.toBeNull()
     })
 
     it('renders display math via KaTeX', () => {

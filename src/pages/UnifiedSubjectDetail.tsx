@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
-import PomodoroWidget from '../components/PomodoroWidget'
 import CardBrowser from '../components/CardBrowser'
-import LatexText from '../components/LatexText'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import CurriculumView from '../components/classes/CurriculumView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
@@ -20,8 +19,12 @@ import AudioDeviceSelector from '../components/classes/AudioDeviceSelector'
 import LoadingProgressBar from '../components/common/LoadingProgressBar'
 import PracticeHub from './PracticeHub'
 import PracticeSessionPage from './PracticeSessionPage'
+import SubjectNotesPage from './SubjectNotesPage'
+import TopActionButton from '../components/TopActionButton'
+import { Activity, BookOpen, Sparkles, Zap } from '../components/icons'
+import SubjectAppearancePicker, { DEFAULT_SUBJECT_COLOR, DEFAULT_SUBJECT_ICON, SubjectIcon } from '../components/SubjectAppearancePicker'
 
-type Tab = 'cards' | 'curriculum' | 'graph' | 'practice' | 'materials' | 'lectures' | 'deadlines'
+type Tab = 'cards' | 'curriculum' | 'graph' | 'practice' | 'materials' | 'lectures' | 'notes' | 'deadlines'
 
 export default function UnifiedSubjectDetail(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
@@ -39,6 +42,9 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     moduleId?: number
     topicId?: number
     count?: number
+    mode?: 'standard' | 'guided'
+    difficulty?: number
+    learningGoal?: 'recommended' | 'reinforce' | 'review' | 'transfer'
   } | null>(null)
   const [showEditSubject, setShowEditSubject] = useState(false)
   const [showConfigModal, setShowConfigModal] = useState<{
@@ -54,6 +60,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [editName, setEditName] = useState(subject?.name || '')
   const [editCode, setEditCode] = useState(subject?.course_code || '')
   const [editStatus, setEditStatus] = useState(subject?.status || 'active')
+  const [editIcon, setEditIcon] = useState(subject?.subject_icon || DEFAULT_SUBJECT_ICON)
+  const [editColor, setEditColor] = useState(subject?.color || DEFAULT_SUBJECT_COLOR)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -84,6 +92,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [materials, setMaterials] = useState<Material[]>([])
   const [addingMaterial, setAddingMaterial] = useState(false)
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<number>>(new Set())
+  const materialSelectionInitializedRef = useRef(false)
+  const loadedMaterialIdsRef = useRef<Set<number>>(new Set())
+  const [expandedLectureMaterials, setExpandedLectureMaterials] = useState<Set<number>>(new Set())
+  const [materialAnnotationCounts, setMaterialAnnotationCounts] = useState<Record<number, number>>({})
   const [isSynthesizing, setIsSynthesizing] = useState(false)
   const [isGeneratingCards, setIsGeneratingCards] = useState(false)
   /** Material just uploaded to a subject that already has a syllabus — shows
@@ -109,15 +121,24 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [cardsWithSchedule, setCardsWithSchedule] = useState<CardWithSchedule[]>([])
   const [concepts, setConcepts] = useState<ConceptMastery[]>([])
   const [conceptDependencies, setConceptDependencies] = useState<ConceptDependency[]>([])
+  const [focusCurriculumTopicId, setFocusCurriculumTopicId] = useState<number | undefined>(undefined)
   const [showCramOptimizer, setShowCramOptimizer] = useState(false)
 
   // ── Load all data ──
+  useEffect(() => {
+    materialSelectionInitializedRef.current = false
+    loadedMaterialIdsRef.current = new Set()
+    setSelectedMaterialIds(new Set())
+  }, [subjectId])
+
   useEffect(() => {
     if (subjectId && user) {
       loadAllData()
       setEditName(subject?.name || '')
       setEditCode(subject?.course_code || '')
       setEditStatus(subject?.status || 'active')
+      setEditIcon(subject?.subject_icon || DEFAULT_SUBJECT_ICON)
+      setEditColor(subject?.color || DEFAULT_SUBJECT_COLOR)
     }
   }, [subjectId, user])
 
@@ -144,6 +165,20 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       modules
     })
   }, [subjectId, nextExamDeadline, cardsWithSchedule, cards, concepts, modules])
+
+  const lectureMaterialRows = useMemo(() => lectures
+    .map((lecture) => ({ lecture, material: lecture.material_id ? materials.find((item) => item.id === lecture.material_id) : undefined }))
+    .filter((row): row is { lecture: Lecture; material: Material } => Boolean(row.material)), [lectures, materials])
+  const attachedMaterialIds = useMemo(() => new Set(lectureMaterialRows.map((row) => row.material.id)), [lectureMaterialRows])
+  const standaloneMaterials = useMemo(() => materials.filter((material) => !attachedMaterialIds.has(material.id)), [materials, attachedMaterialIds])
+
+  useEffect(() => {
+    setExpandedLectureMaterials((current) => {
+      const next = new Set(current)
+      lectureMaterialRows.forEach(({ lecture }) => next.add(lecture.id))
+      return next
+    })
+  }, [lectureMaterialRows])
 
   // ── Lecture status event listener ──
   useEffect(() => {
@@ -207,8 +242,34 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setCards(c)
       setDeadlines(d as Deadline[])
       setFolders(f)
-      setMaterials(mats as Material[])
+      const loadedMaterials = mats as Material[]
+      setMaterials(loadedMaterials)
+      // Material/tutor context is opt-out: linked-folder materials are
+      // selected by default, while the learner can deselect any source
+      // before generating cards or starting a scoped tutor session.
+      const loadedIds = new Set(loadedMaterials.map((material) => material.id))
+      setSelectedMaterialIds((previous) => {
+        if (!materialSelectionInitializedRef.current) {
+          materialSelectionInitializedRef.current = true
+          loadedMaterialIdsRef.current = loadedIds
+          return loadedIds
+        }
+        const previousLoadedIds = loadedMaterialIdsRef.current
+        loadedMaterialIdsRef.current = loadedIds
+        return new Set(loadedMaterials
+          .filter((material) => !previousLoadedIds.has(material.id) || previous.has(material.id))
+          .map((material) => material.id))
+      })
       setLectures((lecs as Lecture[]) || [])
+      try {
+        const annotationCounts = await Promise.all((mats as Material[]).map(async (material) => {
+          const rows = await window.electronAPI.listDocumentAnnotations({ materialId: material.id })
+          return [material.id, rows.filter((row) => !row.deleted_at).length] as const
+        }))
+        setMaterialAnnotationCounts(Object.fromEntries(annotationCounts))
+      } catch {
+        setMaterialAnnotationCounts({})
+      }
       setCardsWithSchedule((schedCards as CardWithSchedule[]) || [])
       setConcepts((conMastery as ConceptMastery[]) || [])
       setConceptDependencies((deps as ConceptDependency[]) || [])
@@ -305,26 +366,6 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     }
   }
 
-  const handleAnkiImport = async () => {
-    if (!user) return
-    try {
-      const filePath = await window.electronAPI.openFileDialog()
-      if (!filePath) return
-      const deck = await window.electronAPI.parseAnkiDeck(filePath)
-      if (!deck.cards || deck.cards.length === 0) {
-        alert('No cards found in this Anki deck.')
-        return
-      }
-      const confirmMsg = `Import "${deck.name}" with ${deck.cardCount} cards?`
-      if (!confirm(confirmMsg)) return
-      const saved = await window.electronAPI.importAnkiDeck(deck, user.id, subjectId)
-      setToast({ message: `Imported ${saved.length} cards from Anki deck!`, type: 'success' })
-      loadAllData()
-    } catch (err: any) {
-      setToast({ message: `Anki import failed: ${err.message}`, type: 'error' })
-    }
-  }
-
   // ── Deadline action handlers ──
   async function handleAddDeadline(): Promise<void> {
     if (!newDeadlineLabel.trim() || !newDeadlineDate) return
@@ -352,7 +393,9 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       id: subjectId,
       name: editName.trim(),
       course_code: editCode.trim() || undefined,
-      status: editStatus as 'active' | 'ongoing' | 'archived'
+      status: editStatus as 'active' | 'ongoing' | 'archived',
+      subject_icon: editIcon,
+      color: editColor
     })
     updateSubject(updated)
     if (editStatus === 'archived') {
@@ -463,7 +506,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         subject_id: subjectId,
         filename: parsed.filename,
         file_type: parsed.fileType,
-        content_text: parsed.contentText
+        content_text: parsed.contentText,
+        file_path: filePath
       })
 
       if (result?.id) {
@@ -889,6 +933,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     { id: 'practice', label: 'Practice Lab' },
     { id: 'materials', label: 'Materials', count: materials.length },
     { id: 'lectures', label: 'Lectures', count: lectures.length },
+    { id: 'notes', label: 'Notes' },
     { id: 'deadlines', label: 'Deadlines', count: deadlines.length }
   )
 
@@ -901,8 +946,14 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           moduleId={practiceSessionParams.moduleId}
           topicId={practiceSessionParams.topicId}
           problemCount={practiceSessionParams.count}
+          mode={practiceSessionParams.mode || 'standard'}
+          difficulty={practiceSessionParams.difficulty}
+          learningGoal={practiceSessionParams.learningGoal}
           calculatorSkin={calculatorSkin}
-          onExit={() => setPracticeSessionParams(null)}
+          onExit={() => {
+            setPracticeSessionParams(null)
+            void loadAllData()
+          }}
         />
       </div>
     )
@@ -928,7 +979,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1 flex-wrap">
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-              {subject.name}
+              <span className="flex items-center gap-2"><SubjectIcon name={subject.subject_icon} color={subject.color} size={25} />{subject.name}</span>
             </h1>
             {subject.subject_type && (
               <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400">
@@ -947,48 +998,41 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <PomodoroWidget />
+        <div className="flex max-w-full flex-wrap items-center justify-end gap-2 flex-shrink-0">
           {hasCurriculum && (
             <>
-              <button
+              <TopActionButton
                 onClick={() => subject && setShowConfigModal({ subjectId, subjectName: subject.name })}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
+                variant="accent"
+                icon={<Sparkles size={16} />}
               >
                 Tutor
-              </button>
-              <button
+              </TopActionButton>
+              <TopActionButton
                 onClick={() => subject && setShowConfigModal({ subjectId, subjectName: subject.name, initialMode: 'quick_review' })}
-                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                variant="soft"
+                icon={<Zap size={16} />}
                 title="Quick Review: 1-3 questions across every topic in this class"
               >
-                <span>⚡</span> Quick Review
-              </button>
+                Quick Review
+              </TopActionButton>
             </>
           )}
-          <button
+          <TopActionButton
             onClick={() => setShowTextImport(true)}
-            className="btn-secondary text-sm flex items-center gap-1.5"
+            variant="soft"
+            icon={<BookOpen size={16} />}
             title="Generate or import flashcards"
           >
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-              <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
             Cards
-          </button>
-          <button
-            onClick={handleAnkiImport}
-            className="px-3 py-1.5 text-xs font-medium bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors"
-          >
-            Anki
-          </button>
-          <button
+          </TopActionButton>
+          <TopActionButton
             onClick={() => navigate(`/diagnostics/${subjectId}`)}
-            className="btn-secondary text-sm"
+            variant="quiet"
+            icon={<Activity size={16} />}
           >
             Diagnostics
-          </button>
+          </TopActionButton>
           <SubjectDetailStudyMenu subjectId={subjectId} disabled={cards.length === 0} />
           <button
             onClick={() => setShowEditSubject(true)}
@@ -1054,6 +1098,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       </div>
 
       {/* ═══ CARDS TAB ═══ */}
+      {activeTab === 'notes' && <SubjectNotesPage subjectId={subjectId} materials={materials} />}
+
       {activeTab === 'cards' && (
         <div>
           <div className="flex items-center justify-between mb-3">
@@ -1213,7 +1259,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Curriculum</h2>
             {modules.length > 0 && (
               <span className="text-xs text-slate-400">
-                {completedModules}/{modules.length} modules completed
+                {completedModules}/{modules.length} modules reviewed · revisit based on retention
               </span>
             )}
           </div>
@@ -1250,6 +1296,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               onGenerateCards={handleGenerateCards}
               onToggleTopic={handleToggleTopic}
               loadingCards={loadingCards}
+              focusTopicId={focusCurriculumTopicId}
             />
           ) : (
             <div className="text-center py-14 bg-white dark:bg-slate-800 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
@@ -1367,13 +1414,22 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                 setConceptDependencies(updated || [])
               }
             }}
-            onOpenTutor={(concept) => {
+            onOpenTutor={(concept, node) => {
               setShowConfigModal({
                 subjectId,
                 subjectName: subject.name,
                 initialTopic: concept,
+                moduleId: node?.moduleId,
                 initialMode: 'fill_gaps'
               })
+            }}
+            onOpenPractice={(node) => {
+              setActiveTab('practice')
+              setPracticeSessionParams({ moduleId: node.moduleId, topicId: node.topicId, count: 5, mode: 'standard', learningGoal: 'reinforce' })
+            }}
+            onOpenCurriculum={(node) => {
+              if (node.topicId) setFocusCurriculumTopicId(node.topicId)
+              setActiveTab('curriculum')
             }}
           />
         </div>
@@ -1384,8 +1440,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         <PracticeHub
           subject={subject}
           user={user}
-          onStartSession={(modId, topId, count) =>
-            setPracticeSessionParams({ moduleId: modId, topicId: topId, count })
+          onStartSession={(modId, topId, count, mode, options) =>
+            setPracticeSessionParams({ moduleId: modId, topicId: topId, count, mode: mode || 'standard', ...options })
           }
         />
       )}
@@ -1519,8 +1575,54 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           )}
 
           {materials.length > 0 ? (
-            <div className="space-y-1.5">
-              {materials.map(mat => (
+            <div className="space-y-4">
+              {lectureMaterialRows.length > 0 && (
+                <section className="space-y-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Lecture materials</div>
+                  {lectureMaterialRows.map(({ lecture, material: mat }) => {
+                    const expanded = expandedLectureMaterials.has(lecture.id)
+                    return (
+                      <div key={`lecture-material-${lecture.id}`} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          onClick={() => setExpandedLectureMaterials((current) => {
+                            const next = new Set(current)
+                            if (next.has(lecture.id)) next.delete(lecture.id)
+                            else next.add(lecture.id)
+                            return next
+                          })}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50"
+                        >
+                          <span className="text-xs text-slate-400" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+                          <span className="text-sm">🎙️</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{lecture.title}</span>
+                            <span className="block text-[11px] text-slate-400 truncate">Attached material: {mat.filename}</span>
+                          </span>
+                          <span className="text-[10px] text-slate-400">{materialAnnotationCounts[mat.id] || 0} annotations</span>
+                        </button>
+                        {expanded && (
+                          <div className="border-t border-slate-200 dark:border-slate-700 px-4 py-3 space-y-2">
+                            <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                              <input type="checkbox" checked={selectedMaterialIds.has(mat.id)} onChange={() => toggleMaterialSelection(mat.id)} className="w-4 h-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                              <span className="font-medium">Use this material for batch cards/tutor context</span>
+                            </label>
+                            <div className="flex flex-wrap items-center gap-2 pl-6">
+                              <button onClick={() => navigate(`/subject/${subjectId}/material/${mat.id}`)} className="px-2 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-medium">Open in Cornell workspace</button>
+                              <button onClick={() => setShowConfigModal({ subjectId: subject.id, subjectName: subject.name, materialId: mat.id, materialName: mat.filename })} className="px-2 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 text-xs font-medium">Tutor with notes</button>
+                              <span className="text-[11px] text-slate-400">Highlights, questions, and summaries stay linked to this file.</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </section>
+              )}
+
+              {standaloneMaterials.length > 0 && <div className="space-y-1.5">
+              {standaloneMaterials.map(mat => (
                 <div
                   key={mat.id}
                   className={`flex items-center gap-3 px-4 py-3 rounded-lg bg-white dark:bg-slate-800 border transition-all ${
@@ -1558,6 +1660,13 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                     {new Date(mat.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </span>
                   <button
+                    onClick={() => navigate(`/subject/${subjectId}/material/${mat.id}`)}
+                    className="px-2 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors text-xs font-medium"
+                    title={`Open ${mat.filename} in the Cornell workspace`}
+                  >
+                    Open
+                  </button>
+                  <button
                     onClick={() => {
                       setSelectedImportMaterialId(mat.id)
                       setShowTextImport(true)
@@ -1594,6 +1703,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                   </button>
                 </div>
               ))}
+              </div>}
             </div>
           ) : (
             <div className="text-center py-14 bg-white dark:bg-slate-800 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
@@ -1764,6 +1874,15 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                             <span>Notes</span>
                           </button>
                         )}
+
+                        <button
+                          onClick={() => navigate(`/subject/${subjectId}/lecture/${lec.id}/notes`)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-xs font-medium flex items-center gap-1 transition-colors"
+                          title="Open Cornell lecture notetaker"
+                        >
+                          <span>✍️</span>
+                          <span>Take Notes</span>
+                        </button>
 
                         {linkedMaterial && (
                           <button
@@ -2078,6 +2197,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                   <option value="archived">Archived</option>
                 </select>
               </div>
+              <SubjectAppearancePicker icon={editIcon} color={editColor} onIconChange={setEditIcon} onColorChange={setEditColor} />
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setShowEditSubject(false)} className="btn-secondary flex-1">Cancel</button>
@@ -2296,11 +2416,11 @@ function CardDetailModal({
         </div>
         <div className="mb-4">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">{card.type === 'flashcard' ? 'Term' : 'Question'}</p>
-          <div className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4"><LatexText>{card.front}</LatexText></div>
+          <div className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4"><MarkdownRenderer content={card.front} /></div>
         </div>
         <div className="mb-5">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1.5">{card.type === 'flashcard' ? 'Definition' : 'Model Answer'}</p>
-          <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4"><LatexText>{card.back}</LatexText></div>
+          <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4"><MarkdownRenderer content={card.back} /></div>
         </div>
         <div className="grid grid-cols-3 gap-3 mb-5">
           <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">

@@ -8,6 +8,7 @@ import QuickCardModal, { type QuickCardCandidate } from '../../components/tutor/
 import TutorChatSidebar from './TutorChatSidebar'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
+import { adjustTutorTimer, formatTutorTimer, getTutorTimerState } from '../../lib/tutorTimer'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
 type PageState = 'loading' | 'streaming' | 'awaiting_input' | 'phase_transition' | 'session_complete' | 'error'
@@ -258,6 +259,15 @@ export default function TutorSession(): React.JSX.Element {
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
     return undefined
+  }, [showTimerMenu])
+
+  useEffect(() => {
+    if (!showTimerMenu) return
+    function handleTimerEscape(event: KeyboardEvent): void {
+      if (event.key === 'Escape') setShowTimerMenu(false)
+    }
+    document.addEventListener('keydown', handleTimerEscape)
+    return () => document.removeEventListener('keydown', handleTimerEscape)
   }, [showTimerMenu])
 
   // ── Quick Review topic tracker from assistant message headers ──
@@ -817,23 +827,26 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   }, [runtime.is_time_up, pageState, focusBlock?.isRunning])
 
   async function handleAdjustTime(deltaMinutes: number): Promise<void> {
-    const currentDuration = runtime.config.duration_minutes ?? 15
-    const newDuration = Math.max(1, currentDuration + deltaMinutes)
-    const newRemaining = Math.max(0, runtime.time_remaining_seconds + (deltaMinutes * 60))
-    const isUp = newRemaining <= 0
+    const nextTimer = adjustTutorTimer({
+      durationMinutes: runtime.config.duration_minutes,
+      elapsedSeconds: runtime.time_elapsed_seconds,
+      remainingSeconds: runtime.time_remaining_seconds,
+      isTimeUp: runtime.is_time_up,
+    }, deltaMinutes)
 
     const updatedConfig: TutorSessionConfig = {
       ...runtime.config,
-      duration_minutes: newDuration
+      duration_minutes: nextTimer.durationMinutes
     }
     setSessionConfig(updatedConfig)
     setRuntime(prev => ({
       ...prev,
       config: updatedConfig,
-      time_remaining_seconds: newRemaining,
-      is_time_up: isUp
+      time_remaining_seconds: nextTimer.remainingSeconds,
+      is_time_up: nextTimer.isTimeUp
     }))
-    if (isUp) {
+    setShowTimerMenu(false)
+    if (nextTimer.isTimeUp) {
       setShowTimeUp(true)
     } else {
       setShowTimeUp(false)
@@ -842,7 +855,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
     if (sessionId) {
       try {
-        await window.electronAPI.tutorUpdateSessionDuration(sessionId, newDuration)
+        await window.electronAPI.tutorUpdateSessionDuration(sessionId, nextTimer.durationMinutes)
       } catch (err) {
         console.error('Failed to update session duration:', err)
       }
@@ -856,22 +869,15 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
     }
     setSessionConfig(updatedConfig)
 
-    let newRemaining = 0
-    if (durationMinutes !== null) {
-      const totalSec = durationMinutes * 60
-      if (runtime.time_elapsed_seconds >= totalSec) {
-        newRemaining = totalSec
-      } else {
-        newRemaining = totalSec - runtime.time_elapsed_seconds
-      }
-    }
+    const nextTimer = getTutorTimerState(durationMinutes, runtime.time_elapsed_seconds)
 
     setRuntime(prev => ({
       ...prev,
       config: updatedConfig,
-      time_remaining_seconds: newRemaining,
-      is_time_up: false
+      time_remaining_seconds: nextTimer.remainingSeconds,
+      is_time_up: nextTimer.isTimeUp
     }))
+    setShowTimerMenu(false)
     setShowTimeUp(false)
 
     if (sessionId) {
@@ -885,20 +891,24 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
   function handleAddTime(extraMinutes: number): void {
     const config = runtime.config
-    const newDuration = (config.duration_minutes ?? 0) + extraMinutes
-    const newRemaining = extraMinutes * 60
-    const updatedConfig: TutorSessionConfig = { ...config, duration_minutes: newDuration }
+    const nextTimer = adjustTutorTimer({
+      durationMinutes: config.duration_minutes,
+      elapsedSeconds: runtime.time_elapsed_seconds,
+      remainingSeconds: runtime.time_remaining_seconds,
+      isTimeUp: runtime.is_time_up,
+    }, extraMinutes)
+    const updatedConfig: TutorSessionConfig = { ...config, duration_minutes: nextTimer.durationMinutes }
     setSessionConfig(updatedConfig)
     setRuntime(prev => ({
       ...prev,
       config: updatedConfig,
-      time_remaining_seconds: newRemaining,
+      time_remaining_seconds: nextTimer.remainingSeconds,
       is_time_up: false,
     }))
     setShowTimeUp(false)
     setPageState('awaiting_input')
     if (sessionId) {
-      window.electronAPI.tutorUpdateSessionDuration(sessionId, newDuration).catch(() => {})
+      window.electronAPI.tutorUpdateSessionDuration(sessionId, nextTimer.durationMinutes).catch(() => {})
     }
   }
 
@@ -1592,8 +1602,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
         {/* Top bar - hidden when in Focus Block */}
         {!focusBlock?.isRunning && (
-          <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between gap-4 flex-shrink-0 overflow-x-auto">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <div className="relative z-20 overflow-visible bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-2.5 sm:px-4 flex flex-wrap items-center justify-between gap-2.5 flex-shrink-0">
+            <div className="flex min-w-0 flex-1 basis-64 items-center gap-2.5">
               <button
                 onClick={handleBackNavigation}
                 title="Back to Tutor Hub"
@@ -1662,7 +1672,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
             </div>
           </div>
 
-          <div className="flex flex-shrink-0 items-center gap-2 whitespace-nowrap">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
             {/* Dynamic phase progress dots (aesthetic) */}
             <div className="flex items-center gap-1.5" title={sessionPhase === 'complete' ? 'Session Complete' : progressDotLabels[aestheticProgressIdx]}>
               {[0, 1, 2, 3].map((stepIdx) => {
@@ -1729,7 +1739,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                       ? '0:00 (Time up)'
                       : isPaused
                         ? `Paused (${Math.floor(runtime.time_remaining_seconds / 60)}:${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')})`
-                        : `${Math.floor(runtime.time_remaining_seconds / 60)}:${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}`
+                    : formatTutorTimer(runtime.time_remaining_seconds)
                   }
                 </span>
                 <svg className="w-3 h-3 text-slate-400 dark:text-slate-500 ml-0.5" viewBox="0 0 20 20" fill="currentColor">
@@ -1739,7 +1749,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
               {/* Popover Dropdown */}
               {showTimerMenu && (
-                <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-4 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div role="dialog" aria-label="Session timer controls" className="absolute right-0 top-full mt-2 w-[min(18rem,calc(100vw-2rem))] max-h-[min(32rem,calc(100vh-7rem))] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-4 z-50 animate-in fade-in zoom-in-95 duration-100">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
                     <div>
                       <div className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
@@ -1776,7 +1786,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                       <span className="text-base font-bold text-slate-900 dark:text-slate-100">
                         {runtime.config.duration_minutes === null
                           ? 'Unlimited'
-                          : `${Math.floor(runtime.time_remaining_seconds / 60)}m ${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')}s`
+                          : `${formatTutorTimer(runtime.time_remaining_seconds)} remaining`
                         }
                       </span>
                     </div>

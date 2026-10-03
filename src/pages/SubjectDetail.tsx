@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
-import PomodoroWidget from '../components/PomodoroWidget'
 import CardBrowser from '../components/CardBrowser'
-import LatexText from '../components/LatexText'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import CardImportModal from '../components/CardImportModal'
+import TopActionButton from '../components/TopActionButton'
+import { Activity, BookOpen } from '../components/icons'
 import type { Card, CardFolder, CardSchedule, Deadline, Material, ModuleTopic, SyllabusModule } from '../types'
+import SubjectAppearancePicker, { DEFAULT_SUBJECT_COLOR, DEFAULT_SUBJECT_ICON, SubjectIcon } from '../components/SubjectAppearancePicker'
 
 type Tab = 'cards' | 'deadlines'
 
@@ -28,6 +30,8 @@ export default function SubjectDetail(): React.JSX.Element {
   const [editName, setEditName] = useState(subject?.name || '')
   const [editCode, setEditCode] = useState(subject?.course_code || '')
   const [editStatus, setEditStatus] = useState(subject?.status || 'active')
+  const [editIcon, setEditIcon] = useState(subject?.subject_icon || DEFAULT_SUBJECT_ICON)
+  const [editColor, setEditColor] = useState(subject?.color || DEFAULT_SUBJECT_COLOR)
   const [showAddCard, setShowAddCard] = useState(false)
   const [newCardFront, setNewCardFront] = useState('')
   const [newCardBack, setNewCardBack] = useState('')
@@ -49,6 +53,8 @@ export default function SubjectDetail(): React.JSX.Element {
       setEditName(subject.name)
       setEditCode(subject.course_code || '')
       setEditStatus(subject.status)
+      setEditIcon(subject.subject_icon || DEFAULT_SUBJECT_ICON)
+      setEditColor(subject.color || DEFAULT_SUBJECT_COLOR)
     }
   }, [subjectId])
 
@@ -110,7 +116,9 @@ export default function SubjectDetail(): React.JSX.Element {
       id: subjectId,
       name: editName.trim(),
       course_code: editCode.trim() || undefined,
-      status: editStatus as 'active' | 'ongoing' | 'archived'
+      status: editStatus as 'active' | 'ongoing' | 'archived',
+      subject_icon: editIcon,
+      color: editColor
     })
     updateSubject(updated)
     if (editStatus === 'archived') {
@@ -169,28 +177,6 @@ export default function SubjectDetail(): React.JSX.Element {
     }
   }
 
-  const handleAnkiImport = async () => {
-    if (!user) return
-    try {
-      const api = (window as any).electronAPI
-      if (!api) return
-      const filePath = await api.openFileDialog()
-      if (!filePath) return
-      const deck = await api.parseAnkiDeck(filePath)
-      if (!deck.cards || deck.cards.length === 0) {
-        alert('No cards found in this Anki deck.')
-        return
-      }
-      const confirmMsg = `Import "${deck.name}" with ${deck.cardCount} cards?`
-      if (!confirm(confirmMsg)) return
-      const saved = await api.importAnkiDeck(deck, user.id, subjectId)
-      setToast({ message: `Imported ${saved.length} cards from Anki deck!`, type: 'success' })
-      loadData()
-    } catch (err: any) {
-      setToast({ message: `Anki import failed: ${err.message}`, type: 'error' })
-    }
-  }
-
   const filteredCards = cards.filter(c => {
     return (
       folderFilter === 'all' ||
@@ -241,7 +227,7 @@ export default function SubjectDetail(): React.JSX.Element {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1 flex-wrap">
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-              {subject.name}
+              <span className="flex items-center gap-2"><SubjectIcon name={subject.subject_icon} color={subject.color} size={25} />{subject.name}</span>
             </h1>
             <span className={statusBadge[subject.status] || 'badge-slate'}>
               {statusLabel[subject.status] || subject.status}
@@ -261,31 +247,22 @@ export default function SubjectDetail(): React.JSX.Element {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <PomodoroWidget />
-          <button
+        <div className="flex max-w-full flex-wrap items-center justify-end gap-2 flex-shrink-0">
+          <TopActionButton
             onClick={() => setShowTextImport(true)}
-            className="btn-secondary text-sm flex items-center gap-1.5"
+            variant="soft"
+            icon={<BookOpen size={16} />}
             title="Generate or import flashcards"
           >
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-              <path d="M2 3h10M2 7h7M2 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              <path d="M11 9v4M9 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
             Cards
-          </button>
-          <button
-            onClick={handleAnkiImport}
-            className="px-3 py-1.5 text-xs font-medium bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors"
-          >
-            Import Anki Deck (.apkg)
-          </button>
-          <button
+          </TopActionButton>
+          <TopActionButton
             onClick={() => navigate(`/diagnostics/${subjectId}`)}
-            className="btn-secondary text-sm"
+            variant="quiet"
+            icon={<Activity size={16} />}
           >
             Diagnostics
-          </button>
+          </TopActionButton>
           <SubjectDetailStudyMenu subjectId={subjectId} disabled={cards.length === 0} />
           <button
             onClick={() => setShowEditSubject(true)}
@@ -759,6 +736,7 @@ export default function SubjectDetail(): React.JSX.Element {
                   <option value="archived">Archived</option>
                 </select>
               </div>
+              <SubjectAppearancePicker icon={editIcon} color={editColor} onIconChange={setEditIcon} onColorChange={setEditColor} />
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setShowEditSubject(false)} className="btn-secondary flex-1">Cancel</button>
@@ -860,7 +838,7 @@ function CardDetailModal({
             {card.type === 'flashcard' ? 'Term' : 'Question'}
           </p>
           <div className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">
-            <LatexText>{card.front}</LatexText>
+            <MarkdownRenderer content={card.front} />
           </div>
         </div>
 
@@ -870,7 +848,7 @@ function CardDetailModal({
             {card.type === 'flashcard' ? 'Definition' : 'Model Answer'}
           </p>
           <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4">
-            <LatexText>{card.back}</LatexText>
+            <MarkdownRenderer content={card.back} />
           </div>
         </div>
 

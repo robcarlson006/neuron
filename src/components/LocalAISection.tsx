@@ -5,12 +5,14 @@ interface LocalAISectionProps {
   onSelectModel?: (baseUrl: string, modelName: string) => void
   currentBaseUrl?: string
   currentModel?: string
+  autoSetup?: boolean
 }
 
 export default function LocalAISection({
   onSelectModel,
   currentBaseUrl: _currentBaseUrl,
-  currentModel
+  currentModel,
+  autoSetup = false
 }: LocalAISectionProps): React.JSX.Element {
   const [profile, setProfile] = useState<HardwareProfile | null>(null)
   const [models, setModels] = useState<LocalModelInfo[]>([])
@@ -105,7 +107,15 @@ export default function LocalAISection({
       const res = await window.electronAPI.startLocalEngine(model.id)
       if (res.success && res.port) {
         const localUrl = `http://127.0.0.1:${res.port}`
-        onSelectModel?.(localUrl, model.name)
+        if (window.electronAPI.getLocalAIHealth) {
+          const health = await window.electronAPI.getLocalAIHealth(res.port, model.id)
+          if (!health.healthy) {
+            setActionError(health.error || 'The local model started but failed its readiness check.')
+            await window.electronAPI.stopLocalEngine()
+            return
+          }
+        }
+        onSelectModel?.(localUrl, model.id)
         const updatedStatus = await window.electronAPI.getLocalEngineStatus()
         setEngineStatus(updatedStatus)
       } else if (res.error) {
@@ -143,6 +153,7 @@ export default function LocalAISection({
   }
 
   const [autoStartModelId, setAutoStartModelId] = useState<string | null>(null)
+  const [autoSetupAttempted, setAutoSetupAttempted] = useState(false)
 
   const handleOneClickSetup = async (model: LocalModelInfo) => {
     setActionError(null)
@@ -163,6 +174,15 @@ export default function LocalAISection({
       }
     }
   }, [models, autoStartModelId, engineStatus])
+
+  useEffect(() => {
+    if (!autoSetup || autoSetupAttempted || !profile || models.length === 0) return
+    const recommended = models.find(model => model.isRecommended) || models[0]
+    setAutoSetupAttempted(true)
+    if (recommended && !(engineStatus.isRunning && engineStatus.activeModelId === recommended.id)) {
+      void handleOneClickSetup(recommended)
+    }
+  }, [autoSetup, autoSetupAttempted, profile, models, engineStatus])
 
   const recommendedModel = models.find(m => m.isRecommended) || models[0]
   const isRecommendedActive = engineStatus.isRunning && recommendedModel && engineStatus.activeModelId === recommendedModel.id
@@ -220,6 +240,7 @@ export default function LocalAISection({
               <span className="font-medium text-slate-700 dark:text-slate-200">
                 {profile.totalMemoryGb} GB ({profile.freeMemoryGb} GB free)
               </span>
+              {profile.freeDiskGb != null && <span className="block text-[10px] text-slate-400 dark:text-slate-500">{profile.freeDiskGb} GB disk free</span>}
             </div>
             <div>
               <span className="text-slate-400 dark:text-slate-500 block text-[10px] uppercase font-semibold">Platform & Arch</span>

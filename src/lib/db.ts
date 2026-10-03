@@ -18,6 +18,8 @@ export const DB_SCHEMA = `
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ongoing', 'archived')),
     course_code TEXT,
+    subject_icon TEXT NOT NULL DEFAULT 'book-open',
+    color TEXT DEFAULT '#8b5cf6',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     linked_folder_path TEXT DEFAULT NULL,
     folder_last_synced_at TEXT DEFAULT NULL,
@@ -31,12 +33,55 @@ export const DB_SCHEMA = `
     filename TEXT NOT NULL,
     file_type TEXT NOT NULL,
     content_text TEXT,
+    file_path TEXT DEFAULT NULL,
     uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
     file_mtime INTEGER DEFAULT NULL,
     file_size INTEGER DEFAULT NULL,
+    file_sha256 TEXT DEFAULT NULL,
     relative_path TEXT DEFAULT NULL,
     FOREIGN KEY (subject_id) REFERENCES subjects(id)
   );
+
+  CREATE TABLE IF NOT EXISTS subject_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL UNIQUE,
+    body TEXT NOT NULL DEFAULT '',
+    links_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS document_annotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    material_id INTEGER,
+    lecture_id INTEGER,
+    kind TEXT NOT NULL CHECK (kind IN ('highlight', 'comment', 'cue', 'question', 'summary')),
+    parent_id INTEGER,
+    color TEXT,
+    body TEXT NOT NULL DEFAULT '',
+    selected_text TEXT,
+    locator_json TEXT,
+    source_snapshot TEXT,
+    source_hash TEXT,
+    locator_status TEXT NOT NULL DEFAULT 'resolved' CHECK (locator_status IN ('resolved', 'needs_review')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT,
+    CHECK (material_id IS NOT NULL OR lecture_id IS NOT NULL),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE,
+    FOREIGN KEY (lecture_id) REFERENCES lectures(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES document_annotations(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_document_annotations_material
+    ON document_annotations (material_id, deleted_at, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_document_annotations_lecture
+    ON document_annotations (lecture_id, deleted_at, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_document_annotations_subject
+    ON document_annotations (subject_id, deleted_at, updated_at);
 
   CREATE TABLE IF NOT EXISTS cards (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,6 +354,42 @@ export const DB_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_embeddings_material ON embeddings(material_id);
 
+  CREATE TABLE IF NOT EXISTS document_chunks (
+    id TEXT PRIMARY KEY,
+    material_id INTEGER NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    heading_path TEXT NOT NULL DEFAULT '',
+    chunk_type TEXT NOT NULL DEFAULT 'general_block',
+    text TEXT NOT NULL,
+    char_start INTEGER NOT NULL DEFAULT 0,
+    char_end INTEGER NOT NULL DEFAULT 0,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    content_hash TEXT NOT NULL,
+    previous_chunk_id TEXT,
+    next_chunk_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE,
+    UNIQUE (material_id, chunk_index)
+  );
+  CREATE INDEX IF NOT EXISTS idx_document_chunks_material ON document_chunks(material_id, chunk_index);
+  CREATE INDEX IF NOT EXISTS idx_document_chunks_hash ON document_chunks(content_hash);
+
+  CREATE TABLE IF NOT EXISTS retrieval_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER,
+    material_id INTEGER,
+    query TEXT NOT NULL,
+    selected_json TEXT NOT NULL DEFAULT '[]',
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    retrieval_mode TEXT NOT NULL DEFAULT 'hybrid',
+    index_version TEXT NOT NULL DEFAULT 'v1',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_retrieval_events_scope ON retrieval_events(subject_id, created_at DESC);
+
   -- AI Conversations
   CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -446,10 +527,29 @@ export const DB_SCHEMA = `
     type TEXT NOT NULL CHECK(type IN ('ical', 'manual', 'google_oauth')),
     url TEXT,
     color TEXT DEFAULT '#8b5cf6',
+    google_account_id INTEGER,
+    google_calendar_id TEXT,
+    sync_token TEXT,
+    provider_metadata_json TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
     last_synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS google_calendar_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    encrypted_refresh_token TEXT NOT NULL,
+    scopes TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('connected', 'reauthorize_required', 'error')),
+    last_synced_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_google_calendar_accounts_user ON google_calendar_accounts(user_id);
 
   CREATE TABLE IF NOT EXISTS calendar_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -465,6 +565,10 @@ export const DB_SCHEMA = `
     recurrence_rule TEXT,
     subject_id INTEGER,
     event_type TEXT NOT NULL DEFAULT 'lecture' CHECK(event_type IN ('lecture', 'seminar', 'lab', 'workshop', 'study', 'personal')),
+    study_status TEXT NOT NULL DEFAULT 'planned' CHECK(study_status IN ('planned', 'completed', 'skipped')),
+    focus_minutes INTEGER,
+    focus_action TEXT CHECK(focus_action IS NULL OR focus_action IN ('review', 'tutor', 'practice', 'reading', 'custom')),
+    daily_plan_id INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -521,6 +625,10 @@ export const DB_SCHEMA = `
     item_validation_json TEXT,
     quality_score REAL,
     cover_test_passed INTEGER,
+    verification_status TEXT NOT NULL DEFAULT 'legacy_unverified',
+    verification_json TEXT,
+    solution_steps_json TEXT,
+    source_ref TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
     FOREIGN KEY (module_id) REFERENCES syllabus_modules(id) ON DELETE SET NULL,
@@ -544,6 +652,9 @@ export const DB_SCHEMA = `
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
     ended_at TEXT,
     summary TEXT,
+    mode TEXT NOT NULL DEFAULT 'standard' CHECK(mode IN ('standard', 'guided')),
+    guided_phase TEXT,
+    guided_state_json TEXT,
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
@@ -560,11 +671,33 @@ export const DB_SCHEMA = `
     feedback TEXT,
     time_spent_seconds INTEGER DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    evaluation_json TEXT,
+    assistance_level TEXT NOT NULL DEFAULT 'none' CHECK(assistance_level IN ('none', 'hint', 'worked_example', 'direct_answer', 'unassessed')),
+    self_explanation TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    transfer_result TEXT,
     FOREIGN KEY (session_id) REFERENCES practice_sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (problem_id) REFERENCES practice_problems(id) ON DELETE CASCADE
   );
 
   CREATE INDEX IF NOT EXISTS idx_practice_attempts_session ON practice_problem_attempts (session_id);
+
+  CREATE TABLE IF NOT EXISTS practice_guidance_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    problem_id INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    subgoal_index INTEGER NOT NULL DEFAULT 0,
+    learner_response TEXT,
+    hint_level INTEGER NOT NULL DEFAULT 0,
+    evaluation_json TEXT,
+    assistance_level TEXT NOT NULL DEFAULT 'none',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES practice_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (problem_id) REFERENCES practice_problems(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_practice_guidance_session ON practice_guidance_events(session_id, id);
 
   -- V5.0: Cognitive Knowledge & Rating Fabric (CKRF)
   CREATE TABLE IF NOT EXISTS topic_competency_ratings (
@@ -656,9 +789,94 @@ export const DB_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_topic_srs_user_subject ON topic_spaced_memory(user_id, subject_id);
   CREATE INDEX IF NOT EXISTS idx_topic_srs_due ON topic_spaced_memory(user_id, next_review_due);
+
+  CREATE TABLE IF NOT EXISTS learning_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    session_id INTEGER,
+    message_id TEXT,
+    concept TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('correct', 'partial', 'incorrect', 'unassessed')),
+    score REAL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    assistance_level TEXT NOT NULL DEFAULT 'none',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_learning_events_lookup ON learning_events(user_id, subject_id, concept, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS learner_memory_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    memory_type TEXT NOT NULL CHECK(memory_type IN ('semantic_fact', 'episodic', 'teaching_preference', 'source_fact', 'session_state')),
+    memory_key TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'uncertain', 'superseded', 'resolved')),
+    source_session_id INTEGER,
+    last_verified_at TEXT,
+    supersedes_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL,
+    FOREIGN KEY (supersedes_id) REFERENCES learner_memory_items(id) ON DELETE SET NULL,
+    UNIQUE (user_id, subject_id, memory_type, memory_key, status)
+  );
+  CREATE INDEX IF NOT EXISTS idx_learner_memory_lookup ON learner_memory_items(user_id, subject_id, status, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS memory_evidence_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER NOT NULL,
+    message_id TEXT,
+    learning_event_id INTEGER,
+    material_id INTEGER,
+    chunk_index INTEGER,
+    relation TEXT NOT NULL DEFAULT 'supports',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (memory_id) REFERENCES learner_memory_items(id) ON DELETE CASCADE,
+    FOREIGN KEY (learning_event_id) REFERENCES learning_events(id) ON DELETE SET NULL,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_memory_evidence_memory ON memory_evidence_links(memory_id);
+
+  CREATE TABLE IF NOT EXISTS session_summaries (
+    session_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    open_loops_json TEXT NOT NULL DEFAULT '[]',
+    concepts_json TEXT NOT NULL DEFAULT '[]',
+    source_version TEXT NOT NULL DEFAULT 'v1',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
 `
 
 export const MIGRATIONS_SQL = [
+  `CREATE TABLE IF NOT EXISTS document_chunks (id TEXT PRIMARY KEY, material_id INTEGER NOT NULL, chunk_index INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', heading_path TEXT NOT NULL DEFAULT '', chunk_type TEXT NOT NULL DEFAULT 'general_block', text TEXT NOT NULL, char_start INTEGER NOT NULL DEFAULT 0, char_end INTEGER NOT NULL DEFAULT 0, token_count INTEGER NOT NULL DEFAULT 0, content_hash TEXT NOT NULL, previous_chunk_id TEXT, next_chunk_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE, UNIQUE (material_id, chunk_index))`,
+  "CREATE INDEX IF NOT EXISTS idx_document_chunks_material ON document_chunks(material_id, chunk_index)",
+  "CREATE INDEX IF NOT EXISTS idx_document_chunks_hash ON document_chunks(content_hash)",
+  `CREATE TABLE IF NOT EXISTS retrieval_events (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER, material_id INTEGER, query TEXT NOT NULL, selected_json TEXT NOT NULL DEFAULT '[]', candidate_count INTEGER NOT NULL DEFAULT 0, retrieval_mode TEXT NOT NULL DEFAULT 'hybrid', index_version TEXT NOT NULL DEFAULT 'v1', created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE)`,
+  "CREATE INDEX IF NOT EXISTS idx_retrieval_events_scope ON retrieval_events(subject_id, created_at DESC)",
+  `CREATE TABLE IF NOT EXISTS learning_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, subject_id INTEGER NOT NULL, session_id INTEGER, message_id TEXT, concept TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('correct', 'partial', 'incorrect', 'unassessed')), score REAL, confidence REAL NOT NULL DEFAULT 0.5, assistance_level TEXT NOT NULL DEFAULT 'none', evidence_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL)`,
+  "CREATE INDEX IF NOT EXISTS idx_learning_events_lookup ON learning_events(user_id, subject_id, concept, created_at DESC)",
+  `CREATE TABLE IF NOT EXISTS learner_memory_items (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, subject_id INTEGER NOT NULL, memory_type TEXT NOT NULL CHECK(memory_type IN ('semantic_fact', 'episodic', 'teaching_preference', 'source_fact', 'session_state')), memory_key TEXT NOT NULL, value_json TEXT NOT NULL, confidence REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'uncertain', 'superseded', 'resolved')), source_session_id INTEGER, last_verified_at TEXT, supersedes_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY (source_session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL, FOREIGN KEY (supersedes_id) REFERENCES learner_memory_items(id) ON DELETE SET NULL, UNIQUE (user_id, subject_id, memory_type, memory_key, status))`,
+  "CREATE INDEX IF NOT EXISTS idx_learner_memory_lookup ON learner_memory_items(user_id, subject_id, status, updated_at DESC)",
+  `CREATE TABLE IF NOT EXISTS memory_evidence_links (id INTEGER PRIMARY KEY AUTOINCREMENT, memory_id INTEGER NOT NULL, message_id TEXT, learning_event_id INTEGER, material_id INTEGER, chunk_index INTEGER, relation TEXT NOT NULL DEFAULT 'supports', created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (memory_id) REFERENCES learner_memory_items(id) ON DELETE CASCADE, FOREIGN KEY (learning_event_id) REFERENCES learning_events(id) ON DELETE SET NULL, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL)`,
+  "CREATE INDEX IF NOT EXISTS idx_memory_evidence_memory ON memory_evidence_links(memory_id)",
+  `CREATE TABLE IF NOT EXISTS session_summaries (session_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, subject_id INTEGER NOT NULL, summary TEXT NOT NULL, open_loops_json TEXT NOT NULL DEFAULT '[]', concepts_json TEXT NOT NULL DEFAULT '[]', source_version TEXT NOT NULL DEFAULT 'v1', updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE)`,
+  "ALTER TABLE session_summaries ADD COLUMN unresolved_misconceptions_json TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE session_summaries ADD COLUMN next_retrieval_targets_json TEXT NOT NULL DEFAULT '[]'",
+  "CREATE TABLE IF NOT EXISTS subject_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL UNIQUE, body TEXT NOT NULL DEFAULT '', links_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE)",
   "ALTER TABLE cards ADD COLUMN note_id INTEGER REFERENCES card_notes(id)",
   "ALTER TABLE cards ADD COLUMN cloze_ordinal INTEGER DEFAULT 0",
   "ALTER TABLE cards ADD COLUMN tags TEXT DEFAULT ''",
@@ -671,10 +889,21 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE tutor_sessions ADD COLUMN duration_minutes INTEGER",
   "ALTER TABLE tutor_sessions ADD COLUMN depth_level INTEGER DEFAULT 3",
   "ALTER TABLE tutor_sessions ADD COLUMN never_studied INTEGER DEFAULT 0",
+  "ALTER TABLE tutor_sessions ADD COLUMN difficulty_mode TEXT NOT NULL DEFAULT 'fixed' CHECK(difficulty_mode IN ('fixed','adaptive'))",
+  "ALTER TABLE tutor_sessions ADD COLUMN adaptive_score REAL",
+  "ALTER TABLE tutor_sessions ADD COLUMN adaptive_uncertainty REAL",
+  "ALTER TABLE tutor_sessions ADD COLUMN adaptive_reason TEXT",
+  `CREATE TABLE IF NOT EXISTS adaptive_concept_states (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, subject_id INTEGER NOT NULL, concept TEXT NOT NULL, score REAL NOT NULL DEFAULT 30, uncertainty REAL NOT NULL DEFAULT 0.85, observations INTEGER NOT NULL DEFAULT 0, correct_count INTEGER NOT NULL DEFAULT 0, partial_count INTEGER NOT NULL DEFAULT 0, incorrect_count INTEGER NOT NULL DEFAULT 0, last_outcome TEXT NOT NULL DEFAULT 'unassessed', last_assistance TEXT NOT NULL DEFAULT 'unassessed', last_task_type TEXT, retention REAL, misconception_risk REAL, last_assessed_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(user_id, subject_id, concept), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE)`,
+  "CREATE INDEX IF NOT EXISTS idx_adaptive_concept_states_lookup ON adaptive_concept_states(user_id, subject_id, updated_at DESC)",
+  `CREATE TABLE IF NOT EXISTS tutor_task_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, concept TEXT NOT NULL, task_type TEXT NOT NULL, task_key TEXT NOT NULL, difficulty REAL NOT NULL DEFAULT 50, observations INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(subject_id, task_key), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE)`,
+  `CREATE TABLE IF NOT EXISTS tutor_turn_assessments (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, student_message_id TEXT, tutor_message_id TEXT, concept TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('correct','partial','incorrect','unassessed')), score REAL, confidence REAL NOT NULL DEFAULT 0.5, assistance_level TEXT NOT NULL DEFAULT 'unassessed', task_type TEXT, task_difficulty REAL, evidence_span TEXT, misconception TEXT, followed_scaffold INTEGER, changed_goal INTEGER, source_evidence_json TEXT NOT NULL DEFAULT '[]', idempotency_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE)`,
+  "CREATE INDEX IF NOT EXISTS idx_tutor_turn_assessments_session ON tutor_turn_assessments(session_id, created_at DESC)",
   "ALTER TABLE materials ADD COLUMN file_size INTEGER",
   "ALTER TABLE materials ADD COLUMN file_path TEXT",
   "ALTER TABLE materials ADD COLUMN tags TEXT DEFAULT ''",
   "ALTER TABLE subjects ADD COLUMN time_commitment_minutes INTEGER DEFAULT 60",
+  "ALTER TABLE subjects ADD COLUMN subject_icon TEXT NOT NULL DEFAULT 'book-open'",
+  "ALTER TABLE subjects ADD COLUMN color TEXT DEFAULT '#8b5cf6'",
   // V3: Class metadata
   "ALTER TABLE subjects ADD COLUMN subject_type TEXT NOT NULL DEFAULT 'class' CHECK(subject_type IN ('class', 'book'))",
   "ALTER TABLE subjects ADD COLUMN total_pages INTEGER",
@@ -728,19 +957,60 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE daily_plans ADD COLUMN target_topic TEXT",
   "ALTER TABLE daily_plans ADD COLUMN is_dismissed INTEGER DEFAULT 0",
   // V3.4: Calendar Sources & Events
-  "CREATE TABLE IF NOT EXISTS calendar_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('ical', 'manual', 'google_oauth')), url TEXT, color TEXT DEFAULT '#8b5cf6', last_synced_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
+  "CREATE TABLE IF NOT EXISTS calendar_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('ical', 'manual', 'google_oauth')), url TEXT, color TEXT DEFAULT '#8b5cf6', google_account_id INTEGER, google_calendar_id TEXT, sync_token TEXT, provider_metadata_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 1, last_synced_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
+  "CREATE TABLE IF NOT EXISTS google_calendar_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, encrypted_refresh_token TEXT NOT NULL, scopes TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('connected', 'reauthorize_required', 'error')), last_synced_at TEXT, last_error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)",
+  "CREATE INDEX IF NOT EXISTS idx_google_calendar_accounts_user ON google_calendar_accounts(user_id)",
   "CREATE TABLE IF NOT EXISTS calendar_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, source_id INTEGER, external_id TEXT, title TEXT NOT NULL, description TEXT, location TEXT, start_time TEXT NOT NULL, end_time TEXT NOT NULL, all_day INTEGER NOT NULL DEFAULT 0, recurrence_rule TEXT, subject_id INTEGER, event_type TEXT NOT NULL DEFAULT 'lecture' CHECK(event_type IN ('lecture', 'seminar', 'lab', 'workshop', 'study', 'personal')), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (source_id) REFERENCES calendar_sources(id) ON DELETE CASCADE, FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL)",
   "CREATE INDEX IF NOT EXISTS idx_calendar_events_user_time ON calendar_events (user_id, start_time, end_time)",
+  // V4.4: Persistent calendar study blocks
+  "ALTER TABLE calendar_events ADD COLUMN study_status TEXT NOT NULL DEFAULT 'planned' CHECK(study_status IN ('planned', 'completed', 'skipped'))",
+  "ALTER TABLE calendar_events ADD COLUMN focus_minutes INTEGER",
+  "ALTER TABLE calendar_events ADD COLUMN focus_action TEXT",
+  "ALTER TABLE calendar_events ADD COLUMN daily_plan_id INTEGER",
+  "ALTER TABLE calendar_sources ADD COLUMN google_account_id INTEGER",
+  "ALTER TABLE calendar_sources ADD COLUMN google_calendar_id TEXT",
+  "ALTER TABLE calendar_sources ADD COLUMN sync_token TEXT",
+  "ALTER TABLE calendar_sources ADD COLUMN provider_metadata_json TEXT NOT NULL DEFAULT '{}'",
+  "ALTER TABLE calendar_sources ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
   // V4.2: Linked class folders
   "ALTER TABLE subjects ADD COLUMN linked_folder_path TEXT DEFAULT NULL",
   "ALTER TABLE subjects ADD COLUMN folder_last_synced_at TEXT DEFAULT NULL",
   "ALTER TABLE subjects ADD COLUMN folder_sync_status TEXT DEFAULT 'idle'",
   "ALTER TABLE materials ADD COLUMN file_mtime INTEGER DEFAULT NULL",
   "ALTER TABLE materials ADD COLUMN file_size INTEGER DEFAULT NULL",
+  "ALTER TABLE materials ADD COLUMN file_sha256 TEXT DEFAULT NULL",
   "ALTER TABLE materials ADD COLUMN relative_path TEXT DEFAULT NULL",
   // V4.3: Lecture audio recording & notes
   "CREATE TABLE IF NOT EXISTS lectures (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL, audio_path TEXT NOT NULL, audio_mime_type TEXT NOT NULL DEFAULT 'audio/webm', duration_seconds INTEGER NOT NULL DEFAULT 0, file_size_bytes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'recording' CHECK(status IN ('recording', 'recorded', 'transcribing', 'ready', 'failed')), raw_transcript TEXT, error_message TEXT, material_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL)",
   "CREATE INDEX IF NOT EXISTS idx_lectures_subject ON lectures (subject_id)",
+  // V4.5: Persistent document/lecture annotation sidecar
+  `CREATE TABLE IF NOT EXISTS document_annotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    material_id INTEGER,
+    lecture_id INTEGER,
+    kind TEXT NOT NULL CHECK (kind IN ('highlight', 'comment', 'cue', 'question', 'summary')),
+    parent_id INTEGER,
+    color TEXT,
+    body TEXT NOT NULL DEFAULT '',
+    selected_text TEXT,
+    locator_json TEXT,
+    source_snapshot TEXT,
+    source_hash TEXT,
+    locator_status TEXT NOT NULL DEFAULT 'resolved' CHECK (locator_status IN ('resolved', 'needs_review')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT,
+    CHECK (material_id IS NOT NULL OR lecture_id IS NOT NULL),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE,
+    FOREIGN KEY (lecture_id) REFERENCES lectures(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES document_annotations(id) ON DELETE SET NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_document_annotations_material ON document_annotations (material_id, deleted_at, updated_at)",
+  "CREATE INDEX IF NOT EXISTS idx_document_annotations_lecture ON document_annotations (lecture_id, deleted_at, updated_at)",
+  "CREATE INDEX IF NOT EXISTS idx_document_annotations_subject ON document_annotations (subject_id, deleted_at, updated_at)",
+  "ALTER TABLE document_annotations ADD COLUMN locator_status TEXT NOT NULL DEFAULT 'resolved'",
   // V4.4: Practice Problems & Lab
   `CREATE TABLE IF NOT EXISTS practice_problems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -882,6 +1152,39 @@ export const MIGRATIONS_SQL = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_topic_srs_user_subject ON topic_spaced_memory(user_id, subject_id)",
   "CREATE INDEX IF NOT EXISTS idx_topic_srs_due ON topic_spaced_memory(user_id, next_review_due)",
+  // V5.5: Evidence-backed topic review history and transparent planning metadata
+  `CREATE TABLE IF NOT EXISTS topic_review_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    mode TEXT NOT NULL CHECK(mode IN ('tutor', 'flashcards', 'practice', 'new_content', 'manual')),
+    prompt_text TEXT,
+    answer_text TEXT,
+    score REAL,
+    assistance_level TEXT NOT NULL DEFAULT 'none' CHECK(assistance_level IN ('none', 'hint', 'worked_example', 'direct_answer', 'unassessed')),
+    duration_seconds INTEGER,
+    source_material_id INTEGER,
+    session_id INTEGER,
+    evidence_status TEXT NOT NULL DEFAULT 'assessed' CHECK(evidence_status IN ('assessed', 'unassessed', 'invalid')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_material_id) REFERENCES materials(id) ON DELETE SET NULL,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_topic_review_events_lookup ON topic_review_events(user_id, subject_id, topic_id, created_at DESC)",
+  "ALTER TABLE module_topics ADD COLUMN concept_fingerprint TEXT",
+  "ALTER TABLE module_topics ADD COLUMN concept_type TEXT DEFAULT 'concept'",
+  "ALTER TABLE module_topics ADD COLUMN estimated_minutes INTEGER DEFAULT 15",
+  "ALTER TABLE module_topics ADD COLUMN new_content_state TEXT NOT NULL DEFAULT 'unseen' CHECK(new_content_state IN ('unseen','learning','verified','deferred'))",
+  "ALTER TABLE module_topics ADD COLUMN source_material_ids TEXT DEFAULT '[]'",
+  "ALTER TABLE daily_plans ADD COLUMN reason_code TEXT",
+  "ALTER TABLE daily_plans ADD COLUMN topic_id INTEGER REFERENCES module_topics(id) ON DELETE SET NULL",
+  "ALTER TABLE daily_plans ADD COLUMN evidence_json TEXT DEFAULT '{}'",
+  "ALTER TABLE daily_plans ADD COLUMN success_criteria TEXT",
+  "ALTER TABLE daily_plans ADD COLUMN fallback_action TEXT",
   // V5.3: Tutor session persistence & chat history
   "ALTER TABLE tutor_sessions ADD COLUMN title TEXT",
   "ALTER TABLE tutor_sessions ADD COLUMN last_message_at INTEGER",
@@ -898,7 +1201,21 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE practice_problems ADD COLUMN subgoals_json TEXT",
   "ALTER TABLE practice_problems ADD COLUMN item_validation_json TEXT",
   "ALTER TABLE practice_problems ADD COLUMN quality_score REAL",
-  "ALTER TABLE practice_problems ADD COLUMN cover_test_passed INTEGER"
+  "ALTER TABLE practice_problems ADD COLUMN cover_test_passed INTEGER",
+  "ALTER TABLE practice_problems ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'legacy_unverified'",
+  "ALTER TABLE practice_problems ADD COLUMN verification_json TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN solution_steps_json TEXT",
+  "ALTER TABLE practice_problems ADD COLUMN source_ref TEXT",
+  "ALTER TABLE practice_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'standard'",
+  "ALTER TABLE practice_sessions ADD COLUMN guided_phase TEXT",
+  "ALTER TABLE practice_sessions ADD COLUMN guided_state_json TEXT",
+  "ALTER TABLE practice_problem_attempts ADD COLUMN evaluation_json TEXT",
+  "ALTER TABLE practice_problem_attempts ADD COLUMN assistance_level TEXT NOT NULL DEFAULT 'none'",
+  "ALTER TABLE practice_problem_attempts ADD COLUMN self_explanation TEXT",
+  "ALTER TABLE practice_problem_attempts ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE practice_problem_attempts ADD COLUMN transfer_result TEXT",
+  "CREATE TABLE IF NOT EXISTS practice_guidance_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, problem_id INTEGER NOT NULL, phase TEXT NOT NULL, subgoal_index INTEGER NOT NULL DEFAULT 0, learner_response TEXT, hint_level INTEGER NOT NULL DEFAULT 0, evaluation_json TEXT, assistance_level TEXT NOT NULL DEFAULT 'none', created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (session_id) REFERENCES practice_sessions(id) ON DELETE CASCADE, FOREIGN KEY (problem_id) REFERENCES practice_problems(id) ON DELETE CASCADE)",
+  "CREATE INDEX IF NOT EXISTS idx_practice_guidance_session ON practice_guidance_events(session_id, id)"
 ]
 
 export const MASTERED_INTERVAL = 21
@@ -989,6 +1306,7 @@ export function deleteSubjectCascade(db: CascadeDB, subjectId: number): void {
   db.prepare('DELETE FROM materials WHERE subject_id = ?').run(subjectId)
 
   // 5. Remaining subject-scoped tables.
+  // subject_notes uses ON DELETE CASCADE and is removed by SQLite with the subject.
   for (const table of SUBJECT_CHILD_TABLES) {
     db.prepare(`DELETE FROM ${table} WHERE subject_id = ?`).run(subjectId)
   }
@@ -1097,4 +1415,3 @@ export function updateLectureStatus(
 export function deleteLecture(db: CascadeDB, id: number): void {
   db.prepare('DELETE FROM lectures WHERE id = ?').run(id)
 }
-

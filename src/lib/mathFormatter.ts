@@ -371,6 +371,54 @@ export function hasMathInput(text: string): boolean {
 }
 
 /**
+ * Normalize user/AI-authored rich text to Neuron's canonical math contract.
+ *
+ * Canonical storage uses LaTeX delimiters (`$...$` and `$$...$$`).  The
+ * renderer still accepts legacy forms, but callers that persist content should
+ * use this function so the same text behaves consistently across every view.
+ * Code spans, fenced code, existing dollar-delimited math, and currency are
+ * protected by preprocessLatexText before alternate delimiters are rewritten.
+ */
+export function normalizeMathText(text: string): string {
+  if (!text || typeof text !== 'string') return ''
+
+  let normalized = preprocessLatexText(text)
+  const protectedParts: string[] = []
+  const protect = (match: string): string => {
+    const token = `@@NEURON_CANONICAL_MATH_${protectedParts.length}@@`
+    protectedParts.push(match)
+    return token
+  }
+
+  // Preserve code and already-canonical dollar math while converting only the
+  // alternate TeX delimiters. This also prevents currency from being touched.
+  normalized = normalized.replace(/```[\s\S]*?```|`[^`\n]+`/g, protect)
+  normalized = normalized.replace(/\$\$[\s\S]*?\$\$|(?<!\\|\$)\$[^\n$]+?\$(?!\d)/g, protect)
+
+  normalized = normalized
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, inner: string) => `$$${inner.trim()}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, inner: string) => `$${inner.trim()}$`)
+
+  // Convert standalone display environments to the canonical display form.
+  normalized = normalized.replace(
+    /\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\1\}/g,
+    (_, environment: string, body: string) => `$$\\begin{${environment}}${body}\\end{${environment}}$$`
+  )
+
+  for (let i = protectedParts.length - 1; i >= 0; i--) {
+    normalized = normalized.replace(`@@NEURON_CANONICAL_MATH_${i}@@`, () => protectedParts[i])
+  }
+
+  return normalized
+}
+
+/** Normalize a persisted rich-text field without changing empty/null values. */
+export function normalizeStoredMathText(text: string | null | undefined): string | null | undefined {
+  if (text === null || text === undefined) return text
+  return normalizeMathText(text)
+}
+
+/**
  * Smart offline local math equation auto-formatter.
  * Converts raw mathematical formulas, exponents, fractions, square roots, and equations
  * into properly formatted LaTeX with $...$ delimiters.

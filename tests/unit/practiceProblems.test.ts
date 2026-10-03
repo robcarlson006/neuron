@@ -16,7 +16,8 @@ import {
   detectCompoundChoices,
   detectNegativeStem,
   classifyDistractorStrategy,
-  evaluatePracticeProblemQuality
+  evaluatePracticeProblemQuality,
+  verifyGeneratedPracticeProblem
 } from "../../src/lib/practiceValidator"
 import { DB_SCHEMA, MIGRATIONS_SQL, deleteSubjectCascade } from "../../src/lib/db"
 import type { PracticeProblem, ExtractedPracticeProblem } from "../../src/types"
@@ -25,6 +26,21 @@ import type { PracticeProblem, ExtractedPracticeProblem } from "../../src/types"
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string) => any }
 
 describe("Psychometric Item Writing Standards & Validator", () => {
+  it("never treats a model score as verification without an independent critic", () => {
+    const candidate: ExtractedPracticeProblem = {
+      title: "Verified structure",
+      problem_text: "Calculate the final value when x = 2.",
+      stem_lead_in: "Calculate the final value when x = 2.",
+      solution_steps: "1. Substitute x = 2.\n2. Evaluate the expression.",
+      final_answer: "2",
+      difficulty: 2,
+      principles: ["Substitution"],
+      subgoals: ["Identify the input", "Evaluate the result"]
+    }
+    expect(verifyGeneratedPracticeProblem(candidate, false).status).toBe("needs_review")
+    expect(verifyGeneratedPracticeProblem(candidate, true).status).toBe("verified")
+  })
+
   it("passesCoverTest identifies focused stems and rejects open-concept fragments", () => {
     // Valid stems
     expect(passesCoverTest("What is the derivative of $f(x) = x^3 \\ln(x)$ with respect to $x$?").passed).toBe(true)

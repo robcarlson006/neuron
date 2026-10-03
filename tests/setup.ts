@@ -1,6 +1,14 @@
 /// <reference types="@testing-library/jest-dom" />
 import '@testing-library/jest-dom'
 
+class TestResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+Object.defineProperty(globalThis, 'ResizeObserver', { value: TestResizeObserver, writable: true })
+
 // Mock window.electronAPI for renderer tests
 const mockElectronAPI = {
   getUser: jest.fn().mockResolvedValue(null),
@@ -21,6 +29,24 @@ const mockElectronAPI = {
   processReview: jest.fn().mockResolvedValue({ sm2Result: {}, success: true }),
   saveReviewLog: jest.fn().mockResolvedValue({ id: 1 }),
   getReviewLogs: jest.fn().mockResolvedValue([]),
+  getAnalyticsSnapshot: jest.fn().mockResolvedValue({
+    range_days: 30,
+    start_date: '2026-09-01',
+    end_date: '2026-09-30',
+    previous_start_date: '2026-08-02',
+    previous_end_date: '2026-08-31',
+    daily: [],
+    modes: [
+      { mode: 'flashcards', sessions: 0, minutes: null, items: 0, correct: 0, total: 0 },
+      { mode: 'tutor', sessions: 0, minutes: null, items: 0, correct: 0, total: 0 },
+      { mode: 'practice', sessions: 0, minutes: null, items: 0, correct: 0, total: 0 },
+      { mode: 'focus', sessions: 0, minutes: null, items: 0, correct: 0, total: 0 }
+    ],
+    subjects: [],
+    totals: { reviews: 0, correct: 0, accuracy: null, study_minutes: 0, sessions: 0, current_retention: null },
+    previous_totals: { reviews: 0, correct: 0, accuracy: null, study_minutes: 0, sessions: 0 },
+    maintenance: { due_cards: 0, overdue_cards: 0, fading_cards: 0 }
+  }),
   getReviewLogsForCard: jest.fn().mockResolvedValue([]),
   getDeadlines: jest.fn().mockResolvedValue([]),
   saveDeadline: jest.fn().mockResolvedValue({ id: 1 }),
@@ -29,7 +55,21 @@ const mockElectronAPI = {
   saveDiagnostics: jest.fn().mockResolvedValue({ id: 1 }),
   getMaterials: jest.fn().mockResolvedValue([]),
   getMaterial: jest.fn().mockResolvedValue(null),
+  getMaterialFileUrl: jest.fn().mockResolvedValue(null),
+  getMaterialVisualUrl: jest.fn().mockResolvedValue(null),
+  getMaterialVisualBytes: jest.fn().mockResolvedValue(null),
+  getMaterialVisualPageCount: jest.fn().mockResolvedValue(null),
   saveMaterial: jest.fn().mockResolvedValue({ id: 1 }),
+  getSubjectNote: jest.fn().mockResolvedValue(null),
+  saveSubjectNote: jest.fn().mockResolvedValue({ id: 1, subject_id: 1, body: '', links_json: '[]', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+  listDocumentAnnotations: jest.fn().mockResolvedValue([]),
+  reconcileMaterialAnnotations: jest.fn().mockResolvedValue([]),
+  saveDocumentAnnotation: jest.fn().mockResolvedValue({ id: 1 }),
+  deleteDocumentAnnotation: jest.fn().mockResolvedValue({ success: true }),
+  restoreDocumentAnnotation: jest.fn().mockResolvedValue({ success: true }),
+  listLectures: jest.fn().mockResolvedValue([]),
+  getLecture: jest.fn().mockResolvedValue(null),
+  getLectureAudioUrl: jest.fn().mockResolvedValue(''),
   openFileDialog: jest.fn().mockResolvedValue(null),
   parseFile: jest.fn().mockResolvedValue({ filename: 'test.pdf', fileType: 'pdf', contentText: '', originalLength: 0 }),
   generateCards: jest.fn().mockResolvedValue({ flashcards: [], active_recall: [] }),
@@ -47,6 +87,10 @@ const mockElectronAPI = {
   removeConceptDependencyEdge: jest.fn().mockResolvedValue({ success: true }),
   getStreakData: jest.fn().mockResolvedValue([]),
   getWeakestCards: jest.fn().mockResolvedValue([]),
+  getMCStats: jest.fn().mockResolvedValue({ total: 0, correct: 0 }),
+  getAvgResponseTime: jest.fn().mockResolvedValue({ avg_ms: null }),
+  getRetentionForecast: jest.fn().mockResolvedValue([]),
+  getCurrentRetentionBySubject: jest.fn().mockResolvedValue([]),
   getMeta: jest.fn().mockResolvedValue(null),
   setMeta: jest.fn().mockResolvedValue({ success: true }),
   ragIndexMaterial: jest.fn().mockResolvedValue({ chunkCount: 5 }),
@@ -66,12 +110,14 @@ const mockElectronAPI = {
   tutorSaveMessage: jest.fn().mockResolvedValue({ id: 'mock-id', conversation_id: 1, role: 'user', content: '', content_type: 'text', created_at: new Date().toISOString() }),
   tutorGetMessageHistory: jest.fn().mockResolvedValue([]),
   tutorGenerateCards: jest.fn().mockResolvedValue(''),
+  tutorExtractCardFromSnippet: jest.fn().mockResolvedValue({ success: true, cards: [] }),
   tutorCheckDuplicates: jest.fn().mockResolvedValue([]),
   tutorUpdateMastery: jest.fn().mockResolvedValue({ mastery_prob: 0.8 }),
   tutorStreamChat: jest.fn().mockResolvedValue({ success: true, fullResponse: '' }),
   tutorGetSubjectRetentionSummary: jest.fn().mockResolvedValue({ subjectId: 1, totalTopics: 0, completedTopics: 0, averageRetention: 1.0, freshCount: 0, fadingCount: 0, overdueCount: 0, dueTopics: [] }),
   tutorGetTopDueMaintenanceTopics: jest.fn().mockResolvedValue([]),
   tutorGetSubjectModuleStats: jest.fn().mockResolvedValue({}),
+  tutorGetSubjectCurriculumTopics: jest.fn().mockResolvedValue([]),
   onTutorChunk: jest.fn(),
 
   // Daily Plans

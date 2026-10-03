@@ -8,8 +8,9 @@ interface PracticeSessionLauncherProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
   problems: PracticeProblem[]
   onClose: () => void
-  onStartSession: (moduleId?: number, topicId?: number, count?: number) => void
+  onStartSession: (moduleId?: number, topicId?: number, count?: number, options?: { difficulty?: number; learningGoal?: 'recommended' | 'reinforce' | 'review' | 'transfer' }) => void
   onOpenAutoGen?: (moduleId?: number, topicId?: number) => void
+  embedded?: boolean
 }
 
 const COUNT_OPTIONS = [
@@ -26,11 +27,14 @@ export default function PracticeSessionLauncher({
   problems,
   onClose,
   onStartSession,
-  onOpenAutoGen
+  onOpenAutoGen,
+  embedded = false
 }: PracticeSessionLauncherProps): React.JSX.Element {
   const [selectedModuleId, setSelectedModuleId] = useState<number | undefined>()
   const [selectedTopicId, setSelectedTopicId] = useState<number | undefined>()
   const [problemCount, setProblemCount] = useState<number>(5)
+  const [difficulty, setDifficulty] = useState<number | undefined>()
+  const [learningGoal, setLearningGoal] = useState<'recommended' | 'reinforce' | 'review' | 'transfer'>('recommended')
 
   const currentModule = modules.find((m) => m.id === selectedModuleId)
 
@@ -42,8 +46,8 @@ export default function PracticeSessionLauncher({
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
+    <div className={embedded ? "w-full" : "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"}>
+      <div className={embedded ? "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-sm w-full overflow-hidden flex flex-col" : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col"}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-2">
@@ -55,13 +59,13 @@ export default function PracticeSessionLauncher({
               <p className="text-xs text-slate-500 dark:text-slate-400">Select curriculum topics and problem count</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg">
+          {!embedded && <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg">
             <X size={18} />
-          </button>
+          </button>}
         </div>
 
         {/* Form Body */}
-        <div className="p-6 space-y-5 overflow-y-auto max-h-[75vh]">
+        <div className={embedded ? "p-6 lg:p-8 space-y-6" : "p-6 space-y-5 overflow-y-auto max-h-[75vh]"}>
           {/* Module Selector */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 flex items-center gap-1.5">
@@ -146,6 +150,25 @@ export default function PracticeSessionLauncher({
             </div>
           </div>
 
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Learning goal</label>
+              <select value={learningGoal} onChange={event => setLearningGoal(event.target.value as typeof learningGoal)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium dark:border-slate-700 dark:bg-slate-800">
+                <option value="recommended">Recommended next steps</option>
+                <option value="reinforce">Reinforce weak skills</option>
+                <option value="review">Review this scope</option>
+                <option value="transfer">Try transfer problems</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Difficulty</label>
+              <select value={difficulty || ''} onChange={event => setDifficulty(event.target.value ? Number(event.target.value) : undefined)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium dark:border-slate-700 dark:bg-slate-800">
+                <option value="">Mixed / recommended</option>
+                {[1, 2, 3, 4, 5].map(level => <option key={level} value={level}>Difficulty {level}</option>)}
+              </select>
+            </div>
+          </div>
+
           {/* Problem availability note */}
           <div className="flex items-center justify-between p-3 rounded-xl bg-slate-100 dark:bg-slate-800/50 text-xs">
             <div className="space-y-0.5">
@@ -175,15 +198,15 @@ export default function PracticeSessionLauncher({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900">
-          <button
+          {!embedded && <button
             onClick={onClose}
             className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 rounded-xl"
           >
             Cancel
-          </button>
+          </button>}
           <button
             onClick={() => {
-              onStartSession(selectedModuleId, selectedTopicId, problemCount)
+              onStartSession(selectedModuleId, selectedTopicId, problemCount, { difficulty, learningGoal })
               onClose()
             }}
             disabled={matchingProblems.length === 0}

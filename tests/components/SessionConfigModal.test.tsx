@@ -52,6 +52,44 @@ describe('SessionConfigModal - New Content & Multi-Module Study', () => {
     } as any
   })
 
+  it('exposes an accessible dialog and closes with Escape', async () => {
+    const onClose = jest.fn()
+    render(
+      <MemoryRouter>
+        <SessionConfigModal
+          subjectId={101}
+          subjectName="Principles of Microeconomics"
+          onClose={onClose}
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByRole('dialog', { name: /start a study session/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /close study session setup/i })).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps all study paths available in the grouped launcher', () => {
+    render(
+      <MemoryRouter>
+        <SessionConfigModal
+          subjectId={101}
+          subjectName="Principles of Microeconomics"
+          onClose={jest.fn()}
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByRole('button', { name: /new content/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /quick review/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /fill gaps/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /active recall/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /syllabus/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /material/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /custom/i })).toBeInTheDocument()
+  })
+
   it('renders New Content tab with all new topics across modules selected by default', async () => {
     render(
       <MemoryRouter>
@@ -117,5 +155,78 @@ describe('SessionConfigModal - New Content & Multi-Module Study', () => {
     const configParam = new URLSearchParams(targetUrl.split('?')[1]).get('config')
     const parsedConfig = JSON.parse(decodeURIComponent(configParam!))
     expect(parsedConfig.target_topics).toEqual(['Utility Functions'])
+  })
+
+  it('lets learners deselect an individual lecture annotation from tutor context', async () => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      libraryGetFiles: jest.fn().mockResolvedValue([{ id: 7, filename: 'Lecture slides.pdf' }]),
+      listLectures: jest.fn().mockResolvedValue([{ id: 9, subject_id: 101, title: 'Week 1 lecture' }]),
+      listDocumentAnnotations: jest.fn().mockImplementation(({ lectureId, materialId }: { lectureId?: number; materialId?: number }) => Promise.resolve(
+        lectureId
+          ? [{ id: 901, subject_id: 101, lecture_id: lectureId, kind: 'question', body: 'Why?' }]
+          : materialId
+            ? []
+            : []
+      ))
+    } as any
+
+    render(
+      <MemoryRouter>
+        <SessionConfigModal
+          subjectId={101}
+          subjectName="Principles of Microeconomics"
+          initialMode="material"
+          materialId={7}
+          onClose={jest.fn()}
+        />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => expect(screen.getByText(/Week 1 lecture/)).toBeInTheDocument())
+    const annotationCheckbox = screen.getByLabelText(/Why\?/i)
+    expect(annotationCheckbox).toBeChecked()
+    fireEvent.click(annotationCheckbox)
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Session/i }))
+    const targetUrl = mockNavigate.mock.calls[0][0]
+    const configParam = new URLSearchParams(targetUrl.split('?')[1]).get('config')
+    const parsedConfig = JSON.parse(decodeURIComponent(configParam!))
+    expect(parsedConfig.annotation_ids).toEqual([])
+    expect(parsedConfig.lecture_ids).toBeUndefined()
+  })
+
+  it('selects material annotations by default and removes them from tutor context when deselected', async () => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      libraryGetFiles: jest.fn().mockResolvedValue([{ id: 7, filename: 'Lecture slides.pdf' }]),
+      listLectures: jest.fn().mockResolvedValue([]),
+      listDocumentAnnotations: jest.fn().mockImplementation(({ materialId }: { materialId?: number }) => Promise.resolve(
+        materialId === 7
+          ? [{ id: 701, subject_id: 101, material_id: 7, kind: 'highlight', selected_text: 'scarcity', body: '' }]
+          : []
+      ))
+    } as any
+
+    render(
+      <MemoryRouter>
+        <SessionConfigModal
+          subjectId={101}
+          subjectName="Principles of Microeconomics"
+          initialMode="material"
+          materialId={7}
+          onClose={jest.fn()}
+        />
+      </MemoryRouter>
+    )
+
+    const annotationCheckbox = await screen.findByLabelText(/scarcity/i)
+    expect(annotationCheckbox).toBeChecked()
+
+    fireEvent.click(annotationCheckbox)
+    fireEvent.click(screen.getByRole('button', { name: /Start Session/i }))
+    const targetUrl = mockNavigate.mock.calls[0][0]
+    const configParam = new URLSearchParams(targetUrl.split('?')[1]).get('config')
+    expect(JSON.parse(decodeURIComponent(configParam!)).annotation_ids).toEqual([])
   })
 })

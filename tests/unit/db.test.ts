@@ -13,6 +13,8 @@ describe('Database Schema', () => {
   it('contains subjects table with status constraint', () => {
     expect(DB_SCHEMA).toContain('CREATE TABLE IF NOT EXISTS subjects')
     expect(DB_SCHEMA).toContain("status IN ('active', 'ongoing', 'archived')")
+    expect(DB_SCHEMA).toContain("subject_icon TEXT NOT NULL DEFAULT 'book-open'")
+    expect(DB_SCHEMA).toContain("color TEXT DEFAULT '#8b5cf6'")
   })
 
   it('contains materials table', () => {
@@ -64,7 +66,8 @@ describe('Database Schema', () => {
 
   it('contains folder sync columns in materials schema', () => {
     expect(DB_SCHEMA).toContain('file_mtime INTEGER DEFAULT NULL')
-    expect(DB_SCHEMA).toContain('file_size INTEGER DEFAULT NULL')
+  expect(DB_SCHEMA).toContain('file_size INTEGER DEFAULT NULL')
+  expect(DB_SCHEMA).toContain('file_sha256 TEXT DEFAULT NULL')
     expect(DB_SCHEMA).toContain('relative_path TEXT DEFAULT NULL')
   })
 
@@ -73,8 +76,14 @@ describe('Database Schema', () => {
     expect(MIGRATIONS_SQL).toContain('ALTER TABLE subjects ADD COLUMN folder_last_synced_at TEXT DEFAULT NULL')
     expect(MIGRATIONS_SQL).toContain("ALTER TABLE subjects ADD COLUMN folder_sync_status TEXT DEFAULT 'idle'")
     expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN file_mtime INTEGER DEFAULT NULL')
-    expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN file_size INTEGER DEFAULT NULL')
+  expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN file_size INTEGER DEFAULT NULL')
+  expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN file_sha256 TEXT DEFAULT NULL')
     expect(MIGRATIONS_SQL).toContain('ALTER TABLE materials ADD COLUMN relative_path TEXT DEFAULT NULL')
+  })
+
+  it('contains subject appearance migrations', () => {
+    expect(MIGRATIONS_SQL).toContain("ALTER TABLE subjects ADD COLUMN subject_icon TEXT NOT NULL DEFAULT 'book-open'")
+    expect(MIGRATIONS_SQL).toContain("ALTER TABLE subjects ADD COLUMN color TEXT DEFAULT '#8b5cf6'")
   })
 
   it('uses IF NOT EXISTS to be safe on re-runs', () => {

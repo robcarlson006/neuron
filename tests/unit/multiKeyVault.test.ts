@@ -79,8 +79,8 @@ describe('Multi-Key Vault & Feature Routing', () => {
     expect(vault.hasOpenaiKey).toBe(false)
     expect(vault.hasDeepseekKey).toBe(false)
     expect(vault.hasGroqKey).toBe(false)
-    expect(vault.visionProvider).toBe('gemini')
-    expect(vault.visionModel).toBe('gemini-2.0-flash')
+      expect(vault.visionProvider).toBe('deepseek')
+      expect(vault.visionModel).toBe('deepseek-flash')
   })
 
   test('saves and retrieves distinct keys for each provider without collisions', () => {

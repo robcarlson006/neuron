@@ -9,7 +9,16 @@ import { parseFileToText } from './documentParser'
 import { bktUpdate } from '../../src/lib/bkt'
 import { findCardDuplicates } from '../../src/lib/cardDeduplication'
 import { safeParseAIJson } from '../../src/lib/jsonRepair'
-import { parseDocumentTopology } from '../../src/lib/coverage/documentTopologyParser'
+import { buildHighlightCardPrompt } from '../../src/lib/highlightCardPrompt'
+import { hasSufficientEvidence } from '../../src/lib/groundedRetrieval'
+import { retrieveGroundedEvidenceAsync } from './groundedHandlers'
+import { buildTutorContext } from '../../src/lib/tutorContextBuilder'
+import { verifyTutorAnswer } from '../../src/lib/tutorAnswerVerifier'
+import { LearnerMemoryService } from '../../src/lib/memory/learnerMemoryService'
+import { buildTutorPolicyBlock } from '../../src/lib/tutorLearningPolicy'
+import { buildFocusCandidates, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
+import { decideAdaptiveDifficulty } from '../../src/lib/adaptiveTutorEngine'
+import { buildTutorAssessmentPrompt, parseTutorAssessment } from '../../src/lib/tutorAssessment'
 import {
   buildCKRFMemoryBlock,
   recordTopicAssessment,
@@ -21,7 +30,8 @@ import {
   updateTopicSrsState,
   getTopicsRetention,
   getSubjectRetentionSummary,
-  getTopDueMaintenanceTopics
+  getTopDueMaintenanceTopics,
+  recordTopicReviewEvent
 } from '../../src/lib/memory/topicSrsEngine'
 import type {
   TutorSession,
@@ -31,7 +41,9 @@ import type {
   TutorSessionEvaluation,
   GapAnalysisResult,
   GapAnalysisItem,
-  QuickReviewTopic
+  QuickReviewTopic,
+  HighlightCardExtractionOptions,
+  HighlightCardDraft
 } from '../../src/types'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 
@@ -879,6 +891,21 @@ Return STRICT JSON ONLY, no extra text, in this format:
     } catch (ckrfErr) {
       console.warn('CKRF strength update error:', ckrfErr)
     }
+
+    try {
+      new LearnerMemoryService(database).recordLearningEvent({
+        userId: actualUserId,
+        subjectId: session.subject_id,
+        sessionId,
+        concept: cleanTopic,
+        outcome: 'correct',
+        score: 1,
+        confidence: 0.7,
+        assistanceLevel: 'none'
+      })
+    } catch (memoryErr) {
+      console.warn('Learning event persistence failed:', memoryErr)
+    }
   }
 
   // Update topic memories for struggles
@@ -916,6 +943,44 @@ Return STRICT JSON ONLY, no extra text, in this format:
     } catch (ckrfErr) {
       console.warn('CKRF struggle update error:', ckrfErr)
     }
+
+    try {
+      new LearnerMemoryService(database).recordLearningEvent({
+        userId: actualUserId,
+        subjectId: session.subject_id,
+        sessionId,
+        concept: cleanTopic,
+        outcome: 'incorrect',
+        score: 0.25,
+        confidence: 0.65,
+        assistanceLevel: 'hint'
+      })
+    } catch (memoryErr) {
+      console.warn('Learning event persistence failed:', memoryErr)
+    }
+  }
+
+  try {
+    const memoryService = new LearnerMemoryService(database)
+    for (const breakthrough of evaluation.breakthroughs) {
+      if (!breakthrough.topic || !breakthrough.summary) continue
+      memoryService.upsertMemory({
+        userId: actualUserId,
+        subjectId: session.subject_id,
+        memoryType: 'episodic',
+        memoryKey: `${breakthrough.topic}:${breakthrough.summary}`,
+        value: {
+          topic: breakthrough.topic,
+          summary: breakthrough.summary,
+          effectiveIntervention: breakthrough.effective_intervention || null
+        },
+        confidence: 0.65,
+        sourceSessionId: sessionId
+      })
+    }
+    memoryService.consolidateSession(sessionId)
+  } catch (memoryErr) {
+    console.warn('Learner memory consolidation failed:', memoryErr)
   }
 
   // Persist CKRF Misconceptions
@@ -1097,10 +1162,6 @@ Return STRICT JSON ONLY, no extra text, in this format:
           VALUES (?, ?, ?)
         `).run(modTopic.id, actualUserId, now)
 
-        database.prepare(`
-          UPDATE module_topics SET has_new_material = 0, is_gap = 0 WHERE id = ?
-        `).run(modTopic.id)
-
         // Topic-SRS: Determine FSRS rating from dialogue evaluation
         const topStr = modTopic.title
         const isStruggle = evaluation.struggles.some(s => s.toLowerCase().includes(topStr.toLowerCase()) || topStr.toLowerCase().includes(s.toLowerCase()))
@@ -1118,7 +1179,32 @@ Return STRICT JSON ONLY, no extra text, in this format:
         }
 
         try {
-          const srsResult = updateTopicSrsState(database, actualUserId, session.subject_id, modTopic.id, srsRating, now)
+          const topicPrompt = messages.find(message => message.role === 'assistant')?.content || null
+          const topicAnswer = messages.find(message => message.role === 'user')?.content || null
+          const evidenceStatus: 'assessed' | 'unassessed' = topicPrompt && topicAnswer ? 'assessed' : 'unassessed'
+          const score = srsRating === 1 ? 0.25 : srsRating === 2 ? 0.55 : srsRating === 4 ? 0.95 : 0.75
+          recordTopicReviewEvent(database, {
+            topicId: modTopic.id,
+            userId: actualUserId,
+            subjectId: session.subject_id,
+            mode: 'tutor',
+            promptText: topicPrompt,
+            answerText: topicAnswer,
+            score,
+            assistanceLevel: 'none',
+            sessionId,
+            evidenceStatus
+          })
+          const srsResult = evidenceStatus === 'assessed'
+            ? updateTopicSrsState(database, actualUserId, session.subject_id, modTopic.id, srsRating, now)
+            : null
+          if (evidenceStatus === 'assessed') {
+            database.prepare(`
+              UPDATE module_topics
+              SET has_new_material = 0, is_gap = 0, new_content_state = 'verified'
+              WHERE id = ?
+            `).run(modTopic.id)
+          }
           if (srsResult) {
             updatedTopics.push(srsResult)
           }
@@ -1182,6 +1268,7 @@ export interface BuildFocusBlockPromptParams {
   subjectId?: number
   lectureTopic?: string
   materialsSummary?: string
+  candidateBriefs?: string
 }
 
 export function buildFocusBlockPrompt(params: BuildFocusBlockPromptParams): string {
@@ -1193,7 +1280,8 @@ export function buildFocusBlockPrompt(params: BuildFocusBlockPromptParams): stri
     eventTitle,
     subjectName,
     lectureTopic,
-    materialsSummary
+    materialsSummary,
+    candidateBriefs
   } = params
 
   let contextDirectives = ''
@@ -1225,6 +1313,9 @@ ${contextDirectives}
 STUDENT CLASSES & CURRENT STATUS:
 ${subjectBriefs}
 
+CANONICAL WORK CANDIDATES (select only these exact subject/topic/action combinations):
+${candidateBriefs || '(none)'}
+
 ${completedText}
 
 TASK:
@@ -1244,8 +1335,9 @@ Return ONLY valid JSON matching this schema:
   "focus_items": [
     {
       "subject_id": 1,
-      "action_type": "flashcards" | "tutor_drill" | "syllabus_read",
+      "action_type": "flashcards" | "tutor_drill" | "syllabus_read" | "new_content",
       "suggested_action": "Clear, concise title of the step",
+      "topic_id": 10,
       "learning_objective": "1 sentence pedagogical focus or goal",
       "target_topic": "Specific topic name or null",
       "estimated_minutes": 15,
@@ -1262,7 +1354,7 @@ export function registerTutorHandlers(): void {
   // TUTOR SESSION CRUD
   // ═══════════════════════════════════════════════════════════════════════════
 
-  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; never_studied: number | boolean; title?: string }) => {
+  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number | boolean; title?: string }) => {
     const now = new Date().toISOString()
     const nowMs = Date.now()
     // Use null for subject when 0 (general chat) — FK allows null
@@ -1271,8 +1363,8 @@ export function registerTutorHandlers(): void {
     const neverStudiedVal = config?.never_studied ? 1 : 0
     const initialTitle = config?.title || null
     const result = db.prepare(`
-      INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase, module_id, started_at, duration_minutes, depth_level, never_studied, title, last_message_at, is_pinned)
-      VALUES (?, ?, ?, 'structured_qa', ?, ?, ?, ?, ?, ?, ?, 0)
+      INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase, module_id, started_at, duration_minutes, depth_level, difficulty_mode, never_studied, title, last_message_at, is_pinned)
+      VALUES (?, ?, ?, 'structured_qa', ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(
       actualSubjectId,
       actualUserId,
@@ -1281,6 +1373,7 @@ export function registerTutorHandlers(): void {
       now,
       config?.duration_minutes ?? null,
       config?.depth_level ?? 3,
+      config?.difficulty_mode || 'fixed',
       neverStudiedVal,
       initialTitle,
       nowMs
@@ -1431,6 +1524,7 @@ export function registerTutorHandlers(): void {
     role: 'user' | 'assistant' | 'system'
     content: string
     content_type?: string
+    metadata?: string
   }) => {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
@@ -1440,12 +1534,15 @@ export function registerTutorHandlers(): void {
     ensureConversationRecord(params.session_id)
 
     db.prepare(`
-      INSERT INTO messages (id, conversation_id, role, content, content_type, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, params.session_id, params.role, params.content, params.content_type || 'text', now)
+      INSERT INTO messages (id, conversation_id, role, content, content_type, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, params.session_id, params.role, params.content, params.content_type || 'text', params.metadata || null, now)
 
     // Update session timestamps
-    db.prepare('UPDATE tutor_sessions SET ended_at = ?, last_message_at = ? WHERE id = ?').run(now, nowMs, params.session_id)
+    // A message is activity, not completion.  Keep ended_at null until the
+    // learner explicitly ends the session so route changes and reloads can
+    // reliably offer the session for resume.
+    db.prepare('UPDATE tutor_sessions SET last_message_at = ? WHERE id = ?').run(nowMs, params.session_id)
 
     // Auto-generate title if session does not have one yet
     try {
@@ -1478,6 +1575,7 @@ export function registerTutorHandlers(): void {
       role: params.role,
       content: params.content,
       content_type: params.content_type || 'text',
+      metadata: params.metadata || null,
       created_at: now
     }
   })
@@ -1587,7 +1685,7 @@ Category tags should clearly specify the purpose:
     return responseText
   })
 
-  ipcMain.handle('tutor:extractCardFromSnippet', async (_event, subjectId: number, snippet: string, contextTopic?: string) => {
+  ipcMain.handle('tutor:extractCardFromSnippet', async (_event, subjectId: number, snippet: string, contextTopic?: string, options?: HighlightCardExtractionOptions) => {
     try {
       const subject = db.prepare('SELECT name FROM subjects WHERE id = ?').get(subjectId) as { name: string } | undefined
       const subjectName = subject?.name || 'the subject'
@@ -1600,28 +1698,7 @@ Category tags should clearly specify the purpose:
         ? `\nAvoid duplicating existing cards in this deck:\n${existingCards.slice(0, 30).map(c => `- "${c.front}"`).join('\n')}`
         : ''
 
-      const prompt = `You are a Senior Cognitive Systems Engineer and expert flashcard designer. A student studying "${subjectName}" highlighted or selected the following text from an AI tutoring dialogue:${contextTopic ? `\nContext topic: ${contextTopic}` : ''}
-
-<dialogue_snippet>
-${snippet.substring(0, 3000)}
-</dialogue_snippet>
-${existingCardHints}
-
-Convert this specific insight or explanation into 1-2 ultra-high-yield, atomic study cards.
-- Focus on key distinctions (e.g. contrast between confusable terms like internal vs external rotation), high-yield vocabulary definitions, or causal mechanisms.
-- Adhere strictly to the Minimum Information Principle (<15 words on the back, atomic, speakable in a single breath).
-
-Output your response strictly as valid JSON in this exact structure:
-{
-  "cards": [
-    {
-      "type": "flashcard",
-      "front": "Question or term (e.g. [Topic] Term or question)",
-      "back": "Concise target answer (<15 words)",
-      "concept": "${contextTopic || 'Key Concept'}"
-    }
-  ]
-}`
+      const prompt = buildHighlightCardPrompt(subjectName, snippet, contextTopic, options, existingCardHints)
 
       const config = getAIConfig()
       const apiKey = getApiKey()
@@ -1633,7 +1710,7 @@ Output your response strictly as valid JSON in this exact structure:
         { type: 'json_object' }
       )
 
-      let parsed: { cards?: Array<{ type: 'flashcard' | 'active_recall'; front: string; back: string; concept?: string }> } = {}
+      let parsed: { normalizedText?: string; cards?: HighlightCardDraft[] } = {}
       try {
         parsed = JSON.parse(responseText)
       } catch {
@@ -1649,6 +1726,7 @@ Output your response strictly as valid JSON in this exact structure:
 
       return {
         success: validCards.length > 0,
+        normalizedText: parsed.normalizedText?.trim() || undefined,
         cards: validCards
       }
     } catch (err: any) {
@@ -1739,11 +1817,81 @@ Output your response strictly as valid JSON in this exact structure:
       if (sessRow?.user_id) userId = sessRow.user_id
     } catch { /* ignore */ }
 
-    // Resolve adaptive difficulty if selected or unset
-    const isAdaptive = params.depthLevel === 'adaptive' || !params.depthLevel
-    const concreteDepth: 1 | 2 | 3 | 4 | 5 = params.depthLevel && params.depthLevel !== 'adaptive'
+    const isAdaptive = params.difficultyMode === 'adaptive' || params.depthLevel === 'adaptive' || !params.depthLevel
+    const targetConcept = params.targetTopic || params.targetTopics?.[0] || params.moduleContext?.currentTopic || 'General'
+
+    // Assess the previous tutor question before generating the next response.
+    // A failed or ambiguous assessment is deliberately harmless: it is stored
+    // as unassessed and cannot move the learner model.
+    let assessmentId: number | undefined
+    let adaptiveState: import('../../src/types').AdaptiveConceptState | null = null
+    if (userId && !isFirstTurn) {
+      const previousTutorMessage = [...(params.conversationHistory || [])].reverse().find(message => message.role === 'assistant')
+      const studentMessageKey = `session:${params.sessionId}:student:${params.studentMessageId || `${params.message.length}:${params.message.slice(0, 80)}`}`
+      try {
+        const aiConfig = getAIConfig()
+        const apiKey = getApiKey()
+        if (previousTutorMessage && apiKey) {
+          const assessmentRaw = await callAIMessages([
+            { role: 'system', content: 'You are a conservative educational assessment service. Return only valid JSON.' },
+            { role: 'user', content: buildTutorAssessmentPrompt(previousTutorMessage.content, params.message, targetConcept) }
+          ], { ...aiConfig, apiKey }, { type: 'json_object' })
+          const assessment = parseTutorAssessment(assessmentRaw, params.sessionId, targetConcept, studentMessageKey, params.studentMessageId)
+          const recorded = new LearnerMemoryService(db).recordTutorAssessment(assessment)
+          assessmentId = recorded.id
+          adaptiveState = recorded.state
+        }
+      } catch (assessmentError) {
+        console.warn('Tutor answer assessment unavailable; continuing without adaptive update:', assessmentError)
+      }
+      if (!assessmentId && previousTutorMessage) {
+        try {
+          const fallback = new LearnerMemoryService(db).recordTutorAssessment({
+            sessionId: params.sessionId,
+            studentMessageId: params.studentMessageId,
+            concept: targetConcept,
+            outcome: 'unassessed',
+            score: null,
+            confidence: 0,
+            assistanceLevel: 'unassessed',
+            idempotencyKey: studentMessageKey
+          })
+          assessmentId = fallback.id
+          adaptiveState = fallback.state
+        } catch (fallbackError) {
+          console.warn('Could not persist unassessed tutor turn:', fallbackError)
+        }
+      }
+    }
+
+    const persistedState = userId
+      ? new LearnerMemoryService(db).getAdaptiveState(userId, params.subjectId, targetConcept)
+      : null
+    adaptiveState = adaptiveState || persistedState
+    const concreteDepth: 1 | 2 | 3 | 4 | 5 = !isAdaptive && params.depthLevel && params.depthLevel !== 'adaptive'
       ? params.depthLevel
-      : resolveAdaptiveDepth(db, params.subjectId, userId, params.targetTopic || params.targetTopics?.[0])
+      : decideAdaptiveDifficulty({
+          concept: targetConcept,
+          mode: isAdaptive ? 'adaptive' : 'fixed',
+          fixedLevel: !isAdaptive && params.depthLevel && params.depthLevel !== 'adaptive' ? params.depthLevel : undefined,
+          state: adaptiveState || undefined,
+          masteryProb: adaptiveState ? adaptiveState.score / 100 : undefined,
+          retention: adaptiveState?.retention,
+          misconceptionRisk: adaptiveState?.misconceptionRisk,
+          due: params.isSpacedReview,
+          neverStudied: params.neverStudied
+        }).visibleLevel
+    const adaptiveDecision = decideAdaptiveDifficulty({
+      concept: targetConcept,
+      mode: isAdaptive ? 'adaptive' : 'fixed',
+      fixedLevel: !isAdaptive && params.depthLevel && params.depthLevel !== 'adaptive' ? params.depthLevel : undefined,
+      state: adaptiveState || undefined,
+      masteryProb: adaptiveState ? adaptiveState.score / 100 : undefined,
+      retention: adaptiveState?.retention,
+      misconceptionRisk: adaptiveState?.misconceptionRisk,
+      due: params.isSpacedReview,
+      neverStudied: params.neverStudied
+    })
 
     // Build time context
     const timeContext = buildTimeContext({
@@ -1761,6 +1909,16 @@ Output your response strictly as valid JSON in this exact structure:
       params.durationMinutes,
       isAdaptive
     )
+    const adaptiveDecisionBlock = isAdaptive ? [
+      '',
+      'ADAPTIVE DECISION CONTEXT (policy-controlled; do not expose raw scores):',
+      `- Current challenge band: Level ${adaptiveDecision.visibleLevel} of 5`,
+      `- Preferred next teaching action: ${adaptiveDecision.action}`,
+      `- Target success zone: ${Math.round(adaptiveDecision.targetSuccessMin * 100)}–${Math.round(adaptiveDecision.targetSuccessMax * 100)}%`,
+      `- Decision rationale: ${adaptiveDecision.reason}`,
+      '- Treat this as a guide: do not raise challenge after a supported answer, and do not lower it for an invalid or ambiguous task.',
+      ''
+    ].join('\n') : ''
 
     // Build anti-repeat memory block (skip on first turn — nothing to repeat yet)
     const memoryBlock = !isFirstTurn ? buildMemoryBlock({
@@ -1783,133 +1941,99 @@ Output your response strictly as valid JSON in this exact structure:
       quickReviewTopics: params.quickReviewTopics
     })
 
-    // Build material context (if studying a specific material or general subject materials)
+    // Material text is no longer dumped into the system prompt. The complete
+    // source is indexed and the current turn retrieves only answer-bearing
+    // passages below. Keep a compact scope note for the tutor's policy layer.
     let materialContextBlock = ''
-    if (params.materialId) {
-      try {
-        const mat = db.prepare('SELECT filename, content_text FROM materials WHERE id = ?').get(params.materialId) as { filename: string; content_text: string } | undefined
-        if (mat && mat.content_text) {
-          let contentSnippet = ''
-          let topologySummary = ''
-          if (mat.content_text.length <= 16000) {
-            contentSnippet = mat.content_text
+    try {
+      const material = params.materialId
+        ? db.prepare('SELECT filename, LENGTH(content_text) AS length FROM materials WHERE id = ?').get(params.materialId) as { filename: string; length: number } | undefined
+        : undefined
+      const materialCount = db.prepare('SELECT COUNT(*) AS count FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND content_text != \'\'').get(params.subjectId) as { count: number }
+      materialContextBlock = material
+        ? `\nSOURCE SCOPE: ${material.filename} is indexed (${(material.length || 0).toLocaleString()} characters). Use retrieved passages, not assumed document coverage.`
+        : `\nSOURCE SCOPE: ${materialCount.count} course material(s) are indexed. Use retrieved passages, not assumed document coverage.`
+    } catch {
+      materialContextBlock = '\nSOURCE SCOPE: Use only verified retrieved evidence when available.'
+    }
+
+    // Learner-authored Cornell notes and annotations are separate from source
+    // evidence. They are bounded, provenance-labeled, and only included when
+    // the current material scope or explicit annotation selection permits it.
+    try {
+      const explicitIds = params.annotationContext?.annotationIds
+      const materialIds = params.annotationContext?.materialIds || (params.materialId ? [params.materialId] : [])
+      const lectureIds = params.annotationContext?.lectureIds || []
+      const clauses: string[] = ['subject_id = ?', 'deleted_at IS NULL']
+      const args: number[] = [params.subjectId]
+
+      if (explicitIds) {
+        if (explicitIds.length === 0) {
+          if (lectureIds.length > 0) {
+            clauses.push(`lecture_id IN (${lectureIds.map(() => '?').join(',')})`)
+            args.push(...lectureIds)
           } else {
-            const topology = parseDocumentTopology(mat.content_text, mat.filename, 1000)
-            topologySummary = `COMPLETE DOCUMENT STRUCTURE & TOPOLOGY (${topology.chunks.length} sections, ${mat.content_text.length.toLocaleString()} total characters):\n` +
-              topology.chunks.map(c => `- Section ${c.index + 1}: "${c.title}" (${c.type}, approx. ${c.tokenEstimate} tokens)`).join('\n')
-
-            const sampledChunks = topology.chunks.length <= 6
-              ? topology.chunks
-              : [
-                  topology.chunks[0],
-                  topology.chunks[Math.floor(topology.chunks.length * 0.25)],
-                  topology.chunks[Math.floor(topology.chunks.length * 0.5)],
-                  topology.chunks[Math.floor(topology.chunks.length * 0.75)],
-                  topology.chunks[topology.chunks.length - 1]
-                ].filter(Boolean)
-
-            contentSnippet = sampledChunks.map(c => `=== SECTION ${c.index + 1}: ${c.title} ===\n${c.text}`).join('\n\n')
+            clauses.push('1 = 0')
           }
-
-          materialContextBlock = [
-            '',
-            `SPECIFIC MATERIAL STUDY FOCUS:`,
-            `The student is studying the course document: "${mat.filename}".`,
-            topologySummary ? `${topologySummary}\n` : '',
-            `--- MATERIAL CONTENT SAMPLES & FOUNDATIONS START ---`,
-            contentSnippet,
-            `--- MATERIAL CONTENT SAMPLES & FOUNDATIONS END ---`,
-            '',
-            `CRITICAL SOURCE GROUNDING & PEDAGOGY DIRECTIVE:`,
-            `1. STRICT SOURCE GROUNDING: You MUST base all questions, explanations, definitions, quizzes, and feedback on the content and concepts present across this material.`,
-            `2. COMPLETE TOPOLOGY AWARENESS: You have the full outline and section topology above. Never claim a concept is "not in the uploaded material" if it belongs to any chapter, section, or topic outlined in this material.`,
-            `3. UNUPLOADED SCOPE: Only if the student asks about a concept completely outside the discipline or this document, politely let them know and invite them to upload the relevant notes.`,
-            ''
-          ].filter(Boolean).join('\n')
-        }
-      } catch (err) {
-        console.error('Failed to load specific material for tutor session:', err)
-      }
-    } else if (params.materialContent) {
-      let contentSnippet = params.materialContent
-      let topologySummary = ''
-      if (params.materialContent.length > 16000) {
-        const topology = parseDocumentTopology(params.materialContent, 'source_material', 1000)
-        topologySummary = `COMPLETE DOCUMENT STRUCTURE & TOPOLOGY (${topology.chunks.length} sections, ${params.materialContent.length.toLocaleString()} characters):\n` +
-          topology.chunks.map(c => `- Section ${c.index + 1}: "${c.title}"`).join('\n')
-
-        const sampledChunks = topology.chunks.length <= 6
-          ? topology.chunks
-          : [
-              topology.chunks[0],
-              topology.chunks[Math.floor(topology.chunks.length * 0.25)],
-              topology.chunks[Math.floor(topology.chunks.length * 0.5)],
-              topology.chunks[Math.floor(topology.chunks.length * 0.75)],
-              topology.chunks[topology.chunks.length - 1]
-            ].filter(Boolean)
-
-        contentSnippet = sampledChunks.map(c => `=== SECTION ${c.index + 1}: ${c.title} ===\n${c.text}`).join('\n\n')
-      }
-
-      materialContextBlock = [
-        '',
-        `SPECIFIC MATERIAL STUDY FOCUS:`,
-        topologySummary ? `${topologySummary}\n` : '',
-        `--- MATERIAL CONTENT START ---`,
-        contentSnippet,
-        `--- MATERIAL CONTENT END ---`,
-        '',
-        `CRITICAL SOURCE GROUNDING & PEDAGOGY DIRECTIVE:`,
-        `1. STRICT SOURCE GROUNDING: Base all questions, explanations, definitions, quizzes, and feedback on the content provided above.`,
-        `2. COMPLETE COVERAGE AWARENESS: You have the complete section outline and text samples. Engage with concepts across the entire document.`,
-        `3. UNUPLOADED SCOPE: If the student asks about a topic completely unrelated to this material, guide them back to the covered topics.`,
-        ''
-      ].filter(Boolean).join('\n')
-    } else {
-      try {
-        const subjectMaterials = db.prepare(`
-          SELECT filename, content_text FROM materials
-          WHERE subject_id = ? AND content_text IS NOT NULL AND LENGTH(content_text) > 50
-          ORDER BY uploaded_at DESC LIMIT 5
-        `).all(params.subjectId) as { filename: string; content_text: string }[]
-
-        if (subjectMaterials.length > 0) {
-          const combined = subjectMaterials.map(m => {
-            if (m.content_text.length <= 8000) {
-              return `[DOCUMENT: ${m.filename}]\n${m.content_text}`
-            }
-            const topology = parseDocumentTopology(m.content_text, m.filename, 800)
-            const outline = `Outline: ${topology.chunks.map(c => c.title).join(' | ')}`
-            const sample = topology.chunks.slice(0, 3).map(c => `[${c.title}]: ${c.text}`).join('\n\n')
-            return `[DOCUMENT: ${m.filename} (${m.content_text.length.toLocaleString()} chars)]\n${outline}\n\n${sample}`
-          }).join('\n\n---\n\n')
-
-          materialContextBlock = [
-            '',
-            `SOURCE STUDY MATERIALS FOR THIS SUBJECT:`,
-            `The student has uploaded the following course materials and lecture documents:`,
-            `--- COURSE MATERIALS START ---`,
-            combined,
-            `--- COURSE MATERIALS END ---`,
-            '',
-            `CRITICAL NOTEBOOKLM GROUNDING DIRECTIVE:`,
-            `1. STRICT SOURCE GROUNDING: Base all questions, explanations, definitions, quizzes, and feedback on the uploaded course materials and syllabus above.`,
-            `2. MULTI-DOCUMENT AWARENESS: You are aware of all uploaded documents and their outlines above. Never claim a chapter or section is missing if it is outlined in the materials above.`,
-            `3. UNUPLOADED TOPICS: If a student asks about a completely unuploaded course topic, invite them to upload the slides or notes.`,
-            ''
-          ].join('\n')
         } else {
-          materialContextBlock = [
-            '',
-            `NOTICE: No study materials or lecture notes have been uploaded for this subject yet.`,
-            `CRITICAL GROUNDING DIRECTIVE:`,
-            `Politely inform the student that they should upload lecture slides, notes, or readings for this subject so you can tutor and quiz them based strictly on their actual class materials.`,
-            ''
-          ].join('\n')
+          const selectedClauses = [`id IN (${explicitIds.map(() => '?').join(',')})`]
+          args.push(...explicitIds)
+          if (lectureIds.length > 0) {
+            selectedClauses.push(`lecture_id IN (${lectureIds.map(() => '?').join(',')})`)
+            args.push(...lectureIds)
+          }
+          clauses.push(`(${selectedClauses.join(' OR ')})`)
         }
-      } catch (err) {
-        console.error('Failed to load subject materials for tutor session:', err)
+      } else {
+        const resourceClauses: string[] = []
+        if (materialIds.length > 0) {
+          resourceClauses.push(`material_id IN (${materialIds.map(() => '?').join(',')})`)
+          args.push(...materialIds)
+        }
+        if (lectureIds.length > 0) {
+          resourceClauses.push(`lecture_id IN (${lectureIds.map(() => '?').join(',')})`)
+          args.push(...lectureIds)
+        }
+        if (resourceClauses.length > 0) clauses.push(`(${resourceClauses.join(' OR ')})`)
+        else clauses.push('1 = 0')
       }
+
+      const annotationRows = db.prepare(`
+        SELECT id, kind, material_id, lecture_id, body, selected_text, locator_json
+        FROM document_annotations
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY updated_at ASC, id ASC
+        LIMIT 100
+      `).all(...args) as Array<{
+        id: number
+        kind: string
+        material_id: number | null
+        lecture_id: number | null
+        body: string
+        selected_text: string | null
+        locator_json: string | null
+      }>
+
+      if (annotationRows.length > 0) {
+        let used = 0
+        const blocks: string[] = []
+        for (const row of annotationRows) {
+          const locator = row.locator_json ? ` (${row.locator_json})` : ''
+          const text = [
+            row.selected_text ? `Selected source text: ${row.selected_text}` : '',
+            row.body ? `Learner-authored ${row.kind}: ${row.body}` : ''
+          ].filter(Boolean).join('\n')
+          const block = `[ANNOTATION ${row.id} · ${row.kind} · ${row.material_id ? `material ${row.material_id}` : `lecture ${row.lecture_id}`}${locator}]\n${text}`
+          if (used + block.length > 12000) break
+          blocks.push(block)
+          used += block.length
+        }
+        materialContextBlock += `\n\nLEARNER CORNELL NOTES AND ANNOTATIONS (UNTRUSTED STUDENT CONTEXT):\n${blocks.join('\n\n---\n\n')}\n\nTreat these as the student's questions, interpretations, and study cues. Use source material to verify claims before presenting them as facts.\n`
+      }
+    } catch (err) {
+      // Keep tutor sessions functional for databases created before the
+      // annotation migration or malformed optional selections.
+      console.warn('Failed to load learner annotation context:', err)
     }
 
     // ── Topic-SRS Spaced Maintenance / Interleaved Warmup Context ──
@@ -1954,7 +2078,38 @@ Output your response strictly as valid JSON in this exact structure:
     }
 
     // Append all context blocks to syllabusContext
-    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + srsWarmupBlock + '\n' + materialContextBlock
+    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + adaptiveDecisionBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + srsWarmupBlock + '\n' + materialContextBlock
+
+    // Use the same bounded evidence seam as the grounded helper. This keeps
+    // tutor answers aligned with the selected class/material instead of relying
+    // only on prompt instructions and first-N document snippets.
+    let groundedEvidence: import('../../src/lib/groundedRetrieval').GroundedEvidence[] = []
+    let learnerMemoryRefs: import('../../src/types').MemoryRef[] = []
+    try {
+      const recentImpasses = (params.questionsAsked || []).filter(question => /stuck|hint|help|wrong|again/i.test(question)).length
+      groundedEvidence = await retrieveGroundedEvidenceAsync(params.message, params.subjectId || null, params.materialId || null)
+      if (assessmentId && userId) {
+        new LearnerMemoryService(db).attachAssessmentEvidence(assessmentId, groundedEvidence.map(item => ({
+          materialId: item.materialId,
+          chunkIndex: item.chunkIndex,
+          sourceLabel: item.sourceLabel,
+          score: item.score,
+          text: item.text,
+          retrievalMode: item.retrievalMode || 'hybrid'
+        })))
+      }
+      if (hasSufficientEvidence(groundedEvidence)) {
+        syllabusContext += '\n\nVERIFIED RETRIEVED EVIDENCE IS PROVIDED IN THE CONTEXT PACK. Cite it when making source-grounded claims.'
+      } else {
+        syllabusContext += '\n\nNO SUFFICIENT RETRIEVED EVIDENCE: Do not invent course-specific facts. Ask for clarification or explain that the material does not establish the answer.'
+      }
+      syllabusContext += buildTutorPolicyBlock(params.message, recentImpasses)
+      if (userId) {
+        learnerMemoryRefs = new LearnerMemoryService(db).retrieveForTurn(userId, params.subjectId, params.message, 8)
+      }
+    } catch (retrievalError) {
+      console.warn('Tutor grounded retrieval unavailable for this turn:', retrievalError)
+    }
 
     // Save session config to database if provided
     if (params.durationMinutes !== undefined || params.depthLevel !== undefined || params.neverStudied !== undefined) {
@@ -1963,11 +2118,19 @@ Output your response strictly as valid JSON in this exact structure:
           UPDATE tutor_sessions SET
             duration_minutes = COALESCE(?, duration_minutes),
             depth_level = COALESCE(?, depth_level),
+            difficulty_mode = COALESCE(?, difficulty_mode),
+            adaptive_score = COALESCE(?, adaptive_score),
+            adaptive_uncertainty = COALESCE(?, adaptive_uncertainty),
+            adaptive_reason = COALESCE(?, adaptive_reason),
             never_studied = COALESCE(?, never_studied)
           WHERE id = ?
         `).run(
           params.durationMinutes ?? null,
           concreteDepth,
+          isAdaptive ? 'adaptive' : 'fixed',
+          isAdaptive ? adaptiveDecision.score : null,
+          isAdaptive ? adaptiveDecision.uncertainty : null,
+          adaptiveDecision.reason,
           params.neverStudied ? 1 : 0,
           params.sessionId
         )
@@ -2052,22 +2215,29 @@ PEDAGOGICAL METHOD — Session Summary Phase:
     const systemInstruction = phaseInstructions[params.phase] ||
       `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics. Wrap math in LaTeX ($...$) and format tabular data in Markdown tables (do not wrap currency in LaTeX). If visualizing complex economic or scientific models, you may provide a vega-lite specification, but do not overuse graphs.${syllabusContext}`
 
-    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-      { role: 'system', content: systemInstruction }
-    ]
-
-    // Add conversation history (last 30 messages)
-    const history = params.conversationHistory?.slice(-30) || []
-    for (const msg of history) {
-      messages.push({ role: msg.role, content: msg.content })
-    }
-
     // Add attached content if present
     let userMessage = params.message
     if (params.attachedContent) {
-      userMessage = `[The student attached study material for context]\n\n${params.attachedContent.substring(0, 32000)}\n\n---\n\n${userMessage}`
+      userMessage = `[The student attached study material for context]\n\n${params.attachedContent.substring(0, 12000)}\n\n---\n\n${userMessage}`
     }
-    messages.push({ role: 'user', content: userMessage })
+    const contextPack = buildTutorContext({
+      query: userMessage,
+      subjectId: params.subjectId,
+      materialId: params.materialId,
+      sessionId: params.sessionId,
+      history: (params.conversationHistory?.slice(-30) || []).map(msg => ({ role: msg.role, content: msg.content })),
+      evidence: groundedEvidence.map(item => ({
+        materialId: item.materialId,
+        chunkIndex: item.chunkIndex,
+        sourceLabel: item.sourceLabel,
+        score: item.score,
+        text: item.text,
+        retrievalMode: item.retrievalMode || 'hybrid'
+      })),
+      memories: learnerMemoryRefs,
+      systemInstruction
+    })
+    const messages = contextPack.messages
 
     try {
       const abortController = new AbortController()
@@ -2088,11 +2258,30 @@ PEDAGOGICAL METHOD — Session Summary Phase:
 
       // Apply post-processing cleanup to fix garbled text
       fullResponse = cleanupAIResponse(fullResponse)
+      const verification = verifyTutorAnswer(fullResponse, contextPack.evidence)
+      if (verification.needsAbstention) {
+        fullResponse += '\n\nI could not verify one or more source references against the selected material, so please treat those claims as unconfirmed.'
+      }
 
       win.webContents.send('tutor:chunk', {
         conversationId: params.sessionId,
         content: fullResponse,
-        type: 'done'
+        type: 'done',
+        metadata: JSON.stringify({
+          citations: verification.citations,
+          invalidCitations: verification.invalidCitations,
+          grounded: verification.grounded,
+          evidence: contextPack.evidence.map(item => ({ materialId: item.materialId, chunkIndex: item.chunkIndex, score: item.score })),
+          memoryIds: contextPack.memories.map(memory => memory.id).filter(Boolean),
+          difficultyMode: isAdaptive ? 'adaptive' : 'fixed',
+          servedDifficultyLevel: concreteDepth,
+          servedDifficultyScore: adaptiveDecision.score,
+          adaptiveReason: adaptiveDecision.reason,
+          assessmentId,
+          retentionStatus: adaptiveDecision.retentionStatus,
+          uncertainty: adaptiveDecision.uncertainty,
+          budget: contextPack.budget
+        })
       })
 
       return { success: true, fullResponse }
@@ -2349,6 +2538,76 @@ Rules:
       })
     }
 
+    // Canonical candidates are the only work the LLM is allowed to schedule.
+    // The model can phrase and order these items, but cannot invent IDs or actions.
+    const focusCandidates: FocusCandidate[] = []
+    for (const due of getTopDueMaintenanceTopics(db, userId, 12)) {
+      focusCandidates.push({
+        subjectId: due.subjectId,
+        topicId: due.topicId,
+        moduleId: due.moduleId,
+        actionType: 'tutor_drill',
+        targetTopic: due.topicTitle,
+        recommendedMinutes: due.estimatedMinutes,
+        reasonCode: due.retentionStatus === 'overdue' ? 'topic_due' : 'topic_fading',
+        evidence: `Predicted recall is ${Math.round(due.retrievability * 100)}%; next review is ${due.nextReviewDue}.`,
+        successCriteria: 'Complete a closed-book explanation, correct the gaps, and retry the missed point.',
+        fallbackAction: 'Use a short hint, then attempt the explanation again.'
+      })
+    }
+    for (const subject of subjects) {
+      const newTopics = db.prepare(`
+        SELECT mt.id, mt.module_id, mt.title, COALESCE(mt.estimated_minutes, 15) as estimated_minutes
+        FROM module_topics mt
+        JOIN syllabus_modules sm ON sm.id = mt.module_id
+        WHERE sm.subject_id = ? AND (mt.has_new_material = 1 OR mt.is_gap = 1)
+          AND NOT EXISTS (SELECT 1 FROM module_topic_study_log sl WHERE sl.topic_id = mt.id AND sl.user_id = ?)
+        ORDER BY mt.sort_order ASC LIMIT 8
+      `).all(subject.id, userId) as { id: number; module_id: number; title: string; estimated_minutes: number }[]
+      for (const topic of newTopics) {
+        focusCandidates.push({
+          subjectId: subject.id,
+          topicId: topic.id,
+          moduleId: topic.module_id,
+          actionType: 'new_content',
+          targetTopic: topic.title,
+          recommendedMinutes: Math.max(10, Math.min(30, topic.estimated_minutes || 15)),
+          reasonCode: 'new_content',
+          evidence: 'This topic is new or has changed since the last syllabus reconciliation.',
+          successCriteria: 'Explain the concept without notes and answer one application check.',
+          fallbackAction: 'Review the source excerpt briefly, then retry closed-book recall.'
+        })
+      }
+    }
+    if (focusCandidates.length === 0) {
+      for (const subject of subjectsData) {
+        if (subject.dueCardCount > 0) {
+          focusCandidates.push({
+            subjectId: subject.id,
+            actionType: 'flashcards',
+            targetTopic: null,
+            recommendedMinutes: Math.min(20, Math.max(10, Math.ceil(subject.dueCardCount * 0.75))),
+            reasonCode: 'card_due',
+            evidence: `${subject.dueCardCount} flashcards are due for review.`,
+            successCriteria: 'Complete the due-card queue and rate recall honestly.',
+            fallbackAction: 'Stop after the time budget and leave the remaining cards due.'
+          })
+        }
+      }
+    }
+    if (focusCandidates.length === 0 && subjects.length > 0) {
+      focusCandidates.push({
+        subjectId: subjects[0].id,
+        actionType: 'tutor_drill',
+        targetTopic: null,
+        recommendedMinutes: totalMinutes,
+        reasonCode: 'syllabus_progress',
+        evidence: 'No urgent review or new-content item is available; use this time for guided retrieval.',
+        successCriteria: 'Complete a focused retrieval conversation on the current syllabus module.',
+        fallbackAction: 'Choose a specific topic from the syllabus before continuing.'
+      })
+    }
+
     // Helper: deterministic fallback builder
     const buildDeterministicFocusBlock = (): any[] => {
       const items: any[] = []
@@ -2525,7 +2784,10 @@ Rules:
           subjectName: contextOptions?.subjectName,
           subjectId: contextOptions?.subjectId,
           lectureTopic: contextOptions?.lectureTopic,
-          materialsSummary: contextOptions?.materialsSummary
+          materialsSummary: contextOptions?.materialsSummary,
+          candidateBriefs: focusCandidates.map(candidate =>
+            `subject_id=${candidate.subjectId}, topic_id=${candidate.topicId ?? 'null'}, module_id=${candidate.moduleId ?? 'null'}, action=${candidate.actionType}, minutes=${candidate.recommendedMinutes}, reason=${candidate.reasonCode}, evidence=${candidate.evidence}`
+          ).join('\n')
         })
 
         const responseText = await callAIMessages(
@@ -2546,14 +2808,21 @@ Rules:
       generatedItems = buildDeterministicFocusBlock()
     }
 
+    // Validate the model output against canonical candidates. If it cannot be
+    // validated, use the deterministic candidate planner instead.
+    const validated = validateFocusItems(generatedItems, totalMinutes, focusCandidates)
+    const finalItems = validated.items.length > 0
+      ? validated.items
+      : buildFocusCandidates(focusCandidates, totalMinutes)
+
     // Insert items into daily_plans
     const insertItems = db.transaction((items: any[]) => {
       for (const item of items) {
         const subject = subjects.find(s => s.id === item.subject_id) || subjects[0]
         db.prepare(`
           INSERT INTO daily_plans
-            (user_id, plan_date, subject_id, suggested_action, estimated_minutes, priority, is_completed, action_type, learning_objective, target_topic)
-          VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            (user_id, plan_date, subject_id, suggested_action, estimated_minutes, priority, is_completed, action_type, learning_objective, target_topic, reason_code, topic_id, evidence_json, success_criteria, fallback_action)
+          VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           userId,
           date,
@@ -2563,12 +2832,17 @@ Rules:
           item.priority || 1,
           item.action_type || 'custom',
           item.learning_objective || null,
-          item.target_topic || null
+          item.target_topic || null,
+          item.reason_code || null,
+          item.topic_id || null,
+          JSON.stringify({ evidence: item.evidence || null, generated: validated.items.length > 0 }),
+          item.success_criteria || null,
+          item.fallback_action || null
         )
       }
     })
 
-    insertItems(generatedItems)
+    insertItems(finalItems)
 
     return db.prepare(`
       SELECT p.*, s.name as subject_name
@@ -2718,6 +2992,10 @@ Rules:
         next_review_due: srs ? srs.nextReviewDue : undefined,
         stability: srs ? srs.stability : undefined,
         days_overdue: srs ? srs.daysOverdue : undefined,
+        review_status: srs ? srs.reviewStatus : undefined,
+        urgency: srs ? srs.urgency : undefined,
+        recommended_mode: srs ? srs.recommendedMode : undefined,
+        estimated_minutes: Number((r as any).estimated_minutes) || (srs ? srs.estimatedMinutes : 15),
         card_count: Number(r.card_count) || 0
       }
     })
@@ -2742,17 +3020,22 @@ Rules:
         INSERT OR REPLACE INTO module_topic_study_log (topic_id, user_id, studied_at)
         VALUES (?, ?, ?)
       `).run(topicId, actualUserId, now)
-      db.prepare(`
-        UPDATE module_topics SET has_new_material = 0, is_gap = 0 WHERE id = ?
-      `).run(topicId)
-
-      // Initialize or update SRS memory state with default rating 3 (Good)
-      try {
-        if (subjectId) {
-          updateTopicSrsState(db, actualUserId, subjectId, topicId, 3, now)
+      // Manual completion records curriculum progress only. It is deliberately
+      // not a retrieval event and must not create or advance SRS memory.
+      if (subjectId) {
+        try {
+          recordTopicReviewEvent(db, {
+            topicId,
+            userId: actualUserId,
+            subjectId,
+            mode: 'manual',
+            assistanceLevel: 'unassessed',
+            evidenceStatus: 'unassessed',
+            createdAt: now
+          })
+        } catch (eventErr) {
+          console.warn('Failed to record manual topic event:', eventErr)
         }
-      } catch (srsErr) {
-        console.warn('Failed to update topic SRS state on toggle:', srsErr)
       }
     } else {
       db.prepare(`

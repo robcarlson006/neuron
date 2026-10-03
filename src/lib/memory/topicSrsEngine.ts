@@ -42,6 +42,10 @@ export interface TopicRetentionMetrics {
   reps: number
   lapses: number
   estimatedMinutes: number
+  reviewStatus: 'due_now' | 'due_today' | 'upcoming' | 'scheduled'
+  urgency: number
+  recommendedMode: 'tutor' | 'new_content'
+  reasonCode: string
 }
 
 export interface SubjectRetentionSummary {
@@ -53,6 +57,31 @@ export interface SubjectRetentionSummary {
   fadingCount: number
   overdueCount: number
   dueTopics: TopicRetentionMetrics[]
+}
+
+export function getDesiredRetention(db: DatabaseLike): number {
+  try {
+    const row = db.prepare("SELECT value FROM app_meta WHERE key = 'desired_retention'").get() as { value?: string } | undefined
+    const parsed = row?.value ? Number.parseFloat(row.value) : DEFAULT_FSRS_PARAMS.desiredRetention
+    return Number.isFinite(parsed) ? Math.min(0.97, Math.max(0.70, parsed)) : DEFAULT_FSRS_PARAMS.desiredRetention
+  } catch {
+    return DEFAULT_FSRS_PARAMS.desiredRetention
+  }
+}
+
+function classifyReviewQueueStatus(nextReviewDue: string, retrievabilityScore: number, now = new Date()): TopicRetentionMetrics['reviewStatus'] {
+  const due = new Date(`${nextReviewDue}T00:00:00Z`).getTime()
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime()
+  const days = Math.ceil((due - today) / 86400000)
+  if (days <= 0 || retrievabilityScore < 0.65) return 'due_now'
+  if (days === 1 || retrievabilityScore < 0.80) return 'due_today'
+  if (days <= 7 || retrievabilityScore < 0.90) return 'upcoming'
+  return 'scheduled'
+}
+
+function urgencyForReview(status: TopicRetentionMetrics['reviewStatus'], retrievabilityScore: number, daysOverdue: number): number {
+  const base = status === 'due_now' ? 1 : status === 'due_today' ? 0.75 : status === 'upcoming' ? 0.4 : 0.1
+  return Math.min(1, Math.round((base + Math.min(0.25, daysOverdue * 0.03) + (1 - retrievabilityScore) * 0.25) * 100) / 100)
 }
 
 /**
@@ -252,7 +281,11 @@ export function getTopicsRetention(
       daysOverdue,
       reps: row.reps,
       lapses: row.lapses,
-      estimatedMinutes: computeEstimatedMinutesForRetention(currentR)
+      estimatedMinutes: computeEstimatedMinutesForRetention(currentR),
+      reviewStatus: classifyReviewQueueStatus(row.next_review_due, currentR),
+      urgency: urgencyForReview(classifyReviewQueueStatus(row.next_review_due, currentR), currentR, daysOverdue),
+      recommendedMode: 'tutor',
+      reasonCode: status === 'overdue' ? 'topic_due' : 'topic_fading'
     })
   }
 
@@ -269,7 +302,8 @@ export function updateTopicSrsState(
   subjectId: number,
   topicId: number,
   rating: FSRSRating,
-  reviewTimestamp?: string
+  reviewTimestamp?: string,
+  desiredRetention?: number
 ): TopicRetentionMetrics {
   const now = reviewTimestamp || new Date().toISOString()
   const todayStr = now.split('T')[0]
@@ -301,7 +335,7 @@ export function updateTopicSrsState(
         lapses: 0
       }
 
-  const next = fsrsNext(memory, rating, DEFAULT_FSRS_PARAMS, todayStr)
+  const next = fsrsNext(memory, rating, { ...DEFAULT_FSRS_PARAMS, desiredRetention: desiredRetention ?? getDesiredRetention(db) }, todayStr)
 
   const newReps = (existing?.reps ?? 0) + 1
   const newLapses = rating === 1 ? (existing?.lapses ?? 0) + 1 : (existing?.lapses ?? 0)
@@ -356,8 +390,44 @@ export function updateTopicSrsState(
     daysOverdue: 0,
     reps: newReps,
     lapses: newLapses,
-    estimatedMinutes: computeEstimatedMinutesForRetention(currentR)
+    estimatedMinutes: computeEstimatedMinutesForRetention(currentR),
+    reviewStatus: classifyReviewQueueStatus(next.dueDate, currentR),
+    urgency: urgencyForReview(classifyReviewQueueStatus(next.dueDate, currentR), currentR, 0),
+    recommendedMode: 'tutor',
+    reasonCode: rating === 1 ? 'review_failed' : 'review_completed'
   }
+}
+
+export function recordTopicReviewEvent(
+  db: DatabaseLike,
+  event: {
+    topicId: number
+    userId: number
+    subjectId: number
+    mode: 'tutor' | 'flashcards' | 'practice' | 'new_content' | 'manual'
+    promptText?: string | null
+    answerText?: string | null
+    score?: number | null
+    assistanceLevel?: 'none' | 'hint' | 'worked_example' | 'direct_answer' | 'unassessed'
+    durationSeconds?: number | null
+    sourceMaterialId?: number | null
+    sessionId?: number | null
+    evidenceStatus?: 'assessed' | 'unassessed' | 'invalid'
+    createdAt?: string
+  }
+): number {
+  const result = db.prepare(`
+    INSERT INTO topic_review_events
+      (topic_id, user_id, subject_id, mode, prompt_text, answer_text, score, assistance_level, duration_seconds, source_material_id, session_id, evidence_status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    event.topicId, event.userId, event.subjectId, event.mode,
+    event.promptText || null, event.answerText || null, event.score ?? null,
+    event.assistanceLevel || 'none', event.durationSeconds ?? null,
+    event.sourceMaterialId ?? null, event.sessionId ?? null,
+    event.evidenceStatus || 'assessed', event.createdAt || new Date().toISOString()
+  )
+  return Number(result.lastInsertRowid)
 }
 
 /**

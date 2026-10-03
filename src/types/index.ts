@@ -10,6 +10,7 @@ export interface Subject {
   name: string
   status: 'active' | 'ongoing' | 'archived'
   course_code?: string
+  subject_icon?: string
   subject_type?: 'class' | 'book'
   total_pages?: number
   total_chapters?: number
@@ -26,17 +27,87 @@ export interface Material {
   id: number
   subject_id: number
   filename: string
-  file_type: 'pdf' | 'docx' | 'pptx'
+  file_type: string
   content_text: string
+  file_path?: string | null
   uploaded_at: string
   file_mtime?: number | null
   file_size?: number | null
+  file_sha256?: string | null
   relative_path?: string | null
   /** Set to 1 once this material's content has been folded into the syllabus
    * (either at initial generation or by an incremental update). */
   syllabus_processed?: number
   /** Syllabus module this material's content was assigned to, if any. */
   module_id?: number | null
+}
+
+export interface SubjectNoteLink {
+  material_id: number
+  label: string
+}
+
+export interface SubjectNote {
+  id: number
+  subject_id: number
+  body: string
+  links_json?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SaveSubjectNoteInput {
+  subject_id: number
+  body: string
+  links?: SubjectNoteLink[]
+}
+
+export type DocumentAnnotationKind = 'highlight' | 'comment' | 'cue' | 'question' | 'summary'
+
+export interface DocumentLocator {
+  page?: number
+  slide?: number
+  chapter?: string
+  block?: string
+  startOffset?: number
+  endOffset?: number
+  quote?: string
+  /** Normalized rectangles for highlights rendered over the original visual page/slide. */
+  rects?: Array<{ left: number; top: number; width: number; height: number }>
+}
+
+export interface DocumentAnnotation {
+  id: number
+  subject_id: number
+  material_id?: number | null
+  lecture_id?: number | null
+  kind: DocumentAnnotationKind
+  parent_id?: number | null
+  color?: string | null
+  body: string
+  selected_text?: string | null
+  locator_json?: string | null
+  source_snapshot?: string | null
+  source_hash?: string | null
+  locator_status?: 'resolved' | 'needs_review'
+  created_at: string
+  updated_at: string
+  deleted_at?: string | null
+}
+
+export interface SaveDocumentAnnotationInput {
+  id?: number
+  subject_id: number
+  material_id?: number | null
+  lecture_id?: number | null
+  kind: DocumentAnnotationKind
+  parent_id?: number | null
+  color?: string | null
+  body: string
+  selected_text?: string | null
+  locator?: DocumentLocator | null
+  source_snapshot?: string | null
+  source_hash?: string | null
 }
 
 export type LectureStatus = 'recording' | 'recorded' | 'transcribing' | 'ready' | 'failed'
@@ -95,6 +166,28 @@ export interface Card {
   note_id?: number | null
   cloze_ordinal?: number
   created_at: string
+}
+
+export interface HighlightCardDraft {
+  front: string
+  back: string
+  type: 'flashcard' | 'active_recall'
+  concept?: string
+}
+
+export interface HighlightCardExtractionOptions {
+  highlightText?: string
+  sourceContext?: string
+  materialTitle?: string
+  feedback?: string
+  previousCard?: HighlightCardDraft
+}
+
+export interface HighlightCardExtractionResult {
+  success: boolean
+  normalizedText?: string
+  cards: HighlightCardDraft[]
+  error?: string
 }
 
 export interface CardFolder {
@@ -431,9 +524,13 @@ export interface AIProviderConfig {
 export interface RAGSearchResult {
   text: string
   materialId: number
+  subjectId?: number
   materialName: string
   score: number
   chunkIndex: number
+  sourceLabel?: string
+  matchedTerms?: string[]
+  retrievalMode?: 'semantic' | 'lexical'
 }
 
 export interface RAGIndexStats {
@@ -443,6 +540,14 @@ export interface RAGIndexStats {
 
 export interface RAGIndexResult {
   chunkCount: number
+}
+
+export interface GroundedAnswer {
+  success: boolean
+  answer: string
+  confidence: 'high' | 'medium' | 'low' | 'not_found'
+  evidence: RAGSearchResult[]
+  error?: string
 }
 
 // ── Undo ──
@@ -555,9 +660,151 @@ export interface Message {
   created_at: string
 }
 
+export type LearnerMemoryType = 'semantic_fact' | 'episodic' | 'teaching_preference' | 'source_fact' | 'session_state'
+export type LearnerMemoryStatus = 'active' | 'uncertain' | 'superseded' | 'resolved'
+export type LearningOutcome = 'correct' | 'partial' | 'incorrect' | 'unassessed'
+export type TutorAssistanceLevel = 'none' | 'hint' | 'scaffold' | 'worked_example' | 'direct_answer' | 'unassessed'
+
+export interface AdaptiveConceptState {
+  id?: number
+  userId: number
+  subjectId: number
+  concept: string
+  score: number
+  uncertainty: number
+  observations: number
+  correctCount: number
+  partialCount: number
+  incorrectCount: number
+  lastOutcome: LearningOutcome
+  lastAssistance: TutorAssistanceLevel
+  lastTaskType?: string
+  lastAssessedAt?: string
+  retention?: number
+  misconceptionRisk?: number
+}
+
+export interface TutorTurnAssessment {
+  id?: number
+  sessionId: number
+  studentMessageId?: string
+  tutorMessageId?: string
+  concept: string
+  outcome: LearningOutcome
+  score: number | null
+  confidence: number
+  assistanceLevel: TutorAssistanceLevel
+  taskType?: string
+  taskDifficulty?: number
+  evidenceSpan?: string
+  misconception?: string
+  followedScaffold?: boolean
+  changedGoal?: boolean
+  sourceEvidence?: EvidenceRef[]
+  idempotencyKey?: string
+  createdAt?: string
+}
+
+export interface AdaptiveDecision {
+  concept: string
+  mode: 'fixed' | 'adaptive'
+  score: number
+  visibleLevel: 1 | 2 | 3 | 4 | 5
+  uncertainty: number
+  targetSuccessMin: number
+  targetSuccessMax: number
+  action: 'explain' | 'basic_retrieval' | 'guided_application' | 'hint_scaffold' | 'parallel_problem' | 'counterexample' | 'interleaved_review' | 'teach_back' | 'novel_transfer'
+  reason: string
+  retentionStatus?: string
+}
+
+export interface SessionMemorySummary {
+  sessionId: number
+  summary: string
+  coveredConcepts: string[]
+  openLoops: string[]
+  unresolvedMisconceptions: string[]
+  nextRetrievalTargets: string[]
+  updatedAt?: string
+}
+
+export interface TutorTaskProfile {
+  id?: number
+  subjectId: number
+  concept: string
+  taskType: string
+  taskKey: string
+  difficulty: number
+  observations: number
+  successCount: number
+  updatedAt?: string
+}
+
+export interface EvidenceRef {
+  materialId: number
+  chunkIndex: number
+  sourceLabel: string
+  score: number
+  text?: string
+  retrievalMode?: 'semantic' | 'lexical' | 'hybrid'
+}
+
+export interface LearnerState {
+  userId?: number
+  subjectId: number
+  concepts?: Array<{ concept: string; masteryProb?: number; confidence?: number; status?: string }>
+  activeMisconceptions?: Array<{ concept: string; description: string; status: string }>
+  dueTopics?: string[]
+}
+
+export interface MemoryRef {
+  id?: number
+  memoryType: LearnerMemoryType
+  memoryKey: string
+  value: Record<string, unknown>
+  confidence: number
+  status: LearnerMemoryStatus
+  updatedAt?: string
+  provenance?: { sessionId?: number; messageId?: string; evidence?: EvidenceRef[] }
+}
+
+export interface ContextBudgetReport {
+  maxTokens: number
+  usedTokens: number
+  evidenceTokens: number
+  memoryTokens: number
+  historyTokens: number
+  truncatedSections: string[]
+}
+
+export interface TutorMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface TutorContextInput {
+  query: string
+  subjectId: number
+  materialId?: number
+  sessionId: number
+  learnerState?: LearnerState
+  history?: TutorMessage[]
+  evidence?: EvidenceRef[]
+  memories?: MemoryRef[]
+  systemInstruction?: string
+}
+
+export interface TutorContextResult {
+  messages: TutorMessage[]
+  evidence: EvidenceRef[]
+  memories: MemoryRef[]
+  budget: ContextBudgetReport
+}
+
 export interface StreamChunk {
   type: 'text' | 'done' | 'error' | 'diagram'
   content: string
+  metadata?: string
 }
 
 // ── Library File Types ────────────────────────────────────────────────────
@@ -589,7 +836,26 @@ export interface SyllabusModule {
   topic_count?: number
 }
 
-export type TopicRetentionStatus = 'fresh' | 'fading' | 'overdue'
+export type TopicRetentionStatus = 'fresh' | 'fading' | 'overdue' | 'due_now' | 'due_today' | 'upcoming' | 'scheduled'
+
+export type TopicReviewMode = 'tutor' | 'flashcards' | 'practice' | 'new_content' | 'manual'
+
+export interface TopicReviewEvent {
+  id: number
+  topic_id: number
+  user_id: number
+  subject_id: number
+  mode: TopicReviewMode
+  prompt_text?: string | null
+  answer_text?: string | null
+  score?: number | null
+  assistance_level: 'none' | 'hint' | 'worked_example' | 'direct_answer' | 'unassessed'
+  duration_seconds?: number | null
+  source_material_id?: number | null
+  session_id?: number | null
+  evidence_status: 'assessed' | 'unassessed' | 'invalid'
+  created_at: string
+}
 
 export interface TopicSpacedMemory {
   id: number
@@ -624,6 +890,13 @@ export interface ModuleTopic {
   next_review_due?: string
   stability?: number
   days_overdue?: number
+  review_status?: TopicRetentionStatus
+  urgency?: number
+  recommended_mode?: TopicReviewMode
+  estimated_minutes?: number
+  new_content_state?: 'unseen' | 'learning' | 'verified' | 'deferred'
+  concept_type?: string
+  source_material_ids?: string
   // Flashcard coverage
   card_count?: number
 }
@@ -661,6 +934,10 @@ export interface TutorSession {
   ended_at?: string
   duration_minutes?: number
   depth_level?: number
+  difficulty_mode?: 'fixed' | 'adaptive'
+  adaptive_score?: number
+  adaptive_uncertainty?: number
+  adaptive_reason?: string
   never_studied?: number
 }
 
@@ -717,6 +994,7 @@ export interface GapAnalysisResult {
 
 export interface TutorStreamParams {
   sessionId: number
+  studentMessageId?: string
   subjectId: number
   message: string
   sessionType: 'tutor' | 'general'
@@ -731,6 +1009,7 @@ export interface TutorStreamParams {
   attachedContent?: string
   durationMinutes?: number | null
   depthLevel?: 1 | 2 | 3 | 4 | 5 | 'adaptive'
+  difficultyMode?: 'fixed' | 'adaptive'
   neverStudied?: boolean
   timeElapsedSeconds?: number
   timeRemainingSeconds?: number
@@ -741,6 +1020,11 @@ export interface TutorStreamParams {
   weakTopicsConcerns?: string[]
   materialId?: number
   materialContent?: string
+  annotationContext?: {
+    materialIds?: number[]
+    lectureIds?: number[]
+    annotationIds?: number[]
+  }
   targetTopic?: string
   targetTopics?: string[]
   isFillGaps?: boolean
@@ -767,6 +1051,8 @@ export interface TutorSessionConfig {
   never_studied: boolean
   material_id?: number
   material_name?: string
+  annotation_ids?: number[]
+  lecture_ids?: number[]
   module_id?: number
   module_name?: string
   target_topic?: string
@@ -840,10 +1126,15 @@ export interface DailyPlan {
   priority: number
   is_completed: number
   created_at: string
-  action_type?: 'flashcards' | 'tutor_drill' | 'syllabus_read' | 'custom'
+  action_type?: 'flashcards' | 'tutor_drill' | 'syllabus_read' | 'new_content' | 'custom'
   learning_objective?: string
   target_topic?: string
   is_dismissed?: number
+  reason_code?: string
+  topic_id?: number | null
+  evidence_json?: string
+  success_criteria?: string
+  fallback_action?: string
 }
 
 export interface CompletedTaskStats {
@@ -851,6 +1142,77 @@ export interface CompletedTaskStats {
   completedTopicsCount: number
   completedSessionsCount: number
   totalCompleted: number
+}
+
+export interface AnalyticsDailyPoint {
+  date: string
+  reviews: number
+  correct: number
+  incorrect: number
+  accuracy: number | null
+  study_minutes: number
+  study_sessions: number
+  tutor_minutes: number
+  tutor_sessions: number
+  practice_minutes: number
+  practice_sessions: number
+  focus_blocks: number
+}
+
+export type AnalyticsMode = 'flashcards' | 'tutor' | 'practice' | 'focus'
+
+export interface AnalyticsModeStats {
+  mode: AnalyticsMode
+  sessions: number
+  minutes: number | null
+  items: number
+  correct: number
+  total: number
+}
+
+export interface AnalyticsSubjectStats {
+  subject_id: number
+  reviews: number
+  correct: number
+  accuracy: number | null
+  study_minutes: number | null
+  sessions: number
+  retention: number | null
+  mastery: number
+  previous_reviews: number
+  previous_correct: number
+  previous_study_minutes: number | null
+}
+
+export interface AnalyticsSnapshot {
+  range_days: number
+  start_date: string
+  end_date: string
+  previous_start_date: string
+  previous_end_date: string
+  daily: AnalyticsDailyPoint[]
+  modes: AnalyticsModeStats[]
+  subjects: AnalyticsSubjectStats[]
+  totals: {
+    reviews: number
+    correct: number
+    accuracy: number | null
+    study_minutes: number
+    sessions: number
+    current_retention: number | null
+  }
+  previous_totals: {
+    reviews: number
+    correct: number
+    accuracy: number | null
+    study_minutes: number
+    sessions: number
+  }
+  maintenance: {
+    due_cards: number
+    overdue_cards: number
+    fading_cards: number
+  }
 }
 
 export type FocusBlockItem = DailyPlan & { subject_name: string }
@@ -874,6 +1236,8 @@ export interface ClassCreationData {
   name: string
   subjectType: 'class' | 'book'
   courseCode?: string
+  subjectIcon?: string
+  color?: string
   timeCommitmentMinutes: number
   status: 'active' | 'ongoing'
   materials: ClassCreationMaterial[]
@@ -940,6 +1304,8 @@ export interface ToastMessage {
 
 export type CalendarEventType = 'lecture' | 'seminar' | 'lab' | 'workshop' | 'study' | 'personal'
 
+export const GOOGLE_CALENDAR_IPC_VERSION = 2
+
 export interface CalendarSource {
   id: number
   user_id: number
@@ -947,6 +1313,11 @@ export interface CalendarSource {
   type: 'ical' | 'manual' | 'google_oauth'
   url?: string
   color: string
+  google_account_id?: number | null
+  google_calendar_id?: string | null
+  sync_token?: string | null
+  provider_metadata_json?: string
+  enabled?: number | boolean
   last_synced_at?: string
   created_at: string
 }
@@ -965,6 +1336,10 @@ export interface CalendarEvent {
   recurrence_rule?: string | null
   subject_id?: number | null
   event_type: CalendarEventType
+  study_status?: 'planned' | 'completed' | 'skipped' | null
+  focus_minutes?: number | null
+  focus_action?: 'review' | 'tutor' | 'practice' | 'reading' | 'custom' | null
+  daily_plan_id?: number | null
   created_at: string
   updated_at: string
   subject_name?: string
@@ -978,6 +1353,38 @@ export interface CalendarScheduleContext {
   minutesSinceEnd?: number
 }
 
+export interface GoogleCalendarConnection {
+  id: number
+  user_id: number
+  status: 'connected' | 'reauthorize_required' | 'error'
+  scopes: string[]
+  last_synced_at?: string
+  last_error?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface GoogleCalendarSyncResult {
+  success: boolean
+  eventCount: number
+  calendarCount: number
+  error?: string
+  stage?: 'authorization' | 'token' | 'calendar_list' | 'event_sync' | 'database'
+  partial?: boolean
+  warning?: string
+}
+
+export interface GoogleCalendarRuntimeStatus {
+  appVersion: string
+  integrationVersion: number
+  handlerRegistered: boolean
+  schemaReady: boolean
+  clientIdConfigured: boolean
+  clientIdSource: 'settings' | 'build' | 'missing' | 'invalid'
+  accounts: GoogleCalendarConnection[]
+  error?: string
+}
+
 // ── Local AI & Hardware Types ─────────────────────────────────────────────
 
 export type HardwareTier = 'light' | 'balanced' | 'high' | 'unsupported'
@@ -985,6 +1392,7 @@ export type HardwareTier = 'light' | 'balanced' | 'high' | 'unsupported'
 export interface HardwareProfile {
   totalMemoryGb: number
   freeMemoryGb: number
+  freeDiskGb?: number
   cpuModel: string
   cpuCores: number
   arch: string
@@ -1021,6 +1429,17 @@ export interface LocalEngineStatus {
   isRunning: boolean
   port?: number
   activeModelId?: string
+  error?: string
+}
+
+export type LocalAIReadiness = 'downloading' | 'starting' | 'testing' | 'ready' | 'degraded' | 'failed'
+
+export interface LocalAIHealth {
+  readiness: LocalAIReadiness
+  healthy: boolean
+  port?: number
+  modelId?: string
+  latencyMs?: number
   error?: string
 }
 
@@ -1108,6 +1527,10 @@ export interface PracticeProblem {
   item_validation_json?: string | null
   quality_score?: number | null
   cover_test_passed?: number | null
+  verification_status?: 'verified' | 'needs_review' | 'legacy_unverified' | 'rejected' | string | null
+  verification_json?: string | null
+  solution_steps_json?: string | null
+  source_ref?: string | null
 }
 
 export interface PracticeSession {
@@ -1122,6 +1545,9 @@ export interface PracticeSession {
   started_at: string
   ended_at?: string | null
   summary?: string | null
+  mode?: 'standard' | 'guided'
+  guided_phase?: string | null
+  guided_state_json?: string | null
 }
 
 export interface PracticeProblemAttempt {
@@ -1134,6 +1560,37 @@ export interface PracticeProblemAttempt {
   feedback?: string | null
   time_spent_seconds: number
   created_at: string
+  evaluation_json?: string | null
+  assistance_level?: 'none' | 'hint' | 'worked_example' | 'direct_answer' | 'unassessed' | null
+  self_explanation?: string | null
+  retry_count?: number
+  transfer_result?: string | null
+}
+
+export interface GuidedPracticeEvent {
+  id: number
+  session_id: number
+  problem_id: number
+  phase: string
+  subgoal_index: number
+  learner_response?: string | null
+  hint_level: number
+  evaluation_json?: string | null
+  assistance_level: string
+  created_at: string
+}
+
+export interface GuidedPracticeSessionConfig extends PracticeSessionConfig {
+  mode: 'guided'
+}
+
+export interface GuidedHintResult {
+  success: boolean
+  hint?: string
+  hintLevel?: number
+  assistanceLevel?: string
+  state?: string
+  error?: string
 }
 
 export interface ExtractedPracticeProblem {
@@ -1166,6 +1623,8 @@ export interface PracticeSessionConfig {
   moduleId?: number | null
   topicId?: number | null
   problemCount: number // e.g. 3, 5, 10, or 999 for unlimited
+  difficulty?: number | null
+  learningGoal?: 'recommended' | 'reinforce' | 'review' | 'transfer' | null
 }
 
 export type PracticeErrorType =
@@ -1225,7 +1684,7 @@ export interface MultiKeyVault {
   hasOpenaiKey: boolean
   hasDeepseekKey: boolean
   hasGroqKey: boolean
-  visionProvider: 'gemini' | 'openai' | 'local' | 'auto'
+  visionProvider: 'gemini' | 'openai' | 'deepseek' | 'local' | 'auto'
   visionModel: string
 }
 
@@ -1306,6 +1765,17 @@ export interface ConceptGraphNode {
   isBottleneck?: boolean
   bottleneckScore?: number
   optimalStudyRank?: number
+  /** Evidence metadata keeps inferred curriculum structure distinct from observed mastery. */
+  evidenceCount?: number
+  evidenceSources?: string[]
+  relationshipConfidence?: number
+  evidenceKind?: 'observed' | 'curriculum' | 'manual' | 'inferred'
+  retrievability?: number
+  uncertainty?: number
+  cardIds?: number[]
+  materialIds?: number[]
+  contextualPrerequisites?: string[]
+  contextualDependents?: string[]
   layer?: number
   x?: number
   y?: number
@@ -1313,12 +1783,17 @@ export interface ConceptGraphNode {
   vy?: number
 }
 
+export type ConceptGraphRelationshipType = 'manual_prerequisite' | 'curriculum_context' | 'card_topic_context'
+
 export interface ConceptGraphEdge {
   id: string
   source: string
   target: string
   weight: number
   isPrerequisiteMet: boolean
+  relationshipType: ConceptGraphRelationshipType
+  blocks: boolean
+  confidence: number
 }
 
 export interface ConceptGraphData {
@@ -1343,5 +1818,3 @@ export interface ConceptGraphData {
     height: number
   }
 }
-
-

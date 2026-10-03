@@ -5,7 +5,6 @@ import FlashCard from '../components/FlashCard'
 import ActiveRecallCard from '../components/ActiveRecallCard'
 import MultipleChoiceCard from '../components/MultipleChoiceCard'
 import LearnModeSession from '../components/LearnModeSession'
-import PomodoroWidget from '../components/PomodoroWidget'
 import type { Card, CardSchedule, SessionSummary } from '../types'
 import ClozeCard from '../components/ClozeCard'
 import UndoToast from '../components/UndoToast'
@@ -51,6 +50,7 @@ export default function StudySession(): React.JSX.Element {
   const typeFilter = searchParams.get('type') as 'flashcard' | 'active_recall' | null
   const folderIdParam = searchParams.get('folderId')
   const isFolderMode = folderIdParam != null
+  const conceptFilter = searchParams.get('concept')?.trim() || null
   const { user, calculatorSkin } = useAppStore()
   const navigate = useNavigate()
 
@@ -113,7 +113,9 @@ export default function StudySession(): React.JSX.Element {
   }
 
   const learnStorageKey = `${user?.id ?? 0}-${subjectId ?? 'all'}`
-  const sessionProgressKey = `study-session-progress-${user?.id ?? 0}-${subjectId ?? 'all'}-${folderIdParam ?? 'all'}-${isMCMode ? 'mc' : 'study'}`
+  const sessionProgressKey = conceptFilter
+    ? `study-session-progress-${user?.id ?? 0}-${subjectId ?? 'all'}-${folderIdParam ?? 'all'}-${conceptFilter}-${isMCMode ? 'mc' : 'study'}`
+    : `study-session-progress-${user?.id ?? 0}-${subjectId ?? 'all'}-${folderIdParam ?? 'all'}-${isMCMode ? 'mc' : 'study'}`
 
   const handleLearnRestart = useCallback(() => {
     localStorage.removeItem(`learn-progress-${learnStorageKey}`)
@@ -222,7 +224,13 @@ export default function StudySession(): React.JSX.Element {
 
   useEffect(() => {
     if (user) loadCards()
-  }, [user, subjectId, isMCMode, isLearnMode, typeFilter, folderIdParam])
+  }, [user, subjectId, isMCMode, isLearnMode, typeFilter, folderIdParam, conceptFilter])
+
+  const filterByConcept = (pool: StudyCard[]): StudyCard[] => {
+    if (!conceptFilter) return pool
+    const normalized = conceptFilter.toLowerCase().replace(/\s+/g, ' ')
+    return pool.filter(card => (card.concept || '').toLowerCase().replace(/\s+/g, ' ') === normalized)
+  }
 
   async function loadCards(studyAll = false, forceRestart = false): Promise<void> {
     if (!user) return
@@ -272,16 +280,17 @@ export default function StudySession(): React.JSX.Element {
         const filtered = isFolderMode
           ? allCardsPool.filter(c => c.folder_id === Number(folderIdParam))
           : allCardsPool
-        if (filtered.length === 0) {
+        const scoped = filterByConcept(filtered)
+        if (scoped.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
         } else {
-          const shuffled = [...filtered].sort(() => Math.random() - 0.5)
+          const shuffled = [...scoped].sort(() => Math.random() - 0.5)
           setCards(shuffled)
-          setAllCards(filtered)
+          setAllCards(scoped)
           await ensureDbSession(subjectIdNum)
         }
-        setSummary({ total: filtered.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
+        setSummary({ total: scoped.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
         setSkippedCards([])
         setCurrentIdx(0)
         setPhase('studying')
@@ -292,7 +301,7 @@ export default function StudySession(): React.JSX.Element {
       if (isFolderMode) {
         const fid = Number(folderIdParam)
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        const folderCards = (all as StudyCard[]).filter(c => c.folder_id === fid)
+        const folderCards = filterByConcept((all as StudyCard[]).filter(c => c.folder_id === fid))
         if (folderCards.length === 0) {
           setEmptyReason('no-cards')
           setCards([])
@@ -309,7 +318,7 @@ export default function StudySession(): React.JSX.Element {
 
       if (studyAll) {
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        const filtered = typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[]
+        const filtered = filterByConcept(typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[])
         setCards(filtered)
         if (filtered.length > 0) {
           await ensureDbSession(subjectIdNum)
@@ -327,11 +336,11 @@ export default function StudySession(): React.JSX.Element {
       const due = useInterleave
         ? await window.electronAPI.getInterleavedDueCards(user.id, subjectIdNum)
         : await window.electronAPI.getDueCards(user.id, subjectIdNum)
-      const filteredDue = typeFilter ? (due as StudyCard[]).filter(c => c.type === typeFilter) : due as StudyCard[]
+      const filteredDue = filterByConcept(typeFilter ? (due as StudyCard[]).filter(c => c.type === typeFilter) : due as StudyCard[])
 
       if (filteredDue.length === 0) {
         const all = await window.electronAPI.getAllCardsWithSchedule(user.id, subjectIdNum)
-        const filteredAll = typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[]
+        const filteredAll = filterByConcept(typeFilter ? (all as StudyCard[]).filter(c => c.type === typeFilter) : all as StudyCard[])
         if (filteredAll.length === 0) {
           setEmptyReason('no-cards')
         } else {
@@ -344,7 +353,7 @@ export default function StudySession(): React.JSX.Element {
         await ensureDbSession(subjectIdNum)
       }
 
-      setSummary({ total: due.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
+      setSummary({ total: filteredDue.length, correct: 0, incorrect: 0, skipped: 0, cardsReviewed: [] })
     } catch (err) {
       console.error('Load cards error:', err)
     } finally {
@@ -879,7 +888,6 @@ export default function StudySession(): React.JSX.Element {
           </button>
 
           <div className="flex items-center gap-3 text-sm">
-            <PomodoroWidget />
             <button
               type="button"
               onClick={() => setShowCalculator((prev) => !prev)}

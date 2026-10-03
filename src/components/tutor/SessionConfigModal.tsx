@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
+import { Activity, BookOpen, CheckCircle2, FileText, Lightbulb, Sparkles, Target, X, Zap } from '../icons'
 import {
   TutorSessionConfig,
   DEPTH_LEVELS,
@@ -12,7 +13,9 @@ import {
   ModuleTopic,
   LibraryFile,
   GapAnalysisResult,
-  QuickReviewTopic
+  QuickReviewTopic,
+  DocumentAnnotation,
+  Lecture
 } from '../../types'
 
 interface SessionConfigModalProps {
@@ -59,6 +62,12 @@ export default function SessionConfigModal({
     initialTopics && initialTopics.length > 0 ? initialTopics : initialTopic ? [initialTopic] : []
   )
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(propMaterialId || null)
+  const [materialAnnotations, setMaterialAnnotations] = useState<DocumentAnnotation[]>([])
+  const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<number[]>([])
+  const [lecturesList, setLecturesList] = useState<Lecture[]>([])
+  const [selectedLectureIds, setSelectedLectureIds] = useState<number[]>([])
+  const [lectureAnnotationsById, setLectureAnnotationsById] = useState<Record<number, DocumentAnnotation[]>>({})
+  const [selectedLectureAnnotationIds, setSelectedLectureAnnotationIds] = useState<number[]>([])
   const [customTopic, setCustomTopic] = useState(initialTopic || '')
   const [quickReviewTopics, setQuickReviewTopics] = useState<QuickReviewTopic[]>([])
 
@@ -72,11 +81,34 @@ export default function SessionConfigModal({
 
   const sliderRef = useRef<HTMLInputElement>(null)
 
-  // Beginner mode forces minimum depth 3 if manual depth < 3 is selected
+  useEffect(() => {
+    let active = true
+    if (!selectedMaterialId) {
+      setMaterialAnnotations([])
+      setSelectedAnnotationIds([])
+      return () => { active = false }
+    }
+    window.electronAPI.listDocumentAnnotations({ materialId: selectedMaterialId }).then((rows) => {
+      if (!active) return
+      setMaterialAnnotations(rows)
+      setSelectedAnnotationIds(rows.map((row) => row.id))
+    }).catch(() => {
+      if (active) {
+        setMaterialAnnotations([])
+        setSelectedAnnotationIds([])
+        setLectureAnnotationsById({})
+        setSelectedLectureAnnotationIds([])
+      }
+    })
+    return () => { active = false }
+  }, [selectedMaterialId])
+
+  // "Never studied" adds foundational scaffolding in the tutor prompt but
+  // must not silently rewrite the learner's selected difficulty level.
   const finalDepth: 1 | 2 | 3 | 4 | 5 | 'adaptive' =
     selectedDepth === 'adaptive'
       ? 'adaptive'
-      : (neverStudied && selectedDepth < 3 ? 3 : selectedDepth)
+      : selectedDepth
 
   // All new topics across entire class
   const allNewTopicsList = modules.flatMap(mod =>
@@ -158,8 +190,21 @@ export default function SessionConfigModal({
 
         // Load materials
         const mats = (await window.electronAPI.libraryGetFiles(subjectId)) as LibraryFile[]
+        const lectures = await window.electronAPI.listLectures(subjectId)
+        const lectureAnnotationEntries = await Promise.all(lectures.map(async (lecture) => {
+          try {
+            return [lecture.id, await window.electronAPI.listDocumentAnnotations({ lectureId: lecture.id })] as const
+          } catch {
+            return [lecture.id, [] as DocumentAnnotation[]] as const
+          }
+        }))
         if (isMounted) {
           setMaterialsList(mats)
+          setLecturesList(lectures)
+          setSelectedLectureIds(lectures.map((lecture) => lecture.id))
+          const annotationMap = Object.fromEntries(lectureAnnotationEntries) as Record<number, DocumentAnnotation[]>
+          setLectureAnnotationsById(annotationMap)
+          setSelectedLectureAnnotationIds(lectureAnnotationEntries.flatMap(([, rows]) => rows.map((row) => row.id)))
           if (propMaterialId) {
             setSelectedMaterialId(propMaterialId)
           } else if (mats.length > 0 && !selectedMaterialId) {
@@ -195,6 +240,14 @@ export default function SessionConfigModal({
       isMounted = false
     }
   }, [subjectId, user?.id])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   function handleTimePreset(minutes: number | null): void {
     setSelectedTime(minutes)
@@ -310,6 +363,15 @@ export default function SessionConfigModal({
       never_studied: neverStudied || studyMode === 'new_content',
       material_id: chosenMaterialId,
       material_name: chosenMaterialName,
+      annotation_ids: studyMode === 'material'
+        ? [...selectedAnnotationIds, ...selectedLectureAnnotationIds]
+        : undefined,
+      // Annotation IDs are authoritative when present, so lecture_ids is only
+      // used for backwards-compatible whole-lecture selection when no sidecar
+      // annotations exist yet.
+      lecture_ids: studyMode === 'material' && selectedLectureAnnotationIds.length === 0 && Object.values(lectureAnnotationsById).every((rows) => rows.length === 0)
+        ? selectedLectureIds
+        : undefined,
       module_id: chosenModuleId,
       module_name: chosenModuleName,
       target_topic: chosenTopic,
@@ -336,48 +398,59 @@ export default function SessionConfigModal({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tutor-session-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/70 backdrop-blur-sm p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col p-6 my-auto"
+        className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl w-full max-w-2xl max-h-[min(92vh,860px)] flex flex-col my-auto overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-700">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-50 flex items-center gap-2">
-              <span>🧠</span> AI Tutor Session
+        <div className="flex items-start justify-between gap-4 px-5 sm:px-7 py-5 border-b border-slate-100 dark:border-slate-800">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-neuron-100 text-neuron-600 dark:bg-neuron-900/50 dark:text-neuron-300">
+                <Sparkles size={16} />
+              </span>
+              <span className="text-xs font-semibold text-neuron-600 dark:text-neuron-300">AI tutor</span>
+            </div>
+            <h2 id="tutor-session-title" className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
+              Start a study session
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Class: <span className="font-semibold text-slate-700 dark:text-slate-300">{subjectName}</span>
-            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-slate-500 dark:text-slate-400">
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">{subjectName}</span>
+              {gapAnalysis && gapAnalysis.totalGapsCount > 0 && <span>{gapAnalysis.totalGapsCount} gap{gapAnalysis.totalGapsCount === 1 ? '' : 's'} detected</span>}
+            </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            aria-label="Close study session setup"
+            className="shrink-0 rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M4 4l10 10M14 4l-10 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
+            <X size={18} />
           </button>
         </div>
 
         {/* Scrollable Content */}
-        <div className="overflow-y-auto py-4 space-y-6 flex-1 pr-1">
+        <div className="overflow-y-auto px-5 sm:px-7 py-5 space-y-7 flex-1">
           {/* ── Topic Selection Tabs / Mode ── */}
           <div>
-            <label className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-2.5 flex items-center justify-between">
-              <span>📚 What topic would you like to study?</span>
+            <div className="mb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">How would you like to study?</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Choose a guided path, or focus on a specific source.</p>
               {gapAnalysis && gapAnalysis.totalGapsCount > 0 && (
-                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
-                  {gapAnalysis.totalGapsCount} gap{gapAnalysis.totalGapsCount === 1 ? '' : 's'} detected
-                </span>
+                <span className="sr-only">{gapAnalysis.totalGapsCount} gaps detected</span>
               )}
-            </label>
+            </div>
 
             {/* Mode selection buttons */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mb-3">
+            <div className="mb-4">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Recommended</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -386,121 +459,101 @@ export default function SessionConfigModal({
                     setSelectedTopics(allNewTopicsList.map(i => i.topic.title))
                   }
                 }}
-                className={`p-2.5 rounded-xl text-left border transition-all relative ${
+                className={`group flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 ${
                   studyMode === 'new_content'
-                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-neuron-400 bg-neuron-50 text-neuron-900 shadow-sm dark:border-neuron-500 dark:bg-neuron-900/30 dark:text-neuron-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-neuron-300 hover:bg-white dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:border-neuron-700 dark:hover:bg-slate-800'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1 text-amber-600 dark:text-amber-400">
-                  <span>✨</span> New Content
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  {allNewTopicsList.length > 0 ? `${allNewTopicsList.length} new topics` : 'Across class'}
-                </div>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-900/50 dark:text-amber-300"><Sparkles size={16} /></span>
+                <span className="min-w-0 flex-1"><span className="block text-xs font-semibold">New content</span><span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">{allNewTopicsList.length > 0 ? `${allNewTopicsList.length} new topics` : 'Across class'}</span></span>
+                {studyMode === 'new_content' && <CheckCircle2 size={16} className="text-neuron-600 dark:text-neuron-300" />}
               </button>
 
               <button
                 type="button"
                 onClick={() => setStudyMode('quick_review')}
-                className={`p-2.5 rounded-xl text-left border transition-all relative ${
+                className={`group flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 ${
                   studyMode === 'quick_review'
-                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-neuron-400 bg-neuron-50 text-neuron-900 shadow-sm dark:border-neuron-500 dark:bg-neuron-900/30 dark:text-neuron-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-neuron-300 hover:bg-white dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:border-neuron-700 dark:hover:bg-slate-800'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1 text-amber-600 dark:text-amber-400">
-                  <span>⚡</span> Quick Review
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  {quickReviewTopics.length > 0 ? `${quickReviewTopics.length} topics (1-3 Qs)` : 'All topics'}
-                </div>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-900/50 dark:text-sky-300"><Zap size={16} /></span>
+                <span className="min-w-0 flex-1"><span className="block text-xs font-semibold">Quick review</span><span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">{quickReviewTopics.length > 0 ? `${quickReviewTopics.length} topics · 1–3 questions` : 'All topics'}</span></span>
+                {studyMode === 'quick_review' && <CheckCircle2 size={16} className="text-neuron-600 dark:text-neuron-300" />}
               </button>
 
               <button
                 type="button"
                 onClick={() => setStudyMode('fill_gaps')}
-                className={`p-2.5 rounded-xl text-left border transition-all relative ${
+                className={`group flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 ${
                   studyMode === 'fill_gaps'
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/30 text-violet-900 dark:text-violet-100 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-neuron-400 bg-neuron-50 text-neuron-900 shadow-sm dark:border-neuron-500 dark:bg-neuron-900/30 dark:text-neuron-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-neuron-300 hover:bg-white dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:border-neuron-700 dark:hover:bg-slate-800'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1 text-violet-600 dark:text-violet-400">
-                  <span>⚡</span> Fill Gaps
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Auto-target gaps
-                </div>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-600 dark:bg-violet-900/50 dark:text-violet-300"><Target size={16} /></span>
+                <span className="min-w-0 flex-1"><span className="block text-xs font-semibold">Fill gaps</span><span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">Target your weakest areas</span></span>
+                {studyMode === 'fill_gaps' && <CheckCircle2 size={16} className="text-neuron-600 dark:text-neuron-300" />}
               </button>
 
               <button
                 type="button"
                 onClick={() => setStudyMode('active_recall')}
-                className={`p-2.5 rounded-xl text-left border transition-all relative ${
+                className={`group flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 ${
                   studyMode === 'active_recall'
-                    ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-neuron-400 bg-neuron-50 text-neuron-900 shadow-sm dark:border-neuron-500 dark:bg-neuron-900/30 dark:text-neuron-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-neuron-300 hover:bg-white dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:border-neuron-700 dark:hover:bg-slate-800'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1 text-emerald-600 dark:text-emerald-400">
-                  <span>🎯</span> Active Recall
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Continuous Q&A
-                </div>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-900/50 dark:text-emerald-300"><Activity size={16} /></span>
+                <span className="min-w-0 flex-1"><span className="block text-xs font-semibold">Active recall</span><span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">Continuous questions and answers</span></span>
+                {studyMode === 'active_recall' && <CheckCircle2 size={16} className="text-neuron-600 dark:text-neuron-300" />}
               </button>
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Choose a source</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
 
               <button
                 type="button"
                 onClick={() => setStudyMode('syllabus')}
-                className={`p-2.5 rounded-xl text-left border transition-all ${
+                className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 ${
                   studyMode === 'syllabus'
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/30 text-violet-900 dark:text-violet-100 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-neuron-400 bg-neuron-50 text-neuron-900 shadow-sm dark:border-neuron-500 dark:bg-neuron-900/30 dark:text-neuron-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-neuron-300 hover:bg-white dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:border-neuron-700 dark:hover:bg-slate-800'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1">
-                  <span>📖</span> Syllabus
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Choose module
-                </div>
+                <BookOpen size={16} className="shrink-0 text-neuron-600 dark:text-neuron-300" /><span><span className="block text-xs font-semibold">Syllabus</span><span className="block text-[11px] text-slate-500 dark:text-slate-400">Choose module</span></span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setStudyMode('material')}
-                className={`p-2.5 rounded-xl text-left border transition-all ${
+                className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 ${
                   studyMode === 'material'
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/30 text-violet-900 dark:text-violet-100 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-neuron-400 bg-neuron-50 text-neuron-900 shadow-sm dark:border-neuron-500 dark:bg-neuron-900/30 dark:text-neuron-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-neuron-300 hover:bg-white dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:border-neuron-700 dark:hover:bg-slate-800'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1">
-                  <span>📄</span> Material
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Study file
-                </div>
+                <FileText size={16} className="shrink-0 text-neuron-600 dark:text-neuron-300" /><span><span className="block text-xs font-semibold">Material</span><span className="block text-[11px] text-slate-500 dark:text-slate-400">Study a file</span></span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setStudyMode('custom')}
-                className={`p-2.5 rounded-xl text-left border transition-all ${
+                className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 ${
                   studyMode === 'custom'
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/30 text-violet-900 dark:text-violet-100 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-neuron-400 bg-neuron-50 text-neuron-900 shadow-sm dark:border-neuron-500 dark:bg-neuron-900/30 dark:text-neuron-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-neuron-300 hover:bg-white dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:border-neuron-700 dark:hover:bg-slate-800'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-semibold text-xs mb-1">
-                  <span>✏️</span> Custom
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                  Type topic
-                </div>
+                <Lightbulb size={16} className="shrink-0 text-neuron-600 dark:text-neuron-300" /><span><span className="block text-xs font-semibold">Custom</span><span className="block text-[11px] text-slate-500 dark:text-slate-400">Type a topic</span></span>
               </button>
+              </div>
             </div>
 
             {/* ── Mode 0: New Content Box ── */}
@@ -964,6 +1017,69 @@ export default function SessionConfigModal({
                         )
                       })}
                     </div>
+                    <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-600 bg-white/70 dark:bg-slate-800/60 p-2.5">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Attached notes & highlights</span>
+                        <button type="button" onClick={() => setSelectedAnnotationIds(selectedAnnotationIds.length === materialAnnotations.length ? [] : materialAnnotations.map((row) => row.id))} className="text-[10px] text-violet-600 dark:text-violet-400">
+                          {selectedAnnotationIds.length === materialAnnotations.length ? 'Deselect all' : 'Select all'}
+                        </button>
+                      </div>
+                      {materialAnnotations.length === 0 ? (
+                        <p className="text-[10px] text-slate-400">No Cornell annotations saved for this material yet.</p>
+                      ) : (
+                        <div className="space-y-1 max-h-28 overflow-y-auto">
+                          {materialAnnotations.map((annotation) => (
+                            <label key={annotation.id} className="flex items-start gap-2 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer">
+                              <input type="checkbox" checked={selectedAnnotationIds.includes(annotation.id)} onChange={(event) => setSelectedAnnotationIds((current) => event.target.checked ? [...current, annotation.id] : current.filter((id) => id !== annotation.id))} className="mt-0.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                              <span><strong className="uppercase text-violet-500">{annotation.kind}</strong>{annotation.selected_text ? ` — “${annotation.selected_text.slice(0, 65)}${annotation.selected_text.length > 65 ? '…' : ''}”` : ` — ${annotation.body.slice(0, 80)}`}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {lecturesList.length > 0 && (
+                      <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white/70 dark:bg-slate-800/60 p-2.5">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Lecture notes</span>
+                          <button type="button" onClick={() => {
+                            const selectAll = selectedLectureIds.length !== lecturesList.length
+                            setSelectedLectureIds(selectAll ? lecturesList.map((lecture) => lecture.id) : [])
+                            setSelectedLectureAnnotationIds(selectAll ? Object.values(lectureAnnotationsById).flat().map((annotation) => annotation.id) : [])
+                          }} className="text-[10px] text-violet-600 dark:text-violet-400">
+                            {selectedLectureIds.length === lecturesList.length ? 'Deselect all' : 'Select all'}
+                          </button>
+                        </div>
+                        <div className="space-y-1 max-h-24 overflow-y-auto">
+                          {lecturesList.map((lecture) => {
+                            const lectureAnnotations = lectureAnnotationsById[lecture.id] || []
+                            const lectureSelected = selectedLectureIds.includes(lecture.id)
+                            return (
+                              <div key={lecture.id} className="rounded-md border border-slate-100 dark:border-slate-700/60 p-1.5">
+                                <label className="flex items-center gap-2 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer">
+                                  <input type="checkbox" checked={lectureSelected} onChange={(event) => {
+                                    setSelectedLectureIds((current) => event.target.checked ? [...current, lecture.id] : current.filter((id) => id !== lecture.id))
+                                    setSelectedLectureAnnotationIds((current) => event.target.checked
+                                      ? [...new Set([...current, ...lectureAnnotations.map((annotation) => annotation.id)])]
+                                      : current.filter((id) => !lectureAnnotations.some((annotation) => annotation.id === id)))
+                                  }} className="rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                                  <span className="truncate">🎙️ {lecture.title}</span>
+                                </label>
+                                {lectureAnnotations.length > 0 && (
+                                  <div className="ml-5 mt-1 space-y-0.5">
+                                    {lectureAnnotations.map((annotation) => (
+                                      <label key={annotation.id} className="flex items-start gap-1.5 text-[9px] text-slate-500 dark:text-slate-400 cursor-pointer">
+                                        <input type="checkbox" checked={selectedLectureAnnotationIds.includes(annotation.id)} onChange={(event) => setSelectedLectureAnnotationIds((current) => event.target.checked ? [...new Set([...current, annotation.id])] : current.filter((id) => id !== annotation.id))} className="mt-0.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                                        <span><strong className="uppercase text-violet-500">{annotation.kind}</strong>{annotation.selected_text ? ` — “${annotation.selected_text.slice(0, 55)}${annotation.selected_text.length > 55 ? '…' : ''}”` : ` — ${annotation.body.slice(0, 70)}`}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -989,11 +1105,21 @@ export default function SessionConfigModal({
             )}
           </div>
 
-          {/* ── Difficulty Selector ── */}
-          <div>
-            <label className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-2 block">
-              🎯 Difficulty Level
-            </label>
+          {/* ── Session Settings ── */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/45">
+            <div className="mb-4 flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-neuron-600 shadow-sm dark:bg-slate-900 dark:text-neuron-300"><Target size={15} /></span>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Session settings</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">Tune the pace and challenge before you begin.</p>
+              </div>
+            </div>
+
+            {/* ── Difficulty Selector ── */}
+            <div>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2 block">
+                Difficulty level
+              </label>
 
             <div className="space-y-1.5">
               <button
@@ -1071,18 +1197,13 @@ export default function SessionConfigModal({
               })}
             </div>
 
-            {neverStudied && typeof selectedDepth === 'number' && selectedDepth < 3 && (
-              <p className="text-xs text-amber-500 mt-1.5">
-                Beginner mode requires at least Proficient difficulty. Using Level 3.
-              </p>
-            )}
-          </div>
+            </div>
 
           {/* ── Time Selector ── */}
-          <div>
-            <label className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-2 block">
-              ⏱️ Session Duration <span className="text-xs text-slate-400 font-normal">(optional)</span>
-            </label>
+            <div className="mt-5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2 block">
+                Session duration <span className="font-normal text-slate-400">(optional)</span>
+              </label>
 
             {/* Preset buttons */}
             <div className="flex gap-2 flex-wrap mb-3">
@@ -1133,10 +1254,10 @@ export default function SessionConfigModal({
                 No time limit — study at your own pace
               </p>
             )}
-          </div>
+            </div>
 
           {/* ── Never Studied Toggle ── */}
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-700/30 border border-slate-200 dark:border-slate-700">
+            <div className="mt-5 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/50">
             <label className="flex items-start gap-3 cursor-pointer">
               <input
                 type="checkbox"
@@ -1146,41 +1267,41 @@ export default function SessionConfigModal({
               />
               <div>
                 <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  🆕 I've never studied this topic before
+                  I've never studied this topic before
                 </span>
                 <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
                   Start from absolute fundamentals without assuming prior knowledge.
                 </p>
               </div>
             </label>
+            </div>
           </div>
         </div>
 
         {/* ── Summary & Start ── */}
-        <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700 mt-2">
-          <div className="text-xs text-slate-400 dark:text-slate-500 truncate max-w-[260px]">
-            <span className="font-semibold text-violet-600 dark:text-violet-400">
+        <div className="sticky bottom-0 flex flex-col gap-3 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-7 dark:border-slate-800 dark:bg-slate-900/95">
+          <div className="min-w-0 text-xs text-slate-500 dark:text-slate-400">
+            <span className="block truncate font-semibold text-neuron-600 dark:text-neuron-300">
               {studyMode === 'new_content'
-                ? `✨ New Content (${selectedTopics.length > 0 ? selectedTopics.length + ' topic' + (selectedTopics.length > 1 ? 's' : '') : 'All'})`
+                ? `New content · ${selectedTopics.length > 0 ? selectedTopics.length + ' topic' + (selectedTopics.length > 1 ? 's' : '') : 'All'}`
                 : studyMode === 'fill_gaps'
-                ? '⚡ Fill Gaps'
+                ? 'Fill gaps'
                 : studyMode === 'active_recall'
-                ? '🎯 Active Recall'
+                ? 'Active recall'
                 : studyMode === 'syllabus'
-                ? `📖 ${selectedTopic || 'Syllabus'}`
+                ? `${selectedTopic || 'Syllabus'}`
                 : studyMode === 'material'
-                ? `📄 Material`
-                : `✏️ ${customTopic || 'Custom'}`}
+                ? 'Material'
+                : customTopic || 'Custom'}
             </span>
-            {selectedTime !== null ? <span> · {selectedTime}m</span> : <span> · Unlimited</span>}
-            <span> · {DEPTH_LEVELS.find(d => d.level === finalDepth)?.name}</span>
+            <span className="block truncate text-[11px]">{selectedTime !== null ? `${selectedTime} min` : 'No time limit'} · {DEPTH_LEVELS.find(d => d.level === finalDepth)?.name}</span>
           </div>
 
           <button
             type="button"
             onClick={handleStart}
             disabled={starting}
-            className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+            className={`inline-flex shrink-0 items-center justify-center rounded-xl px-5 py-2.5 text-xs font-bold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 focus-visible:ring-offset-2 ${
               starting
                 ? 'bg-violet-400 text-white cursor-not-allowed'
                 : 'bg-violet-600 hover:bg-violet-700 text-white shadow-md hover:shadow-lg'
@@ -1192,7 +1313,7 @@ export default function SessionConfigModal({
                 Starting...
               </span>
             ) : (
-              'Start Session →'
+              'Start session'
             )}
           </button>
         </div>

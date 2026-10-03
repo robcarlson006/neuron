@@ -2,8 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import type { Card, CardSchedule, DiagnosticSummary, ConceptMastery } from '../types'
-import LatexText from '../components/LatexText'
-import PomodoroWidget from '../components/PomodoroWidget'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import AutoGradeFeedback from '../components/AutoGradeFeedback'
 import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEvaluator'
 
@@ -532,7 +531,6 @@ export default function Diagnostics(): React.JSX.Element {
             Exit
           </button>
           <div className="flex items-center gap-3">
-            <PomodoroWidget />
             {resumedFrom !== null && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 font-medium">
                 Resumed
@@ -559,9 +557,9 @@ export default function Diagnostics(): React.JSX.Element {
             <span className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 block mb-3">
               Question
             </span>
-            <p className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
-              <LatexText>{card.front}</LatexText>
-            </p>
+            <div className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
+              <MarkdownRenderer content={card.front} />
+            </div>
           </div>
 
           {phase === 'question' && (
@@ -637,7 +635,7 @@ export default function Diagnostics(): React.JSX.Element {
                 <span className="text-xs font-medium uppercase tracking-wide text-violet-500 dark:text-violet-400 block mb-2">
                   Model Answer
                 </span>
-                <p className="text-sm text-slate-800 dark:text-slate-100 leading-relaxed"><LatexText>{card.back}</LatexText></p>
+                <div className="text-sm text-slate-800 dark:text-slate-100 leading-relaxed"><MarkdownRenderer content={card.back} /></div>
               </div>
 
               {/* 5-option rating */}

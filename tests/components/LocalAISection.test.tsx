@@ -120,7 +120,7 @@ describe('LocalAISection Component', () => {
 
     await waitFor(() => {
       expect(window.electronAPI.startLocalEngine).toHaveBeenCalledWith('qwen-2.5-7b')
-      expect(onSelectModel).toHaveBeenCalledWith('http://127.0.0.1:8080', 'Qwen 2.5 7B Instruct')
+      expect(onSelectModel).toHaveBeenCalledWith('http://127.0.0.1:8080', 'qwen-2.5-7b')
     })
   })
 })

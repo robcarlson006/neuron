@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import LatexText from './LatexText'
+import MarkdownRenderer from './MarkdownRenderer'
 import { evaluateSemantically } from '../lib/semanticEvaluator'
 import { hasMathInput } from '../lib/mathFormatter'
 import { Sigma } from './icons'
@@ -434,9 +435,9 @@ export default function LearnModeSession({
         <span className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 block mb-3">
           Question
         </span>
-        <p className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
-          <LatexText>{currentItem.card.front}</LatexText>
-        </p>
+        <div className="text-xl font-semibold text-slate-900 dark:text-slate-50 leading-relaxed">
+          <MarkdownRenderer content={currentItem.card.front} />
+        </div>
       </div>
 
       {/* ── MC Phase ─────────────────────────────────────────────────── */}
@@ -490,7 +491,7 @@ export default function LearnModeSession({
                         : LETTERS[idx]}
                   </span>
                   <span className={textCls}>
-                    <LatexText>{choice.text}</LatexText>
+                    <MarkdownRenderer content={choice.text} />
                   </span>
                 </button>
               )
@@ -648,7 +649,7 @@ export default function LearnModeSession({
 
                     {writtenFeedback && (
                       <div className="text-xs text-slate-600 dark:text-slate-300 mb-2 leading-relaxed">
-                        <LatexText>{writtenFeedback}</LatexText>
+                        <MarkdownRenderer content={writtenFeedback} />
                       </div>
                     )}
 
@@ -658,7 +659,7 @@ export default function LearnModeSession({
                           Correct answer:
                         </span>
                         <p className="text-sm text-slate-700 dark:text-slate-200 mt-0.5 font-medium leading-relaxed">
-                          <LatexText>{currentItem.card.back}</LatexText>
+                          <MarkdownRenderer content={currentItem.card.back} />
                         </p>
                       </div>
                     )}

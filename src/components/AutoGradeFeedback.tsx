@@ -1,6 +1,6 @@
 import React from 'react'
 import LoadingProgressBar from './common/LoadingProgressBar'
-import LatexText from './LatexText'
+import MarkdownRenderer from './MarkdownRenderer'
 import type { AutoGradeResult } from '../lib/semanticEvaluator'
 
 interface AutoGradeFeedbackProps {
@@ -84,7 +84,7 @@ export default function AutoGradeFeedback({
 
       {/* Feedback text */}
       <div className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
-        <LatexText>{result.feedback}</LatexText>
+        <MarkdownRenderer content={result.feedback} />
       </div>
 
       {/* Concept tags */}

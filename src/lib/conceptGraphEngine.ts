@@ -13,6 +13,7 @@ import type {
   ConceptGraphNode,
   ConceptGraphEdge,
   ConceptGraphData,
+  ConceptGraphRelationshipType,
   SyllabusModule,
   ModuleTopic,
   Card
@@ -34,6 +35,11 @@ export interface BuildGraphParams {
  */
 export function normalizeConceptKey(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+interface GraphDependency extends ConceptDependency {
+  relationshipType: ConceptGraphRelationshipType
+  confidence: number
 }
 
 /**
@@ -137,7 +143,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
   } = params
 
   // 1. Merge explicit dependencies with curriculum-inferred dependencies
-  const allDeps: ConceptDependency[] = [...dependencies]
+  const allDeps: GraphDependency[] = dependencies.map(dependency => ({
+    ...dependency,
+    relationshipType: 'manual_prerequisite',
+    confidence: 1
+  }))
   const explicitDepKeys = new Set(
     dependencies.map(d => `${normalizeConceptKey(d.prerequisite_concept)}->${normalizeConceptKey(d.target_concept)}`)
   )
@@ -147,7 +157,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     for (const inf of inferred) {
       const key = `${normalizeConceptKey(inf.prerequisite_concept)}->${normalizeConceptKey(inf.target_concept)}`
       if (!explicitDepKeys.has(key)) {
-        allDeps.push(inf)
+        allDeps.push({ ...inf, relationshipType: 'curriculum_context', confidence: 0.7 })
       }
     }
   }
@@ -179,7 +189,17 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
       dependents: [],
       isBottleneck: false,
       bottleneckScore: 0,
-      optimalStudyRank: 999
+      optimalStudyRank: 999,
+      evidenceCount: 0,
+      evidenceSources: [],
+      relationshipConfidence: 0.25,
+      evidenceKind: 'inferred',
+      retrievability: 0,
+      uncertainty: 1,
+      cardIds: [],
+      materialIds: [],
+      contextualPrerequisites: [],
+      contextualDependents: []
     }
     nodeMap.set(key, node)
     return node
@@ -190,6 +210,10 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
   for (let mIdx = 0; mIdx < sortedMods.length; mIdx++) {
     const mod = sortedMods[mIdx]
     const modNode = getOrCreateNode(mod.title, 'Module', mod.id)
+    modNode.evidenceKind = modNode.evidenceKind === 'observed' ? 'observed' : 'curriculum'
+    if (!modNode.evidenceSources?.includes('curriculum')) modNode.evidenceSources?.push('curriculum')
+    modNode.evidenceCount = (modNode.evidenceCount ?? 0) + 1
+    modNode.relationshipConfidence = Math.max(modNode.relationshipConfidence ?? 0, 0.7)
     if (modNode.layer === undefined) modNode.layer = mIdx * 2
 
     if (mod.topics) {
@@ -198,11 +222,17 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
         const top = sortedTopics[tIdx]
         topicIdMap.set(top.id, { title: top.title, moduleTitle: mod.title, moduleId: mod.id })
         const topNode = getOrCreateNode(top.title, mod.title, mod.id, top.id)
+        topNode.evidenceKind = topNode.evidenceKind === 'observed' ? 'observed' : 'curriculum'
+        if (!topNode.evidenceSources?.includes('curriculum')) topNode.evidenceSources?.push('curriculum')
+        topNode.evidenceCount = (topNode.evidenceCount ?? 0) + 1
+        topNode.relationshipConfidence = Math.max(topNode.relationshipConfidence ?? 0, 0.7)
         if (topNode.layer === undefined) topNode.layer = mIdx * 2 + 1 + Math.floor(tIdx / 2)
         if (top.card_count) topNode.cardCount += top.card_count
         if (top.retrievability !== undefined && top.retrievability > 0 && topNode.observations === 0) {
           topNode.masteryProb = Math.min(Math.max(top.retrievability, 0), 1)
           topNode.observations = 1
+          topNode.retrievability = top.retrievability
+          topNode.uncertainty = 0.35
         }
       }
     }
@@ -214,6 +244,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     const node = getOrCreateNode(cm.concept)
     node.masteryProb = Math.min(Math.max(cm.mastery_prob ?? 0.3, 0), 1)
     node.observations = cm.observations ?? 0
+    node.evidenceCount = (node.evidenceCount ?? 0) + (cm.observations ?? 0)
+    node.evidenceKind = 'observed'
+    if (!node.evidenceSources?.includes('concept_mastery')) node.evidenceSources?.push('concept_mastery')
+    node.relationshipConfidence = Math.min(1, Math.max(node.relationshipConfidence ?? 0, cm.observations ? 0.9 : 0.5))
+    node.uncertainty = Math.max(0, 1 - Math.min(1, (cm.observations ?? 0) / 10))
   }
 
   // Register concepts and link them with topics/modules from cards
@@ -227,6 +262,9 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
       // If card has topic_id, link concept under that topic
       if (card.topic_id && topicIdMap.has(card.topic_id)) {
         const topInfo = topicIdMap.get(card.topic_id)!
+        const topicNode = getOrCreateNode(topInfo.title, topInfo.moduleTitle, topInfo.moduleId, card.topic_id)
+        topicNode.cardIds?.push(card.id)
+        if (card.material_id) topicNode.materialIds?.push(card.material_id)
         associatedCat = topInfo.moduleTitle
         associatedModId = topInfo.moduleId
         associatedTopId = card.topic_id
@@ -240,7 +278,9 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
               subject_id: card.subject_id,
               prerequisite_concept: topInfo.title,
               target_concept: rawConcept,
-              weight: 0.85
+              weight: 0.85,
+              relationshipType: 'card_topic_context',
+              confidence: 0.85
             })
             explicitDepKeys.add(edgeKey)
           }
@@ -249,6 +289,9 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
 
       const node = getOrCreateNode(rawConcept, associatedCat, associatedModId, associatedTopId)
       node.cardCount += 1
+      if (!node.evidenceSources?.includes('card')) node.evidenceSources?.push('card')
+      node.cardIds?.push(card.id)
+      if (card.material_id) node.materialIds?.push(card.material_id)
     }
 
     // Only match tags if they correspond to an existing topic or concept (avoid noise from random tags)
@@ -256,9 +299,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
       const tags = card.tags.split(',').map(t => t.trim()).filter(Boolean)
       for (const t of tags) {
         const tagKey = normalizeConceptKey(t)
-        if (nodeMap.has(tagKey)) {
+      if (nodeMap.has(tagKey)) {
           const existingNode = nodeMap.get(tagKey)!
           existingNode.cardCount += 1
+          existingNode.cardIds?.push(card.id)
+          if (card.material_id) existingNode.materialIds?.push(card.material_id)
         }
       }
     }
@@ -287,14 +332,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     if (!edgeSet.has(edgeKey)) {
       edgeSet.add(edgeKey)
 
-      if (!sourceNode.dependents.includes(targetKey)) {
-        sourceNode.dependents.push(targetKey)
-      }
-      if (!targetNode.prerequisites.includes(sourceKey)) {
-        targetNode.prerequisites.push(sourceKey)
-      }
-
-      // Is prerequisite met? (Prerequisite node has mastery >= 0.50 or observations >= 3 with mastery >= 0.45)
+      const relationshipType = dep.relationshipType
+      const blocks = relationshipType === 'manual_prerequisite'
+      // Only manually asserted dependencies are prerequisites. Curriculum order
+      // and card/topic association are useful context but are not proof of a
+      // learning dependency.
       const isMet = sourceNode.masteryProb >= 0.50 || (sourceNode.observations >= 3 && sourceNode.masteryProb >= 0.45)
 
       edgeList.push({
@@ -302,8 +344,18 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
         source: sourceKey,
         target: targetKey,
         weight: dep.weight ?? 1.0,
-        isPrerequisiteMet: isMet
+        isPrerequisiteMet: blocks ? isMet : true,
+        relationshipType,
+        blocks,
+        confidence: dep.confidence
       })
+      if (blocks) {
+        if (!sourceNode.dependents.includes(targetKey)) sourceNode.dependents.push(targetKey)
+        if (!targetNode.prerequisites.includes(sourceKey)) targetNode.prerequisites.push(sourceKey)
+      } else {
+        if (!sourceNode.contextualDependents?.includes(targetKey)) sourceNode.contextualDependents?.push(targetKey)
+        if (!targetNode.contextualPrerequisites?.includes(sourceKey)) targetNode.contextualPrerequisites?.push(sourceKey)
+      }
     }
   }
 
@@ -380,6 +432,11 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     blockedCount: nodes.filter(n => n.status === 'blocked').length,
     criticalBottlenecks,
     suggestedNextConcept
+  }
+
+  for (const node of nodes) {
+    node.cardIds = Array.from(new Set(node.cardIds || []))
+    node.materialIds = Array.from(new Set(node.materialIds || []))
   }
 
   return {
@@ -530,8 +587,11 @@ export function removeOverlaps(
           v.y = vy + shiftY
           moved = true
         } else if (normDistSq <= 1e-4) {
-          const jitterX = (Math.random() - 0.5) * 15 * damping
-          const jitterY = (Math.random() - 0.5) * 15 * damping
+          // Stable jitter keeps layout output reproducible for screenshots,
+          // persisted UI state, and tests.
+          const seed = (i + 1) * 37 + (j + 1) * 17 + (iter + 1) * 13
+          const jitterX = (((seed % 11) - 5) / 5) * 7.5 * damping
+          const jitterY = ((((seed * 3) % 11) - 5) / 5) * 7.5 * damping
           u.x = ux - jitterX
           u.y = uy - jitterY
           v.x = vx + jitterX
