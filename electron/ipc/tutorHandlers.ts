@@ -16,7 +16,7 @@ import { buildTutorContext } from '../../src/lib/tutorContextBuilder'
 import { verifyTutorAnswer } from '../../src/lib/tutorAnswerVerifier'
 import { LearnerMemoryService } from '../../src/lib/memory/learnerMemoryService'
 import { buildTutorPolicyBlock } from '../../src/lib/tutorLearningPolicy'
-import { buildFocusCandidates, selectFocusSubjects, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
+import { buildExactFocusPlan, hasExactFocusDuration, selectFocusSubjects, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
 import { decideAdaptiveDifficulty } from '../../src/lib/adaptiveTutorEngine'
 import { buildTutorAssessmentPrompt, parseTutorAssessment } from '../../src/lib/tutorAssessment'
 import {
@@ -1324,9 +1324,10 @@ Strict Prioritization Order:
 1. Spaced Repetition Due Flashcards: If cards are due, include a card review step (typically 10-15 min, action_type: "flashcards").
 2. Weakness Interventions: If the student has recorded struggles or misconceptions in tutor memory, allocate a targeted Socratic drill (typically 15-25 min, action_type: "tutor_drill") with a specific target_topic and pedagogical learning_objective.
 3. Syllabus Forward Progress: If time remains, allocate time to reading or working through the current syllabus module (action_type: "syllabus_read").
+4. Guided Synthesis Continuation: Use the provided continuation candidate only when the canonical due, weakness, new-content, and syllabus work cannot fill the full time window.
 
 CRITICAL CONSTRAINTS:
-- The sum of estimated_minutes of all items in focus_items MUST equal ${availableMinutes} (within +/- 5 minutes).
+- The sum of estimated_minutes of all items in focus_items MUST equal ${availableMinutes} exactly. Never return an under-budget or over-budget plan.
 - Return between 1 and 3 items total.
 - Be specific, actionable, and encouraging.
 
@@ -2620,6 +2621,18 @@ Rules:
       })
     }
 
+    const continuationCandidates: FocusCandidate[] = scopedSubjects.map(subject => ({
+      subjectId: subject.id,
+      actionType: 'syllabus_read',
+      targetTopic: 'Guided retrieval and synthesis practice',
+      recommendedMinutes: totalMinutes,
+      reasonCode: 'continuation',
+      evidence: `Use the remaining time to retrieve, connect, and explain the most important ideas from ${subject.name}.`,
+      successCriteria: 'Complete a closed-book synthesis and identify one point to review next.',
+      fallbackAction: 'Summarize the key idea in your own words, then list the next question to investigate.'
+    }))
+    const plannerCandidates = [...focusCandidates, ...continuationCandidates]
+
     // Helper: deterministic fallback builder
     const buildDeterministicFocusBlock = (): any[] => {
       const items: any[] = []
@@ -2756,6 +2769,7 @@ Rules:
     }
 
     let generatedItems: any[] = []
+    let acceptedGeneratedItems: any[] = []
 
     try {
       const config = getAIConfig()
@@ -2797,7 +2811,7 @@ Rules:
           subjectId: contextOptions?.subjectId,
           lectureTopic: contextOptions?.lectureTopic,
           materialsSummary: contextOptions?.materialsSummary,
-          candidateBriefs: focusCandidates.map(candidate =>
+          candidateBriefs: plannerCandidates.map(candidate =>
             `subject_id=${candidate.subjectId}, topic_id=${candidate.topicId ?? 'null'}, module_id=${candidate.moduleId ?? 'null'}, action=${candidate.actionType}, minutes=${candidate.recommendedMinutes}, reason=${candidate.reasonCode}, evidence=${candidate.evidence}`
           ).join('\n')
         })
@@ -2809,23 +2823,46 @@ Rules:
         )
 
         const parsed = safeParseAIJson<{ focus_items?: any[] }>(responseText, { focus_items: [] })
-        if (Array.isArray(parsed.focus_items) && parsed.focus_items.length > 0) {
-          generatedItems = parsed.focus_items
+        const firstPassItems = Array.isArray(parsed.focus_items) ? parsed.focus_items : []
+        const firstPassValidation = validateFocusItems(firstPassItems, totalMinutes, plannerCandidates, { requireExactDuration: true })
+        if (hasExactFocusDuration(firstPassValidation.items, totalMinutes)) {
+          acceptedGeneratedItems = firstPassValidation.items
         } else {
-          generatedItems = buildDeterministicFocusBlock()
+          const repairPrompt = `${prompt}
+
+REPAIR REQUIRED:
+The previous response was rejected because it did not produce exactly ${totalMinutes} total minutes of valid work. Re-plan the sprint now. Preserve valid high-priority work where useful, add other canonical candidates when needed, and distribute the full duration across meaningful steps. Do not return an under-budget or over-budget plan. The sum of estimated_minutes MUST equal ${totalMinutes} exactly. Return only the JSON schema above.`
+          const repairResponseText = await callAIMessages(
+            [{ role: 'user', content: repairPrompt }],
+            { ...config, apiKey },
+            { type: 'json_object' }
+          )
+          const repaired = safeParseAIJson<{ focus_items?: any[] }>(repairResponseText, { focus_items: [] })
+          const repairItems = Array.isArray(repaired.focus_items) ? repaired.focus_items : []
+          const repairValidation = validateFocusItems(repairItems, totalMinutes, plannerCandidates, { requireExactDuration: true })
+          if (hasExactFocusDuration(repairValidation.items, totalMinutes)) {
+            acceptedGeneratedItems = repairValidation.items
+          }
         }
+      }
+
+      if (acceptedGeneratedItems.length === 0) {
+        generatedItems = buildDeterministicFocusBlock()
       }
     } catch (err) {
       console.warn('AI Focus Block generation failed, using deterministic planner:', err)
       generatedItems = buildDeterministicFocusBlock()
     }
 
-    // Validate the model output against canonical candidates. If it cannot be
-    // validated, use the deterministic candidate planner instead.
-    const validated = validateFocusItems(generatedItems, totalMinutes, focusCandidates)
-    const finalItems = validated.items.length > 0
-      ? validated.items
-      : buildFocusCandidates(focusCandidates, totalMinutes)
+    // Accept generated work only when it satisfies the exact-duration
+    // invariant. Otherwise compose a deterministic exact-duration fallback.
+    const validated = validateFocusItems(generatedItems, totalMinutes, plannerCandidates, { requireExactDuration: true })
+    const validatedItems = hasExactFocusDuration(validated.items, totalMinutes) ? validated.items : []
+    const finalItems = acceptedGeneratedItems.length > 0
+      ? acceptedGeneratedItems
+      : validatedItems.length > 0
+        ? validatedItems
+        : buildExactFocusPlan(focusCandidates, totalMinutes, continuationCandidates)
 
     // Insert items into daily_plans
     const insertItems = db.transaction((items: any[]) => {
@@ -2847,7 +2884,7 @@ Rules:
           item.target_topic || null,
           item.reason_code || null,
           item.topic_id || null,
-          JSON.stringify({ evidence: item.evidence || null, generated: validated.items.length > 0 }),
+          JSON.stringify({ evidence: item.evidence || null, generated: acceptedGeneratedItems.length > 0 || validatedItems.length > 0 }),
           item.success_criteria || null,
           item.fallback_action || null
         )

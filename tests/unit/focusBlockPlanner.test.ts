@@ -1,4 +1,4 @@
-import { validateFocusItems, buildFocusCandidates, selectFocusSubjects, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
+import { buildExactFocusPlan, buildFocusCandidates, focusItemsTotalMinutes, hasExactFocusDuration, validateFocusItems, selectFocusSubjects, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
 
 describe('focus block planner safeguards', () => {
   const subjects = [
@@ -41,5 +41,36 @@ describe('focus block planner safeguards', () => {
     expect(items.map(item => item.topic_id)).toEqual([10, 11])
     expect(items.reduce((sum, item) => sum + item.estimated_minutes, 0)).toBe(30)
     expect(items[0].reason_code).toBe('topic_due')
+  })
+
+  test('strict validation rejects under- and over-budget AI plans', () => {
+    const exactCandidates: FocusCandidate[] = [
+      { subjectId: 1, topicId: 20, actionType: 'tutor_drill', targetTopic: 'Capital budgeting', recommendedMinutes: 25, reasonCode: 'topic_due', evidence: 'Due today' },
+      { subjectId: 1, topicId: 21, actionType: 'new_content', targetTopic: 'NPV', recommendedMinutes: 25, reasonCode: 'new_content', evidence: 'New material' },
+      { subjectId: 1, topicId: 22, actionType: 'syllabus_read', targetTopic: 'Profitability index', recommendedMinutes: 25, reasonCode: 'syllabus_progress', evidence: 'Current module' }
+    ]
+
+    const item = (topic_id: number, estimated_minutes: number) => ({ subject_id: 1, topic_id, action_type: exactCandidates.find(c => c.topicId === topic_id)?.actionType, estimated_minutes })
+    expect(validateFocusItems([item(20, 25), item(21, 25)], 75, exactCandidates, { requireExactDuration: true }).items).toEqual([])
+    expect(validateFocusItems([item(20, 24), item(21, 25), item(22, 25)], 75, exactCandidates, { requireExactDuration: true }).items).toEqual([])
+    expect(validateFocusItems([item(20, 25), item(21, 25), item(22, 26)], 75, exactCandidates, { requireExactDuration: true }).items).toEqual([])
+
+    const exact = validateFocusItems([item(20, 25), item(21, 25), item(22, 25)], 75, exactCandidates, { requireExactDuration: true }).items
+    expect(hasExactFocusDuration(exact, 75)).toBe(true)
+    expect(focusItemsTotalMinutes(exact)).toBe(75)
+  })
+
+  test.each([15, 30, 45, 60, 75, 120, 240])('deterministic fallback fills exactly %d minutes', (minutes) => {
+    const continuation: FocusCandidate = {
+      subjectId: 1,
+      actionType: 'syllabus_read',
+      targetTopic: 'Guided retrieval and synthesis practice',
+      recommendedMinutes: minutes,
+      reasonCode: 'continuation',
+      evidence: 'Use remaining time for synthesis.'
+    }
+    const items = buildExactFocusPlan(candidates, minutes, [continuation])
+    expect(focusItemsTotalMinutes(items)).toBe(minutes)
+    expect(hasExactFocusDuration(items, minutes)).toBe(true)
   })
 })
