@@ -13,6 +13,17 @@ export interface FocusCandidate {
   fallbackAction?: string
 }
 
+/**
+ * Resolve a user-provided Focus Block subject selection against the active
+ * subject universe. An omitted or empty selection intentionally means all
+ * available subjects; a non-empty selection with no valid matches means none.
+ */
+export function selectFocusSubjects<T extends { id: number }>(subjects: T[], subjectIds?: number[]): T[] {
+  if (!Array.isArray(subjectIds) || subjectIds.length === 0) return subjects
+  const requestedIds = new Set(subjectIds.map(Number).filter(id => Number.isInteger(id)))
+  return subjects.filter(subject => requestedIds.has(subject.id))
+}
+
 export interface FocusItemInput {
   subject_id?: unknown
   topic_id?: unknown

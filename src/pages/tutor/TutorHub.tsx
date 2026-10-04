@@ -31,6 +31,8 @@ export default function TutorHub(): React.JSX.Element {
   const [dueMaintenanceTopics, setDueMaintenanceTopics] = useState<import('../../lib/memory/topicSrsEngine').TopicRetentionMetrics[]>([])
   const [showAllMaintenance, setShowAllMaintenance] = useState<boolean>(false)
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<number | 'all'>('all')
+  // Empty means all active subjects for Focus Block generation.
+  const [focusSubjectIds, setFocusSubjectIds] = useState<number[]>([])
   const [durationMenuTopicId, setDurationMenuTopicId] = useState<number | null>(null)
   const [resumableSession, setResumableSession] = useState<TutorSession | null>(null)
 
@@ -162,7 +164,8 @@ export default function TutorHub(): React.JSX.Element {
         user.id,
         targetMinutes,
         planDate,
-        contextOptions
+        contextOptions,
+        focusSubjectIds.length > 0 ? focusSubjectIds : undefined
       ) as (DailyPlan & { subject_name: string })[]
       setDailyPlans(plans)
     } catch (err) {
@@ -171,6 +174,12 @@ export default function TutorHub(): React.JSX.Element {
     } finally {
       setGeneratingPlan(false)
     }
+  }
+
+  function toggleFocusSubject(subjectId: number): void {
+    setFocusSubjectIds(current => current.includes(subjectId)
+      ? current.filter(id => id !== subjectId)
+      : [...current, subjectId])
   }
 
   async function handleStartSprint(stepIndex = 0): Promise<void> {
@@ -398,6 +407,37 @@ export default function TutorHub(): React.JSX.Element {
 
           {/* Time Selector Chips & Action */}
           <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-400 dark:text-slate-500 mr-1">Class:</span>
+            <button
+              onClick={() => setFocusSubjectIds([])}
+              aria-pressed={focusSubjectIds.length === 0}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                focusSubjectIds.length === 0
+                  ? 'bg-violet-600 text-white shadow-sm ring-2 ring-violet-500/20'
+                  : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              All subjects
+            </button>
+            {activeSubjects.map(subject => {
+              const isSelected = focusSubjectIds.includes(subject.id)
+              return (
+                <button
+                  key={subject.id}
+                  onClick={() => toggleFocusSubject(subject.id)}
+                  aria-pressed={isSelected}
+                  className={`max-w-[150px] truncate px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    isSelected
+                      ? 'bg-violet-600 text-white shadow-sm ring-2 ring-violet-500/20'
+                      : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300'
+                  }`}
+                  title={subject.name}
+                >
+                  {subject.name}
+                </button>
+              )
+            })}
+            <span className="basis-full h-0" />
             <span className="text-xs font-medium text-slate-400 dark:text-slate-500 mr-1">Time:</span>
             {[15, 30, 45, 60].map((mins) => (
               <button

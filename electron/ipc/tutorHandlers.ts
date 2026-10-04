@@ -16,7 +16,7 @@ import { buildTutorContext } from '../../src/lib/tutorContextBuilder'
 import { verifyTutorAnswer } from '../../src/lib/tutorAnswerVerifier'
 import { LearnerMemoryService } from '../../src/lib/memory/learnerMemoryService'
 import { buildTutorPolicyBlock } from '../../src/lib/tutorLearningPolicy'
-import { buildFocusCandidates, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
+import { buildFocusCandidates, selectFocusSubjects, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
 import { decideAdaptiveDifficulty } from '../../src/lib/adaptiveTutorEngine'
 import { buildTutorAssessmentPrompt, parseTutorAssessment } from '../../src/lib/tutorAssessment'
 import {
@@ -2462,7 +2462,8 @@ Rules:
       subjectId?: number
       lectureTopic?: string
       materialsSummary?: string
-    }
+    },
+    subjectIds?: number[]
   ) => {
     const totalMinutes = Math.max(10, Math.min(240, availableMinutes || 30))
 
@@ -2475,6 +2476,15 @@ Rules:
       return []
     }
 
+    // An omitted or empty selection means all active subjects. When a
+    // selection is provided, keep only valid subjects owned by this user so
+    // every downstream planner input stays within the requested scope.
+    const scopedSubjects = selectFocusSubjects(subjects, subjectIds)
+
+    if (scopedSubjects.length === 0) {
+      return []
+    }
+
     // Keep completed items today; remove uncompleted ones so we don't pile up stale suggestions
     db.prepare('DELETE FROM daily_plans WHERE user_id = ? AND plan_date = ? AND is_completed = 0').run(userId, date)
 
@@ -2483,6 +2493,8 @@ Rules:
       SELECT suggested_action, target_topic, subject_id FROM daily_plans
       WHERE user_id = ? AND plan_date = ? AND is_completed = 1
     `).all(userId, date) as { suggested_action: string; target_topic: string | null; subject_id: number }[]
+    const scopedSubjectIds = new Set(scopedSubjects.map(subject => subject.id))
+    const scopedCompletedToday = completedToday.filter(item => scopedSubjectIds.has(item.subject_id))
 
     // Gather subjects state: due cards, weak topics, current modules, deadlines
     interface SubjectData {
@@ -2497,7 +2509,7 @@ Rules:
 
     const subjectsData: SubjectData[] = []
 
-    for (const subject of subjects) {
+    for (const subject of scopedSubjects) {
       const dueCards = db.prepare(`
         SELECT COUNT(*) as count FROM card_schedule cs
         JOIN cards c ON c.id = cs.card_id
@@ -2541,7 +2553,7 @@ Rules:
     // Canonical candidates are the only work the LLM is allowed to schedule.
     // The model can phrase and order these items, but cannot invent IDs or actions.
     const focusCandidates: FocusCandidate[] = []
-    for (const due of getTopDueMaintenanceTopics(db, userId, 12)) {
+    for (const due of getTopDueMaintenanceTopics(db, userId, 12).filter(topic => scopedSubjectIds.has(topic.subjectId))) {
       focusCandidates.push({
         subjectId: due.subjectId,
         topicId: due.topicId,
@@ -2555,7 +2567,7 @@ Rules:
         fallbackAction: 'Use a short hint, then attempt the explanation again.'
       })
     }
-    for (const subject of subjects) {
+    for (const subject of scopedSubjects) {
       const newTopics = db.prepare(`
         SELECT mt.id, mt.module_id, mt.title, COALESCE(mt.estimated_minutes, 15) as estimated_minutes
         FROM module_topics mt
@@ -2595,9 +2607,9 @@ Rules:
         }
       }
     }
-    if (focusCandidates.length === 0 && subjects.length > 0) {
+    if (focusCandidates.length === 0 && scopedSubjects.length > 0) {
       focusCandidates.push({
-        subjectId: subjects[0].id,
+        subjectId: scopedSubjects[0].id,
         actionType: 'tutor_drill',
         targetTopic: null,
         recommendedMinutes: totalMinutes,
@@ -2614,7 +2626,7 @@ Rules:
       let remainingMinutes = totalMinutes
 
       if (contextOptions?.contextType === 'post_event') {
-        const targetSubj = subjects.find(s => s.id === contextOptions.subjectId) || subjects[0]
+        const targetSubj = scopedSubjects.find(s => s.id === contextOptions.subjectId) || scopedSubjects[0]
         const topicName = contextOptions.lectureTopic || 'Today\'s Lecture'
         const drillMin = Math.max(10, Math.round(totalMinutes * 0.6))
         const cardMin = totalMinutes - drillMin
@@ -2644,7 +2656,7 @@ Rules:
       }
 
       if (contextOptions?.contextType === 'pre_event') {
-        const targetSubj = subjects.find(s => s.id === contextOptions.subjectId) || subjects[0]
+        const targetSubj = scopedSubjects.find(s => s.id === contextOptions.subjectId) || scopedSubjects[0]
         items.push({
           subject_id: targetSubj.id,
           action_type: 'flashcards',
@@ -2675,11 +2687,11 @@ Rules:
       }
 
       // 2. Overdue Topic-SRS Maintenance Drill (Curriculum Spaced Repetition)
-      const dueMaintenanceTopics = getTopDueMaintenanceTopics(db, userId, 3)
+      const dueMaintenanceTopics = getTopDueMaintenanceTopics(db, userId, 3).filter(topic => scopedSubjectIds.has(topic.subjectId))
       if (dueMaintenanceTopics.length > 0 && remainingMinutes >= 15) {
         const topDue = dueMaintenanceTopics[0]
         const drillMinutes = Math.min(remainingMinutes, 20)
-        const subjName = subjects.find(s => s.id === topDue.subjectId)?.name || 'Curriculum'
+        const subjName = scopedSubjects.find(s => s.id === topDue.subjectId)?.name || 'Curriculum'
         items.push({
           subject_id: topDue.subjectId,
           action_type: 'tutor_drill',
@@ -2771,8 +2783,8 @@ Rules:
           return lines.join('\n')
         }).join('\n\n')
 
-        const completedText = completedToday.length > 0
-          ? `Tasks already completed today (DO NOT repeat these):\n${completedToday.map(c => `- ${c.suggested_action}`).join('\n')}\n`
+        const completedText = scopedCompletedToday.length > 0
+          ? `Tasks already completed today (DO NOT repeat these):\n${scopedCompletedToday.map(c => `- ${c.suggested_action}`).join('\n')}\n`
           : ''
 
         const prompt = buildFocusBlockPrompt({
@@ -2818,7 +2830,7 @@ Rules:
     // Insert items into daily_plans
     const insertItems = db.transaction((items: any[]) => {
       for (const item of items) {
-        const subject = subjects.find(s => s.id === item.subject_id) || subjects[0]
+        const subject = scopedSubjects.find(s => s.id === item.subject_id) || scopedSubjects[0]
         db.prepare(`
           INSERT INTO daily_plans
             (user_id, plan_date, subject_id, suggested_action, estimated_minutes, priority, is_completed, action_type, learning_objective, target_topic, reason_code, topic_id, evidence_json, success_criteria, fallback_action)
