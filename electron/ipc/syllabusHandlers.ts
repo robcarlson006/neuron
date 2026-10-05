@@ -40,6 +40,33 @@ function parseAIJson<T>(responseText: string): T {
   return safeParseAIJson<T>(responseText, {} as T)
 }
 
+const VALID_CONCEPT_TYPES = new Set(['definition', 'mechanism', 'procedure', 'application', 'comparison'])
+
+function sanitizeGenerationError(error: unknown, apiKey?: string): string {
+  let message = error instanceof Error ? error.message : String(error || 'Unknown syllabus generation error')
+  if (apiKey) message = message.split(apiKey).join('<REDACTED>')
+  message = message.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer <REDACTED>')
+  message = message.replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-<REDACTED>')
+  return message.slice(0, 1000)
+}
+
+function classifyGenerationFailure(message: string): string {
+  const lower = message.toLowerCase()
+  if (lower.includes('api key') || lower.includes('credential')) return 'missing_credentials'
+  if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('abort')) return 'provider_timeout'
+  if (lower.includes('invalid syllabus') || lower.includes('json') || lower.includes('response')) return 'invalid_model_output'
+  if (lower.includes('api error') || lower.includes('provider') || lower.includes('connect')) return 'provider_error'
+  if (lower.includes('stale')) return 'stale'
+  if (lower.includes('sqlite') || lower.includes('database') || lower.includes('constraint')) return 'persistence_error'
+  return 'unknown'
+}
+
+function throwGenerationError(message: string, code: string): never {
+  const error = new Error(message) as Error & { code?: string }
+  error.code = code
+  throw error
+}
+
 /** Validate the AI intermediate representation before reconciliation mutates
  * any rows.  This intentionally stays independent of the model/provider so a
  * malformed or truncated response can never be interpreted as an empty
@@ -64,7 +91,7 @@ export function validateParsedCurriculum(
     if (!Array.isArray(mod.topics) || mod.topics.length === 0) {
       throw new Error(`Invalid syllabus response: module "${mod.title}" has no topics`)
     }
-    if (mod.hours_estimated != null && (typeof mod.hours_estimated !== 'number' || !Number.isFinite(mod.hours_estimated) || mod.hours_estimated <= 0)) {
+    if (mod.hours_estimated != null && (typeof mod.hours_estimated !== 'number' || !Number.isFinite(mod.hours_estimated) || mod.hours_estimated <= 0 || mod.hours_estimated > 1000)) {
       throw new Error(`Invalid syllabus response: invalid hours_estimated for "${mod.title}"`)
     }
     const topicTitles = new Set<string>()
@@ -79,14 +106,25 @@ export function validateParsedCurriculum(
       if (topic.estimated_minutes != null && (typeof topic.estimated_minutes !== 'number' || !Number.isFinite(topic.estimated_minutes) || topic.estimated_minutes <= 0)) {
         throw new Error(`Invalid syllabus response: invalid estimated_minutes for "${topic.title}"`)
       }
+      if (options?.requireSourceMaterialIds && (!Array.isArray(topic.source_material_ids) || topic.source_material_ids.length === 0)) {
+        throw new Error(`Invalid syllabus response: topic "${topic.title}" is missing source evidence`)
+      }
+      if (options?.requireSourceMaterialIds) {
+        if (typeof topic.concept_type !== 'string' || !VALID_CONCEPT_TYPES.has(topic.concept_type)) {
+          throw new Error(`Invalid syllabus response: topic "${topic.title}" has an invalid concept_type`)
+        }
+        if (typeof topic.estimated_minutes !== 'number' || !Number.isFinite(topic.estimated_minutes) || topic.estimated_minutes <= 0 || topic.estimated_minutes > 1440) {
+          throw new Error(`Invalid syllabus response: topic "${topic.title}" has an invalid estimated_minutes value`)
+        }
+      }
       if (topic.source_material_ids != null) {
         if (!Array.isArray(topic.source_material_ids) || topic.source_material_ids.some(id => !Number.isInteger(id) || (options?.validMaterialIds && !options.validMaterialIds.has(id as number)))) {
           throw new Error(`Invalid syllabus response: topic "${topic.title}" references an unknown material`)
         }
       }
-      if (options?.requireSourceMaterialIds && (!Array.isArray(topic.source_material_ids) || topic.source_material_ids.length === 0)) {
-        throw new Error(`Invalid syllabus response: topic "${topic.title}" is missing source evidence`)
-      }
+    }
+    if (options?.requireSourceMaterialIds && (mod.topics.length < 2 || mod.topics.length > 5)) {
+      throw new Error(`Invalid syllabus response: module "${mod.title}" must contain between 2 and 5 topics`)
     }
   }
   if (topicCount === 0) throw new Error('Invalid syllabus response: no topics generated')
@@ -154,7 +192,7 @@ function persistDocumentChunks(material: { id: number; filename: string; content
       (id, material_id, chunk_index, title, heading_path, chunk_type, text, char_start, char_end, token_count, content_hash)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
-  const write = db.transaction(() => {
+  const write = () => runInTransaction(db, () => {
     db.prepare('DELETE FROM document_chunks WHERE material_id = ?').run(material.id)
     topology.chunks.forEach(chunk => {
       const contentHash = createHash('sha256').update(chunk.text).digest('hex')
@@ -178,7 +216,7 @@ function materializeCurriculumGraph(subjectId: number, parsedModules: ParsedReco
   const sources = db.prepare(`SELECT id, content_text, file_sha256 FROM materials WHERE subject_id = ? AND id IN (${[...materialIds].map(() => '?').join(',')})`).all(subjectId, ...materialIds) as { id: number; content_text?: string; file_sha256?: string | null }[]
   const sourceById = new Map(sources.map(source => [source.id, source]))
 
-  const run = db.transaction(() => {
+  const run = () => runInTransaction(db, () => {
     const revisionResult = db.prepare(`
       INSERT INTO curriculum_revisions (subject_id, revision_number, parent_revision_id, status, source_hashes_json, applied_at)
       VALUES (?, ?, (SELECT id FROM curriculum_revisions WHERE subject_id = ? ORDER BY revision_number DESC LIMIT 1), 'applied', ?, datetime('now'))
@@ -628,8 +666,6 @@ async function reconcileSyllabusFromAI(subjectId: number, targetMaterialIds?: nu
 
   // Keep a bounded, inspectable source representation for evidence and later
   // incremental compilation. This cache is independent of curriculum writes.
-  for (const material of materials) persistDocumentChunks(material)
-
   const validMaterialIds = new Set(materials.map(material => material.id))
 
   let actualUserId: number = 1
@@ -713,7 +749,7 @@ Respond in JSON format:
           "description": "What this topic covers",
           "concept_type": "definition | mechanism | procedure | application | comparison",
           "estimated_minutes": 15,
-          "source_material_ids": [],
+          "source_material_ids": [${materials[0]?.id}],
           "matched_previous_topic": null,
           "coverage_delta": "identical"
         }
@@ -770,7 +806,6 @@ Rules:
 
   const config = getAIConfig()
   const apiKey = getApiKey()
-  if (!apiKey) throw new Error('AI API key not configured. Go to Settings to configure your AI provider.')
   const generationStartedAt = Date.now()
   const sourceHashes = materials.map(material => material.file_sha256 || createHash('sha256').update(material.content_text || '').digest('hex'))
   const generationRun = db.prepare(`
@@ -779,67 +814,71 @@ Rules:
   `).run(subjectId, subjectId, config.provider, config.model, JSON.stringify(sourceHashes))
   const generationRunId = Number(generationRun.lastInsertRowid)
 
-  const responseText = await callAIMessages(
-    [{ role: 'user', content: prompt }],
-    { ...config, apiKey },
-    { type: 'json_object' }
-  )
+  try {
+    if (!apiKey) throwGenerationError('AI API key not configured. Go to Settings to configure your AI provider.', 'missing_credentials')
 
-  const parsed = parseAIJson<{
-    modules: ParsedReconciledModule[]
-    material_module_assignments?: { material_filename: string; module_title: string }[]
-  }>(responseText)
+    const requestMessages = [{ role: 'user' as const, content: prompt }]
+    let responseText = await callAIMessages(requestMessages, { ...config, apiKey }, { type: 'json_object' })
+    let parsed: { modules: ParsedReconciledModule[]; material_module_assignments?: { material_filename: string; module_title: string }[] }
+    let repairAttempt = 0
 
-  if (!parsed.modules || !Array.isArray(parsed.modules)) {
-    throw new Error('Invalid syllabus response: missing modules array')
-  }
-  validateParsedCurriculum(parsed.modules, { validMaterialIds, subjectId, requireSourceMaterialIds: true })
-
-  if (parsed.material_module_assignments != null) {
-    if (!Array.isArray(parsed.material_module_assignments)) {
-      throw new Error('Invalid syllabus response: material assignments must be an array')
-    }
-    const moduleTitles = new Set(parsed.modules.map(module => normText(module.title)))
-    const materialNames = new Set(materials.map(material => material.filename))
-    for (const assignment of parsed.material_module_assignments) {
-      if (!assignment || typeof assignment.material_filename !== 'string' || typeof assignment.module_title !== 'string' ||
-        !materialNames.has(assignment.material_filename) || !moduleTitles.has(normText(assignment.module_title))) {
-        throw new Error('Invalid syllabus response: material assignment references an unknown material or module')
+    for (;;) {
+      try {
+        parsed = parseAIJson<typeof parsed>(responseText)
+        if (!parsed.modules || !Array.isArray(parsed.modules)) throw new Error('Invalid syllabus response: missing modules array')
+        validateParsedCurriculum(parsed.modules, { validMaterialIds, subjectId, requireSourceMaterialIds: true })
+        if (parsed.material_module_assignments != null) {
+          if (!Array.isArray(parsed.material_module_assignments)) throw new Error('Invalid syllabus response: material assignments must be an array')
+          const moduleTitles = new Set(parsed.modules.map(module => normText(module.title)))
+          const materialNames = new Set(materials.map(material => material.filename))
+          for (const assignment of parsed.material_module_assignments) {
+            if (!assignment || typeof assignment.material_filename !== 'string' || typeof assignment.module_title !== 'string' ||
+              !materialNames.has(assignment.material_filename) || !moduleTitles.has(normText(assignment.module_title))) {
+              throw new Error('Invalid syllabus response: material assignment references an unknown material or module')
+            }
+          }
+        }
+        break
+      } catch (validationError) {
+        if (repairAttempt >= 1) throw validationError
+        repairAttempt++
+        db.prepare('UPDATE curriculum_generation_runs SET repair_attempt = ? WHERE id = ?').run(repairAttempt, generationRunId)
+        const reason = sanitizeGenerationError(validationError, apiKey)
+        responseText = await callAIMessages(
+          [{ role: 'user', content: `${prompt}\n\nYour previous response failed local validation: ${reason}\nReturn a corrected JSON response only. Every topic must include concept_type, estimated_minutes, and at least one valid source_material_ids value from the supplied materials.` }],
+          { ...config, apiKey },
+          { type: 'json_object' }
+        )
       }
     }
-  }
 
-  if (expectedEpoch != null && syllabusGenerationEpoch.get(subjectId) !== expectedEpoch) {
-    throw new Error('Syllabus generation became stale; existing curriculum was preserved')
-  }
-
-  const result = reconcileCurriculum(
-    db,
-    subjectId,
-    parsed.modules,
-    actualUserId,
-    parsed.material_module_assignments
-  )
-  const graph = materializeCurriculumGraph(subjectId, parsed.modules, validMaterialIds)
-  db.prepare(`
-    UPDATE curriculum_generation_runs
-    SET resulting_revision = (SELECT id FROM curriculum_revisions WHERE subject_id = ? AND revision_number = ?),
-        status = 'applied', validation_score = ?, output_hash = ?, change_summary_json = ?, completed_at = datetime('now'), duration_ms = ?
-    WHERE id = ?
-  `).run(subjectId, graph.revision, graph.sourceCoverage, createHash('sha256').update(responseText).digest('hex'), JSON.stringify({ new_topic_count: result.new_topic_count, updated_topic_count: result.updated_topic_count, preserved_completed_count: result.preserved_completed_count, source_coverage: graph.sourceCoverage }), Date.now() - generationStartedAt, generationRunId)
-
-  return {
-    ...result,
-    processed_material_count: materials.length,
-    curriculum_revision: graph.revision,
-    generation_run_id: generationRunId,
-    change_summary: {
-      new_outcome_count: result.new_topic_count,
-      deepened_outcome_count: result.updated_topic_count,
-      preserved_progress_count: result.preserved_completed_count,
-      source_coverage: graph.sourceCoverage
+    if (expectedEpoch != null && syllabusGenerationEpoch.get(subjectId) !== expectedEpoch) {
+      throw new Error('Syllabus generation became stale; existing curriculum was preserved')
     }
-  } as SyllabusUpdateResult
+
+    const result = reconcileCurriculum(db, subjectId, parsed!.modules, actualUserId, parsed!.material_module_assignments)
+    const graph = materializeCurriculumGraph(subjectId, parsed!.modules, validMaterialIds)
+    for (const material of materials) {
+      try { persistDocumentChunks(material) } catch (chunkError) { console.warn('Syllabus source chunk cache failed:', sanitizeGenerationError(chunkError)) }
+    }
+    db.prepare(`
+      UPDATE curriculum_generation_runs
+      SET resulting_revision = (SELECT id FROM curriculum_revisions WHERE subject_id = ? AND revision_number = ?),
+          status = 'applied', validation_score = ?, output_hash = ?, change_summary_json = ?, completed_at = datetime('now'), duration_ms = ?
+      WHERE id = ?
+    `).run(subjectId, graph.revision, graph.sourceCoverage, createHash('sha256').update(responseText).digest('hex'), JSON.stringify({ new_topic_count: result.new_topic_count, updated_topic_count: result.updated_topic_count, preserved_completed_count: result.preserved_completed_count, source_coverage: graph.sourceCoverage }), Date.now() - generationStartedAt, generationRunId)
+
+    return { ...result, processed_material_count: materials.length, curriculum_revision: graph.revision, generation_run_id: generationRunId,
+      change_summary: { new_outcome_count: result.new_topic_count, deepened_outcome_count: result.updated_topic_count, preserved_progress_count: result.preserved_completed_count, source_coverage: graph.sourceCoverage } } as SyllabusUpdateResult
+  } catch (error) {
+    const message = sanitizeGenerationError(error, apiKey)
+    const code = classifyGenerationFailure(message)
+    try {
+      db.prepare(`UPDATE curriculum_generation_runs SET status = ?, error_details_json = ?, completed_at = datetime('now'), duration_ms = ? WHERE id = ?`)
+        .run(code === 'stale' ? 'stale' : code === 'invalid_model_output' ? 'rejected' : 'failed', JSON.stringify([{ code, message }]), Date.now() - generationStartedAt, generationRunId)
+    } catch { /* preserve the original generation error */ }
+    throwGenerationError(message, code)
+  }
 }
 
 /**

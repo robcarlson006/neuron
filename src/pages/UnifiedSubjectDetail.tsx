@@ -12,7 +12,8 @@ import ExamReadinessCard from '../components/readiness/ExamReadinessCard'
 import CramOptimizerModal from '../components/readiness/CramOptimizerModal'
 import KnowledgeGraphView from '../components/graphs/KnowledgeGraphView'
 import { calculateExamReadiness, type CardWithSchedule } from '../lib/readinessEngine'
-import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, SyllabusUpdateResult, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats, ConceptMastery, ConceptDependency, ManualSyllabusWeek } from '../types'
+import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats, ConceptMastery, ConceptDependency, ManualSyllabusWeek } from '../types'
+import { normalizeSyllabusResult } from '../lib/syllabusResult'
 import { useLectureRecordingStore } from '../store/lectureRecordingStore'
 import LectureAudioPlayer from '../components/classes/LectureAudioPlayer'
 import LectureNotesModal from '../components/classes/LectureNotesModal'
@@ -27,44 +28,14 @@ import SubjectAppearancePicker, { DEFAULT_SUBJECT_COLOR, DEFAULT_SUBJECT_ICON, S
 
 type Tab = 'cards' | 'curriculum' | 'manual' | 'graph' | 'practice' | 'materials' | 'lectures' | 'notes' | 'deadlines'
 
-type SyllabusGenerationResponse = SyllabusUpdateResult | SyllabusModule[] | null | undefined
-
-/** Accept both the legacy module-array response and the reconciler result while IPC migrates. */
-function normalizeSyllabusResult(result: SyllabusGenerationResponse): { modules: SyllabusModule[]; summary: CurriculumChangeSummary } {
-  if (Array.isArray(result)) {
-    return {
-      modules: result,
-      summary: { newModuleCount: result.length, newTopicCount: result.reduce((count, module) => count + (module.topics?.length || 0), 0) }
-    }
-  }
-  if (!result) return { modules: [], summary: {} }
-  const candidate = result as SyllabusUpdateResult & Record<string, unknown>
-  const numeric = (camel: string, snake: string): number | undefined => {
-    const value = candidate[camel] ?? candidate[snake]
-    return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-  }
-  const sourceCoverage = candidate.sourceCoverage ?? candidate.source_coverage
-  const recommendations = candidate.recommendations ?? candidate.advisoryRecommendations ?? candidate.advisory_recommendations
-  const diagnostics = candidate.diagnostics ?? candidate.validationErrors ?? candidate.validation_errors
-  return {
-    modules: Array.isArray(candidate.modules) ? candidate.modules : [],
-    summary: {
-      newModuleCount: numeric('newModuleCount', 'new_module_count'),
-      newTopicCount: numeric('newTopicCount', 'new_topic_count'),
-      updatedTopicCount: numeric('updatedTopicCount', 'updated_topic_count'),
-      gapTopicCount: numeric('gapTopicCount', 'gap_topic_count'),
-      preservedCompletedCount: numeric('preservedCompletedCount', 'preserved_completed_count'),
-      processedMaterialCount: numeric('processedMaterialCount', 'processed_material_count'),
-      sourceCoverage: typeof sourceCoverage === 'number' ? sourceCoverage : undefined,
-      revision: typeof (candidate.revision ?? candidate.curriculumRevision ?? candidate.curriculum_revision) === 'string' || typeof (candidate.revision ?? candidate.curriculumRevision ?? candidate.curriculum_revision) === 'number'
-        ? (candidate.revision ?? candidate.curriculumRevision ?? candidate.curriculum_revision) as string | number
-        : undefined,
-      generatedAt: typeof candidate.generatedAt === 'string' ? candidate.generatedAt : typeof candidate.generated_at === 'string' ? candidate.generated_at : undefined,
-      recommendations: Array.isArray(recommendations) ? recommendations as CurriculumChangeSummary['recommendations'] : undefined,
-      rejected: candidate.rejected === true || candidate.applied === false,
-      diagnostics: Array.isArray(diagnostics) ? diagnostics.filter((item): item is string => typeof item === 'string') : undefined
-    }
-  }
+function getSyllabusErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || '')
+  if (!message) return 'Syllabus generation failed. Please try again.'
+  if (/api key|credential/i.test(message)) return 'Configure an AI provider and API key in Settings, then try again.'
+  if (/timed out|timeout/i.test(message)) return 'The AI provider timed out. Check your connection or try again.'
+  if (/invalid syllabus|missing source evidence|invalid model output|json/i.test(message)) return `The AI returned an unusable syllabus: ${message}`
+  if (/api error|provider|connect/i.test(message)) return `The AI provider could not generate the syllabus: ${message}`
+  return message
 }
 
 export default function UnifiedSubjectDetail(): React.JSX.Element {
@@ -619,10 +590,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setCurriculumChangeSummary(normalized.summary)
       if (normalized.modules.length) {
         addToast({ type: 'success', title: 'Syllabus Reconciled', message: `${normalized.modules.length} modules organized. Your progress was preserved.` })
-        loadAllData()
+        await loadAllData()
       }
-    } catch {
-      addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
+    } catch (error) {
+      addToast({ type: 'error', title: 'Generation Failed', message: getSyllabusErrorMessage(error) })
     } finally {
       setIsRegeneratingSyllabus(false)
     }
@@ -1424,10 +1395,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                       setCurriculumChangeSummary(normalized.summary)
                       if (normalized.modules.length) {
                         addToast({ type: 'success', title: 'Syllabus Generated', message: `${normalized.modules.length} modules created.` })
-                        loadAllData()
+                        await loadAllData()
                       }
-                    } catch {
-                      addToast({ type: 'error', title: 'Generation Failed', message: 'Ensure materials are uploaded first.' })
+                    } catch (error) {
+                      addToast({ type: 'error', title: 'Generation Failed', message: getSyllabusErrorMessage(error) })
                     } finally {
                       setIsRegeneratingSyllabus(false)
                     }

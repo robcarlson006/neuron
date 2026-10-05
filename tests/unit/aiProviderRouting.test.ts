@@ -67,4 +67,30 @@ describe('AI provider routing for document learning', () => {
       global.fetch = nativeFetch
     }
   })
+
+  it('retries without response_format when an OpenAI-compatible provider rejects JSON mode', async () => {
+    let callCount = 0
+    global.fetch = (async (_url: string, request: RequestInit) => {
+      callCount++
+      const body = JSON.parse(String(request.body))
+      if (callCount === 1) {
+        expect(body.response_format).toEqual({ type: 'json_object' })
+        return { ok: false, status: 400, statusText: 'Bad Request', text: async () => 'unsupported parameter: response_format' }
+      }
+      expect(body.response_format).toBeUndefined()
+      return { ok: true, json: async () => ({ choices: [{ message: { content: '{"modules":[]}' } }] }) }
+    }) as unknown as typeof fetch
+
+    try {
+      const result = await callAIMessages(
+        [{ role: 'user', content: 'Create a syllabus.' }],
+        { provider: 'openai-compatible', baseUrl: 'https://api.example.test', model: 'example-model', apiKey: 'test-key' },
+        { type: 'json_object' }
+      )
+      expect(JSON.parse(result)).toEqual({ modules: [] })
+      expect(callCount).toBe(2)
+    } finally {
+      global.fetch = nativeFetch
+    }
+  })
 })

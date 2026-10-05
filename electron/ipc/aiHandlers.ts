@@ -512,7 +512,8 @@ export async function callAIMessages(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   config: { provider: string; baseUrl: string; model: string; apiKey: string },
   responseFormat?: { type: 'json_object' | 'text' },
-  retryAttempt = 0
+  retryAttempt = 0,
+  allowResponseFormatFallback = true
 ): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
@@ -636,6 +637,11 @@ export async function callAIMessages(
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => '')
+      const formatUnsupported = responseFormat?.type === 'json_object' &&
+        /response[_ -]?format|json mode|structured output|unsupported parameter/i.test(errorBody)
+      if (formatUnsupported && allowResponseFormatFallback) {
+        return callAIMessages(messages, config, undefined, retryAttempt, false)
+      }
       throw new Error(`AI API error ${response.status}: ${errorBody || response.statusText}`)
     }
 
@@ -644,7 +650,7 @@ export async function callAIMessages(
   } catch (err) {
     if (isLocalEndpoint(config.baseUrl) && retryAttempt < 2 && !controller.signal.aborted) {
       await new Promise(resolve => setTimeout(resolve, 350 * (retryAttempt + 1)))
-      return callAIMessages(messages, config, responseFormat, retryAttempt + 1)
+      return callAIMessages(messages, config, responseFormat, retryAttempt + 1, allowResponseFormatFallback)
     }
     if (controller.signal.aborted) {
       throw new Error('AI request timed out. Please try again.')
