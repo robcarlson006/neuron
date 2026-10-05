@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import CardBrowser from '../components/CardBrowser'
 import MarkdownRenderer from '../components/MarkdownRenderer'
-import CurriculumView from '../components/classes/CurriculumView'
+import CurriculumView, { type CurriculumChangeSummary } from '../components/classes/CurriculumView'
+import ManualSyllabusView from '../components/classes/ManualSyllabusView'
 import SessionConfigModal from '../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../components/classes/CurriculumProgressBar'
 import CardImportModal from '../components/CardImportModal'
@@ -11,7 +12,7 @@ import ExamReadinessCard from '../components/readiness/ExamReadinessCard'
 import CramOptimizerModal from '../components/readiness/CramOptimizerModal'
 import KnowledgeGraphView from '../components/graphs/KnowledgeGraphView'
 import { calculateExamReadiness, type CardWithSchedule } from '../lib/readinessEngine'
-import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats, ConceptMastery, ConceptDependency } from '../types'
+import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, SyllabusUpdateResult, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats, ConceptMastery, ConceptDependency, ManualSyllabusWeek } from '../types'
 import { useLectureRecordingStore } from '../store/lectureRecordingStore'
 import LectureAudioPlayer from '../components/classes/LectureAudioPlayer'
 import LectureNotesModal from '../components/classes/LectureNotesModal'
@@ -24,7 +25,47 @@ import TopActionButton from '../components/TopActionButton'
 import { Activity, BookOpen, Sparkles, Zap } from '../components/icons'
 import SubjectAppearancePicker, { DEFAULT_SUBJECT_COLOR, DEFAULT_SUBJECT_ICON, SubjectIcon } from '../components/SubjectAppearancePicker'
 
-type Tab = 'cards' | 'curriculum' | 'graph' | 'practice' | 'materials' | 'lectures' | 'notes' | 'deadlines'
+type Tab = 'cards' | 'curriculum' | 'manual' | 'graph' | 'practice' | 'materials' | 'lectures' | 'notes' | 'deadlines'
+
+type SyllabusGenerationResponse = SyllabusUpdateResult | SyllabusModule[] | null | undefined
+
+/** Accept both the legacy module-array response and the reconciler result while IPC migrates. */
+function normalizeSyllabusResult(result: SyllabusGenerationResponse): { modules: SyllabusModule[]; summary: CurriculumChangeSummary } {
+  if (Array.isArray(result)) {
+    return {
+      modules: result,
+      summary: { newModuleCount: result.length, newTopicCount: result.reduce((count, module) => count + (module.topics?.length || 0), 0) }
+    }
+  }
+  if (!result) return { modules: [], summary: {} }
+  const candidate = result as SyllabusUpdateResult & Record<string, unknown>
+  const numeric = (camel: string, snake: string): number | undefined => {
+    const value = candidate[camel] ?? candidate[snake]
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+  }
+  const sourceCoverage = candidate.sourceCoverage ?? candidate.source_coverage
+  const recommendations = candidate.recommendations ?? candidate.advisoryRecommendations ?? candidate.advisory_recommendations
+  const diagnostics = candidate.diagnostics ?? candidate.validationErrors ?? candidate.validation_errors
+  return {
+    modules: Array.isArray(candidate.modules) ? candidate.modules : [],
+    summary: {
+      newModuleCount: numeric('newModuleCount', 'new_module_count'),
+      newTopicCount: numeric('newTopicCount', 'new_topic_count'),
+      updatedTopicCount: numeric('updatedTopicCount', 'updated_topic_count'),
+      gapTopicCount: numeric('gapTopicCount', 'gap_topic_count'),
+      preservedCompletedCount: numeric('preservedCompletedCount', 'preserved_completed_count'),
+      processedMaterialCount: numeric('processedMaterialCount', 'processed_material_count'),
+      sourceCoverage: typeof sourceCoverage === 'number' ? sourceCoverage : undefined,
+      revision: typeof (candidate.revision ?? candidate.curriculumRevision ?? candidate.curriculum_revision) === 'string' || typeof (candidate.revision ?? candidate.curriculumRevision ?? candidate.curriculum_revision) === 'number'
+        ? (candidate.revision ?? candidate.curriculumRevision ?? candidate.curriculum_revision) as string | number
+        : undefined,
+      generatedAt: typeof candidate.generatedAt === 'string' ? candidate.generatedAt : typeof candidate.generated_at === 'string' ? candidate.generated_at : undefined,
+      recommendations: Array.isArray(recommendations) ? recommendations as CurriculumChangeSummary['recommendations'] : undefined,
+      rejected: candidate.rejected === true || candidate.applied === false,
+      diagnostics: Array.isArray(diagnostics) ? diagnostics.filter((item): item is string => typeof item === 'string') : undefined
+    }
+  }
+}
 
 export default function UnifiedSubjectDetail(): React.JSX.Element {
   const { id } = useParams<{ id: string }>()
@@ -84,7 +125,9 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
   // ── Curriculum state (from ClassOverview) ──
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
+  const [manualWeeks, setManualWeeks] = useState<ManualSyllabusWeek[]>([])
   const [moduleTutorStats, setModuleTutorStats] = useState<Record<number, ModuleTutorStats>>({})
+  const [curriculumChangeSummary, setCurriculumChangeSummary] = useState<CurriculumChangeSummary | null>(null)
   const [loadingCards, setLoadingCards] = useState<Record<number, boolean>>({})
   const [, setStudyLog] = useState<Record<number, boolean>>({})
 
@@ -232,7 +275,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     try {
       const hasCurriculum = subject?.subject_type === 'class' || subject?.subject_type === 'book'
 
-      const [c, d, f, mats, lecs, schedCards, conMastery, deps] = await Promise.all([
+      const [c, d, f, mats, lecs, schedCards, conMastery, deps, loadedManualWeeks] = await Promise.all([
         window.electronAPI.getCards(subjectId),
         window.electronAPI.getDeadlines(subjectId),
         window.electronAPI.getFolders(subjectId),
@@ -240,7 +283,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         window.electronAPI.listLectures ? window.electronAPI.listLectures(subjectId) : Promise.resolve([]),
         user ? window.electronAPI.getAllCardsWithSchedule(user.id, subjectId) : Promise.resolve([]),
         user ? window.electronAPI.getConceptMastery(user.id, subjectId) : Promise.resolve([]),
-        window.electronAPI.getConceptDependencies ? window.electronAPI.getConceptDependencies(subjectId) : Promise.resolve([])
+        window.electronAPI.getConceptDependencies ? window.electronAPI.getConceptDependencies(subjectId) : Promise.resolve([]),
+        window.electronAPI.manualSyllabusList ? window.electronAPI.manualSyllabusList(subjectId) : Promise.resolve([])
       ])
       setCards(c)
       setDeadlines(d as Deadline[])
@@ -276,6 +320,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setCardsWithSchedule((schedCards as CardWithSchedule[]) || [])
       setConcepts((conMastery as ConceptMastery[]) || [])
       setConceptDependencies((deps as ConceptDependency[]) || [])
+      setManualWeeks((loadedManualWeeks as ManualSyllabusWeek[]) || [])
 
       if (window.electronAPI.syllabusListModules) {
         try {
@@ -427,6 +472,11 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     }
   }
 
+  function handleTutorMaterial(material: Material): void {
+    if (!subject) return
+    setShowConfigModal({ subjectId, subjectName: subject.name, materialId: material.id, materialName: material.filename, initialMode: 'material' })
+  }
+
   function handleStartSpacedReview(moduleId?: number, selectedTopics?: string[]): void {
     if (subject) {
       const config: import('../types').TutorSessionConfig = {
@@ -535,6 +585,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     setUpdatingSyllabus(true)
     try {
       const result = await window.electronAPI.syllabusUpdateFromMaterials(subjectId)
+      const normalized = normalizeSyllabusResult(result)
+      setCurriculumChangeSummary(normalized.summary)
       const preserved = result.preserved_completed_count ?? 0
       const gaps = result.gap_topic_count ?? result.new_topic_count
       const updated = result.updated_topic_count ?? 0
@@ -560,17 +612,13 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
   /** Explicit full syllabus reconciliation. Progress on completed topics is preserved by the backend. */
   async function handleRegenerateSyllabus(): Promise<void> {
-    const ok = confirm(
-      'Reconcile and restructure the syllabus from ALL materials?\n\n' +
-      'This organizes your curriculum into the most logical pedagogical sequence. ' +
-      'All topic completions and study history will be preserved, and any newly identified topics will be highlighted.\n\nContinue?'
-    )
-    if (!ok) return
     setIsRegeneratingSyllabus(true)
     try {
       const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
-      if (result?.length) {
-        addToast({ type: 'success', title: 'Syllabus Reconciled', message: `${result.length} modules organized. Your progress was preserved.` })
+      const normalized = normalizeSyllabusResult(result)
+      setCurriculumChangeSummary(normalized.summary)
+      if (normalized.modules.length) {
+        addToast({ type: 'success', title: 'Syllabus Reconciled', message: `${normalized.modules.length} modules organized. Your progress was preserved.` })
         loadAllData()
       }
     } catch {
@@ -983,6 +1031,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   ]
   if (hasCurriculum) {
     tabs.push({ id: 'curriculum', label: 'Curriculum', count: modules.length })
+    tabs.push({ id: 'manual', label: 'Manual', count: manualWeeks.length })
   }
   tabs.push(
     { id: 'graph', label: 'Knowledge Graph' },
@@ -1355,6 +1404,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               onReorderTopics={handleReorderTopics}
               loadingCards={loadingCards}
               focusTopicId={focusCurriculumTopicId}
+              changeSummary={curriculumChangeSummary}
             />
           ) : (
             <div className="text-center py-14 bg-white dark:bg-slate-800 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
@@ -1370,8 +1420,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                     setIsRegeneratingSyllabus(true)
                     try {
                       const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
-                      if (result?.length) {
-                        addToast({ type: 'success', title: 'Syllabus Generated', message: `${result.length} modules created.` })
+                      const normalized = normalizeSyllabusResult(result)
+                      setCurriculumChangeSummary(normalized.summary)
+                      if (normalized.modules.length) {
+                        addToast({ type: 'success', title: 'Syllabus Generated', message: `${normalized.modules.length} modules created.` })
                         loadAllData()
                       }
                     } catch {
@@ -1446,6 +1498,18 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             </div>
           )}
         </div>
+      )}
+
+      {/* ═══ MANUAL SYLLABUS TAB ═══ */}
+      {activeTab === 'manual' && hasCurriculum && (
+        <ManualSyllabusView
+          subjectId={subjectId}
+          weeks={manualWeeks}
+          materials={materials}
+          onReload={loadAllData}
+          onTutorMaterial={handleTutorMaterial}
+          onOpenMaterial={(material) => navigate(`/subject/${subjectId}/material/${material.id}`)}
+        />
       )}
 
       {/* ═══ KNOWLEDGE GRAPH TAB ═══ */}

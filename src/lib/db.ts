@@ -24,6 +24,8 @@ export const DB_SCHEMA = `
     linked_folder_path TEXT DEFAULT NULL,
     folder_last_synced_at TEXT DEFAULT NULL,
     folder_sync_status TEXT DEFAULT 'idle' CHECK (folder_sync_status IN ('idle', 'syncing', 'error')),
+    curriculum_revision INTEGER NOT NULL DEFAULT 0,
+    curriculum_schema_version INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
 
@@ -441,6 +443,153 @@ export const DB_SCHEMA = `
     is_gap INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (module_id) REFERENCES syllabus_modules(id) ON DELETE CASCADE
+  );
+
+  -- Additive, source-grounded curriculum graph. Legacy syllabus tables remain
+  -- the learner-facing read model during migration.
+  CREATE TABLE IF NOT EXISTS curriculum_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    revision_number INTEGER NOT NULL,
+    parent_revision_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','applied','superseded','rejected')),
+    source_hashes_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    applied_at TEXT,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_revision_id) REFERENCES curriculum_revisions(id) ON DELETE SET NULL,
+    UNIQUE(subject_id, revision_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_revisions_subject ON curriculum_revisions(subject_id, revision_number DESC);
+
+  CREATE TABLE IF NOT EXISTS curriculum_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    revision_id INTEGER NOT NULL,
+    material_id INTEGER NOT NULL,
+    chunk_id TEXT,
+    content_hash TEXT NOT NULL,
+    section TEXT,
+    page INTEGER,
+    slide INTEGER,
+    start_offset INTEGER,
+    end_offset INTEGER,
+    quote TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_evidence_revision ON curriculum_evidence(revision_id, material_id);
+
+  CREATE TABLE IF NOT EXISTS curriculum_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    revision_id INTEGER NOT NULL,
+    topic_id INTEGER,
+    outcome_key TEXT NOT NULL,
+    statement TEXT NOT NULL,
+    bloom_level TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL,
+    UNIQUE(revision_id, outcome_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_outcomes_revision ON curriculum_outcomes(revision_id, sort_order, id);
+
+  CREATE TABLE IF NOT EXISTS curriculum_prerequisites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    revision_id INTEGER NOT NULL,
+    prerequisite_outcome_id INTEGER NOT NULL,
+    dependent_outcome_id INTEGER NOT NULL,
+    relation TEXT NOT NULL DEFAULT 'requires' CHECK(relation IN ('requires','recommended')),
+    rationale TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (prerequisite_outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE,
+    FOREIGN KEY (dependent_outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE,
+    CHECK(prerequisite_outcome_id <> dependent_outcome_id),
+    UNIQUE(revision_id, prerequisite_outcome_id, dependent_outcome_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_prerequisites_revision ON curriculum_prerequisites(revision_id);
+
+  CREATE TABLE IF NOT EXISTS curriculum_practice (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    revision_id INTEGER NOT NULL,
+    outcome_id INTEGER,
+    kind TEXT NOT NULL CHECK(kind IN ('worked_example','independent','retrieval','transfer','repair')),
+    prompt TEXT,
+    instructions TEXT NOT NULL,
+    estimated_minutes INTEGER NOT NULL DEFAULT 15,
+    retrieval_delay_days INTEGER,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_practice_outcome ON curriculum_practice(outcome_id, sort_order, id);
+
+  CREATE TABLE IF NOT EXISTS curriculum_mastery (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    revision_id INTEGER NOT NULL,
+    outcome_id INTEGER,
+    criterion TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('assessment','teach_back','practice','tutor','manual')),
+    target_score REAL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_mastery_outcome ON curriculum_mastery(outcome_id);
+
+  CREATE TABLE IF NOT EXISTS curriculum_generation_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    requested_revision INTEGER NOT NULL,
+    resulting_revision INTEGER,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    source_hashes_json TEXT NOT NULL DEFAULT '[]',
+    output_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'started' CHECK(status IN ('started','applied','rejected','failed','stale')),
+    validation_score REAL,
+    repair_attempt INTEGER NOT NULL DEFAULT 0,
+    error_details_json TEXT NOT NULL DEFAULT '[]',
+    change_summary_json TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
+    duration_ms INTEGER,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (resulting_revision) REFERENCES curriculum_revisions(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_curriculum_generation_runs_subject ON curriculum_generation_runs(subject_id, started_at DESC);
+
+  CREATE TABLE IF NOT EXISTS manual_syllabus_weeks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS manual_syllabus_materials (
+    week_id INTEGER NOT NULL,
+    material_id INTEGER NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (week_id, material_id),
+    FOREIGN KEY (week_id) REFERENCES manual_syllabus_weeks(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS module_topic_study_log (
@@ -876,6 +1025,8 @@ export const DB_SCHEMA = `
 `
 
 export const MIGRATIONS_SQL = [
+  `CREATE TABLE IF NOT EXISTS manual_syllabus_weeks (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE)`,
+  `CREATE TABLE IF NOT EXISTS manual_syllabus_materials (week_id INTEGER NOT NULL, material_id INTEGER NOT NULL UNIQUE, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (week_id, material_id), FOREIGN KEY (week_id) REFERENCES manual_syllabus_weeks(id) ON DELETE CASCADE, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE)`,
   `CREATE TABLE IF NOT EXISTS document_chunks (id TEXT PRIMARY KEY, material_id INTEGER NOT NULL, chunk_index INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', heading_path TEXT NOT NULL DEFAULT '', chunk_type TEXT NOT NULL DEFAULT 'general_block', text TEXT NOT NULL, char_start INTEGER NOT NULL DEFAULT 0, char_end INTEGER NOT NULL DEFAULT 0, token_count INTEGER NOT NULL DEFAULT 0, content_hash TEXT NOT NULL, previous_chunk_id TEXT, next_chunk_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE, UNIQUE (material_id, chunk_index))`,
   "CREATE INDEX IF NOT EXISTS idx_document_chunks_material ON document_chunks(material_id, chunk_index)",
   "CREATE INDEX IF NOT EXISTS idx_document_chunks_hash ON document_chunks(content_hash)",
@@ -1252,7 +1403,24 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE practice_problem_attempts ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE practice_problem_attempts ADD COLUMN transfer_result TEXT",
   "CREATE TABLE IF NOT EXISTS practice_guidance_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, problem_id INTEGER NOT NULL, phase TEXT NOT NULL, subgoal_index INTEGER NOT NULL DEFAULT 0, learner_response TEXT, hint_level INTEGER NOT NULL DEFAULT 0, evaluation_json TEXT, assistance_level TEXT NOT NULL DEFAULT 'none', created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (session_id) REFERENCES practice_sessions(id) ON DELETE CASCADE, FOREIGN KEY (problem_id) REFERENCES practice_problems(id) ON DELETE CASCADE)",
-  "CREATE INDEX IF NOT EXISTS idx_practice_guidance_session ON practice_guidance_events(session_id, id)"
+  "CREATE INDEX IF NOT EXISTS idx_practice_guidance_session ON practice_guidance_events(session_id, id)",
+  // V5.6: Source-grounded curriculum graph and generation audit trail.
+  "ALTER TABLE subjects ADD COLUMN curriculum_revision INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE subjects ADD COLUMN curriculum_schema_version INTEGER NOT NULL DEFAULT 1",
+  "CREATE TABLE IF NOT EXISTS curriculum_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, revision_number INTEGER NOT NULL, parent_revision_id INTEGER, status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','applied','superseded','rejected')), source_hashes_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (datetime('now')), applied_at TEXT, FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(parent_revision_id) REFERENCES curriculum_revisions(id) ON DELETE SET NULL, UNIQUE(subject_id, revision_number))",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_revisions_subject ON curriculum_revisions(subject_id, revision_number DESC)",
+  "CREATE TABLE IF NOT EXISTS curriculum_evidence (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, revision_id INTEGER NOT NULL, material_id INTEGER NOT NULL, chunk_id TEXT, content_hash TEXT NOT NULL, section TEXT, page INTEGER, slide INTEGER, start_offset INTEGER, end_offset INTEGER, quote TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE, FOREIGN KEY(material_id) REFERENCES materials(id) ON DELETE CASCADE)",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_evidence_revision ON curriculum_evidence(revision_id, material_id)",
+  "CREATE TABLE IF NOT EXISTS curriculum_outcomes (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, revision_id INTEGER NOT NULL, topic_id INTEGER, outcome_key TEXT NOT NULL, statement TEXT NOT NULL, bloom_level TEXT, sort_order INTEGER NOT NULL DEFAULT 0, evidence_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE, FOREIGN KEY(topic_id) REFERENCES module_topics(id) ON DELETE SET NULL, UNIQUE(revision_id, outcome_key))",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_outcomes_revision ON curriculum_outcomes(revision_id, sort_order, id)",
+  "CREATE TABLE IF NOT EXISTS curriculum_prerequisites (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, revision_id INTEGER NOT NULL, prerequisite_outcome_id INTEGER NOT NULL, dependent_outcome_id INTEGER NOT NULL, relation TEXT NOT NULL DEFAULT 'requires' CHECK(relation IN ('requires','recommended')), rationale TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE, FOREIGN KEY(prerequisite_outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE, FOREIGN KEY(dependent_outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE, CHECK(prerequisite_outcome_id <> dependent_outcome_id), UNIQUE(revision_id, prerequisite_outcome_id, dependent_outcome_id))",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_prerequisites_revision ON curriculum_prerequisites(revision_id)",
+  "CREATE TABLE IF NOT EXISTS curriculum_practice (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, revision_id INTEGER NOT NULL, outcome_id INTEGER, kind TEXT NOT NULL CHECK(kind IN ('worked_example','independent','retrieval','transfer','repair')), prompt TEXT, instructions TEXT NOT NULL, estimated_minutes INTEGER NOT NULL DEFAULT 15, retrieval_delay_days INTEGER, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE, FOREIGN KEY(outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE)",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_practice_outcome ON curriculum_practice(outcome_id, sort_order, id)",
+  "CREATE TABLE IF NOT EXISTS curriculum_mastery (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, revision_id INTEGER NOT NULL, outcome_id INTEGER, criterion TEXT NOT NULL, evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('assessment','teach_back','practice','tutor','manual')), target_score REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE, FOREIGN KEY(outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE)",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_mastery_outcome ON curriculum_mastery(outcome_id)",
+  "CREATE TABLE IF NOT EXISTS curriculum_generation_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, requested_revision INTEGER NOT NULL, resulting_revision INTEGER, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_version TEXT NOT NULL, source_hashes_json TEXT NOT NULL DEFAULT '[]', output_hash TEXT, status TEXT NOT NULL DEFAULT 'started' CHECK(status IN ('started','applied','rejected','failed','stale')), validation_score REAL, repair_attempt INTEGER NOT NULL DEFAULT 0, error_details_json TEXT NOT NULL DEFAULT '[]', change_summary_json TEXT, started_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT, duration_ms INTEGER, FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(resulting_revision) REFERENCES curriculum_revisions(id) ON DELETE SET NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_generation_runs_subject ON curriculum_generation_runs(subject_id, started_at DESC)"
 ]
 
 export const MASTERED_INTERVAL = 21

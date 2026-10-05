@@ -281,17 +281,11 @@ export default function ClassOverview(): React.JSX.Element {
           <div className="mt-4 text-center">
             <button
               onClick={async () => {
-                const ok = confirm(
-                  'Reconcile and restructure the syllabus from ALL materials?\n\n' +
-                  'This organizes your curriculum into the most logical pedagogical sequence. ' +
-                  'All topic completions and study history will be preserved, and any newly identified topics will be highlighted.\n\nContinue?'
-                )
-                if (!ok) return
                 setIsRegeneratingSyllabus(true)
                 try {
                   const result = await window.electronAPI.syllabusGenerateFromMaterials(subjectId)
-                  if (result?.length) {
-                    addToast({ type: 'success', title: 'Syllabus Reconciled', message: `${result.length} modules organized. Your progress was preserved.` })
+                  if (result?.modules?.length) {
+                    addToast({ type: 'success', title: 'Syllabus Reconciled', message: `${result.modules.length} modules organized. Your progress was preserved.` })
                     loadClassData()
                   }
                 } catch {

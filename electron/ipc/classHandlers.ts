@@ -9,6 +9,7 @@ import { FolderSyncService } from './folderSyncService'
 import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
 import { normalizeMathText } from '../../src/lib/mathFormatter'
 import type { ClassCreationData, Subject, Card } from '../../src/types'
+import { generateSyllabusForSubject } from './syllabusHandlers'
 
 let db: Database.Database
 
@@ -103,7 +104,11 @@ export function registerClassHandlers(): void {
     let syllabusModules: unknown[] = []
     if (data.syllabusOption === 'generate' && savedMaterials.length > 0) {
       try {
-        syllabusModules = await generateSyllabusForClass(subjectId)
+        // Use the same validated, progress-preserving compiler as subsequent
+        // updates. The legacy helper below is retained for compatibility with
+        // old imports but is no longer used by class creation.
+        const syllabusResult = await generateSyllabusForSubject(subjectId)
+        syllabusModules = syllabusResult.modules
       } catch (err) {
         console.error('Syllabus generation failed (non-fatal):', err)
         // Non-fatal - class was created, user can generate syllabus later
@@ -176,7 +181,7 @@ export function registerClassHandlers(): void {
 
 // ── Internal syllabus generation helper ────────────────────────────────────
 
-async function generateSyllabusForClass(subjectId: number): Promise<unknown[]> {
+export async function generateSyllabusForClass(subjectId: number): Promise<unknown[]> {
   // Get the subject and its materials
   const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subjectId) as
     { name: string; time_commitment_minutes: number; subject_type?: string; total_pages?: number; total_chapters?: number } | undefined

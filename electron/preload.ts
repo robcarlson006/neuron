@@ -495,7 +495,7 @@ const electronAPI = {
     ipcRenderer.invoke('library:getFileContent', fileId),
 
   // ── Syllabus AI Generation ──
-  syllabusGenerateFromMaterials: (subjectId: number): Promise<import('../src/types').SyllabusModule[]> =>
+  syllabusGenerateFromMaterials: (subjectId: number): Promise<import('../src/types').SyllabusUpdateResult> =>
     ipcRenderer.invoke('syllabus:generateFromMaterials', subjectId),
   syllabusUpdateFromMaterials: (subjectId: number, materialIds?: number[]): Promise<import('../src/types').SyllabusUpdateResult> =>
     ipcRenderer.invoke('syllabus:updateFromMaterials', subjectId, materialIds),
@@ -507,6 +507,22 @@ const electronAPI = {
     ipcRenderer.invoke('syllabus:reorderTopics', moduleId, topicIds),
   syllabusSaveManualSyllabus: (subjectId: number, modules: { title: string; description?: string; week_number?: number; hours_estimated?: number; topics: { title: string; description?: string }[] }[]): Promise<import('../src/types').SyllabusModule[]> =>
     ipcRenderer.invoke('syllabus:saveManualSyllabus', subjectId, modules),
+  manualSyllabusList: (subjectId: number): Promise<import('../src/types').ManualSyllabusWeek[]> =>
+    ipcRenderer.invoke('manualSyllabus:list', subjectId),
+  manualSyllabusCreateWeek: (subjectId: number, title: string): Promise<import('../src/types').ManualSyllabusWeek> =>
+    ipcRenderer.invoke('manualSyllabus:createWeek', subjectId, title),
+  manualSyllabusUpdateWeek: (weekId: number, title: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('manualSyllabus:updateWeek', weekId, title),
+  manualSyllabusDeleteWeek: (weekId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('manualSyllabus:deleteWeek', weekId),
+  manualSyllabusAssignMaterial: (weekId: number, materialId: number | null): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('manualSyllabus:assignMaterial', weekId, materialId),
+  manualSyllabusUnassignMaterial: (materialId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('manualSyllabus:unassignMaterial', materialId),
+  manualSyllabusReorderWeeks: (subjectId: number, weekIds: number[]): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('manualSyllabus:reorderWeeks', subjectId, weekIds),
+  manualSyllabusReorderMaterials: (weekId: number, materialIds: number[]): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('manualSyllabus:reorderMaterials', weekId, materialIds),
   syllabusEditDeadline: (subjectId: number, newDeadline: string): Promise<{ fits_deadline: boolean; proposed_adjustments?: string; new_weekly_hours?: number | null; summary?: string }> =>
     ipcRenderer.invoke('syllabus:editDeadline', subjectId, newDeadline),
 

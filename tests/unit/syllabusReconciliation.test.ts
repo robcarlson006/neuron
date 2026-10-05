@@ -2,7 +2,7 @@
  * Unit tests for intelligent syllabus reconciliation, progress preservation,
  * and gap detection.
  */
-import { reconcileCurriculum } from '../../electron/ipc/syllabusHandlers'
+import { reconcileCurriculum, validateParsedCurriculum } from '../../electron/ipc/syllabusHandlers'
 import { syncModuleCompletionStatus } from '../../electron/ipc/tutorHandlers'
 import { DB_SCHEMA, MIGRATIONS_SQL } from '../../src/lib/db'
 
@@ -253,5 +253,33 @@ describe('Syllabus Reconciliation & Progress Preservation', () => {
     const topics = db.prepare('SELECT id, title, sort_order FROM module_topics WHERE module_id = ? ORDER BY sort_order ASC').all(firstModule) as { id: number; title: string; sort_order: number }[]
     expect(topics.map(topic => topic.id)).toEqual([secondTopic, firstTopic, expect.any(Number)])
     expect(topics.map(topic => topic.sort_order)).toEqual([0, 1, 2])
+  })
+})
+
+describe('Curriculum generation safety gates', () => {
+  it('rejects empty or topicless model output before mutation', () => {
+    expect(() => validateParsedCurriculum([])).toThrow(/non-empty array/)
+    expect(() => validateParsedCurriculum([{ title: 'Module', topics: [] }])).toThrow(/has no topics/)
+  })
+
+  it('rejects duplicate topics and unknown source material IDs', () => {
+    expect(() => validateParsedCurriculum([{
+      title: 'Module',
+      topics: [
+        { title: 'Same', source_material_ids: [1] },
+        { title: 'same', source_material_ids: [1] }
+      ]
+    }], { validMaterialIds: new Set([1]) })).toThrow(/duplicate topic/)
+    expect(() => validateParsedCurriculum([{
+      title: 'Module',
+      topics: [{ title: 'Topic', source_material_ids: [9] }]
+    }], { validMaterialIds: new Set([1]) })).toThrow(/unknown material/)
+  })
+
+  it('requires source evidence for AI-generated outcomes', () => {
+    expect(() => validateParsedCurriculum([{
+      title: 'Module',
+      topics: [{ title: 'Topic', source_material_ids: [] }]
+    }], { validMaterialIds: new Set([1]), requireSourceMaterialIds: true })).toThrow(/missing source evidence/)
   })
 })

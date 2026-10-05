@@ -1,0 +1,5 @@
+{"claim":"Current generation persists after checking only that modules is an array.","support":"electron/ipc/syllabusHandlers.ts:619-640","status":"verified_local"}
+{"claim":"Long documents are represented by section snippets plus opening and closing text.","support":"src/lib/coverage/documentTopologyParser.ts:401-452","status":"verified_local"}
+{"claim":"Current output lacks structured outcomes, prerequisite edges, and mastery evidence.","support":"electron/ipc/syllabusHandlers.ts:580-613; src/lib/db.ts syllabus tables","status":"verified_local"}
+{"claim":"Spacing, retrieval, worked examples, and deep explanatory questions are recommended learning strategies.","support":"S3","status":"verified_external"}
+{"claim":"Schema conformance does not establish semantic correctness; evaluation and human oversight remain necessary.","support":"S4,S5,S6,S7","status":"verified_external"}

@@ -2,6 +2,27 @@ import React, { useEffect, useState } from 'react'
 import type { SyllabusModule, ModuleTopic, ModuleCardGenOptions, ModuleTutorStats } from '../../types'
 import GenerateCardsModal from './GenerateCardsModal'
 
+export interface CurriculumAdvisoryRecommendation {
+  title: string
+  detail?: string
+  mode?: string
+}
+
+export interface CurriculumChangeSummary {
+  newModuleCount?: number
+  newTopicCount?: number
+  updatedTopicCount?: number
+  gapTopicCount?: number
+  preservedCompletedCount?: number
+  processedMaterialCount?: number
+  sourceCoverage?: number
+  revision?: number | string
+  generatedAt?: string
+  recommendations?: CurriculumAdvisoryRecommendation[]
+  rejected?: boolean
+  diagnostics?: string[]
+}
+
 interface CurriculumViewProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
   subjectName?: string
@@ -14,6 +35,7 @@ interface CurriculumViewProps {
   onReorderTopics?: (moduleId: number, topicIds: number[]) => void
   loadingCards?: Record<number, boolean>
   focusTopicId?: number
+  changeSummary?: CurriculumChangeSummary | null
 }
 
 const DEPTH_NAMES: Record<number, string> = {
@@ -66,7 +88,8 @@ export default function CurriculumView({
   onReorderModules,
   onReorderTopics,
   loadingCards,
-  focusTopicId
+  focusTopicId,
+  changeSummary
 }: CurriculumViewProps): React.JSX.Element {
   const [expandedModule, setExpandedModule] = useState<number | null>(
     modules.find(m => m.status === 'in_progress')?.id ?? null
@@ -170,6 +193,57 @@ export default function CurriculumView({
 
   return (
     <div className="space-y-2">
+      {changeSummary && (
+        <div
+          role="status"
+          aria-label={changeSummary.rejected ? 'Curriculum update rejected' : 'Curriculum update summary'}
+          className={`mb-3 rounded-xl border p-3.5 ${changeSummary.rejected
+            ? 'border-rose-200 bg-rose-50/80 dark:border-rose-800 dark:bg-rose-950/30'
+            : 'border-violet-200 bg-violet-50/70 dark:border-violet-800 dark:bg-violet-950/30'}`}
+        >
+          <div className="flex items-start gap-2.5">
+            <span className="mt-0.5 text-base" aria-hidden="true">{changeSummary.rejected ? '⚠️' : '✨'}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                  {changeSummary.rejected ? 'Curriculum update was not applied' : 'Curriculum updated automatically'}
+                </h3>
+                {changeSummary.revision !== undefined && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/70 dark:bg-slate-800/70 text-slate-500 dark:text-slate-400">
+                    Revision {changeSummary.revision}
+                  </span>
+                )}
+              </div>
+              {!changeSummary.rejected ? (
+                <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-medium text-slate-600 dark:text-slate-300">
+                  {(changeSummary.newTopicCount ?? 0) > 0 && <span className="rounded-md bg-white/70 dark:bg-slate-800/70 px-2 py-1">+{changeSummary.newTopicCount} new outcome{changeSummary.newTopicCount === 1 ? '' : 's'}</span>}
+                  {(changeSummary.updatedTopicCount ?? 0) > 0 && <span className="rounded-md bg-white/70 dark:bg-slate-800/70 px-2 py-1">{changeSummary.updatedTopicCount} deepened</span>}
+                  {(changeSummary.preservedCompletedCount ?? 0) > 0 && <span className="rounded-md bg-emerald-100/70 dark:bg-emerald-950/50 px-2 py-1 text-emerald-700 dark:text-emerald-300">{changeSummary.preservedCompletedCount} completed preserved</span>}
+                  {changeSummary.processedMaterialCount !== undefined && <span className="rounded-md bg-white/70 dark:bg-slate-800/70 px-2 py-1">{changeSummary.processedMaterialCount} source{changeSummary.processedMaterialCount === 1 ? '' : 's'} processed</span>}
+                  {changeSummary.sourceCoverage !== undefined && <span className="rounded-md bg-white/70 dark:bg-slate-800/70 px-2 py-1">{Math.round(changeSummary.sourceCoverage * (changeSummary.sourceCoverage <= 1 ? 100 : 1))}% source coverage</span>}
+                </div>
+              ) : (
+                <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">Your existing curriculum and progress are unchanged.</p>
+              )}
+              {changeSummary.diagnostics?.map((diagnostic) => (
+                <p key={diagnostic} className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">{diagnostic}</p>
+              ))}
+              {changeSummary.recommendations && changeSummary.recommendations.length > 0 && (
+                <div className="mt-2 border-t border-slate-200/70 dark:border-slate-700/70 pt-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Advisory next steps</p>
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-slate-600 dark:text-slate-300">
+                    {changeSummary.recommendations.slice(0, 3).map((recommendation) => (
+                      <li key={`${recommendation.title}-${recommendation.detail || ''}`}>
+                        <span className="font-medium">{recommendation.title}</span>{recommendation.detail ? ` — ${recommendation.detail}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {/* Top Banner: New Content Available */}
       {allNewTopics.length > 0 && (
         <div className="p-3.5 sm:p-4 rounded-xl bg-gradient-to-r from-amber-50 via-amber-100/40 to-purple-50 dark:from-amber-950/40 dark:via-amber-900/20 dark:to-purple-950/30 border border-amber-300/80 dark:border-amber-700/60 shadow-xs flex items-center justify-between gap-3 flex-wrap transition-all mb-3">
@@ -439,6 +513,20 @@ export default function CurriculumView({
                       {modTopics.map((topic, topicIndex) => {
                         const topicCompleted = Boolean(topic.completed || (topic as ModuleTopic & { studied?: boolean }).studied)
                         const isSelected = selectedSet.has(topic.id)
+                        const topicMetadata = topic as ModuleTopic & {
+                          learning_outcome?: string
+                          outcome?: string
+                          mastery_criterion?: string
+                          mastery_evidence?: string
+                          practice_activity?: string
+                          practice?: string
+                          source_evidence?: Array<unknown>
+                          prerequisite_ids?: number[]
+                        }
+                        const outcome = topicMetadata.learning_outcome || topicMetadata.outcome
+                        const mastery = topicMetadata.mastery_criterion || topicMetadata.mastery_evidence
+                        const practice = topicMetadata.practice_activity || topicMetadata.practice
+                        const evidenceCount = Array.isArray(topicMetadata.source_evidence) ? topicMetadata.source_evidence.length : 0
 
                         return (
                           <div
@@ -489,6 +577,15 @@ export default function CurriculumView({
                               }`}>
                                 {topic.title}
                               </span>
+                              {(outcome || mastery || practice || evidenceCount > 0 || (topicMetadata.prerequisite_ids?.length || 0) > 0) && (
+                                <span className="hidden md:inline-flex items-center gap-1 flex-shrink-0" aria-label="Learning design metadata">
+                                  {outcome && <span title={outcome} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300">Outcome</span>}
+                                  {practice && <span title={practice} className="text-[9px] px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300">Practice</span>}
+                                  {mastery && <span title={mastery} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">Mastery</span>}
+                                  {evidenceCount > 0 && <span title={`${evidenceCount} source evidence reference${evidenceCount === 1 ? '' : 's'}`} className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300">{evidenceCount} source{evidenceCount === 1 ? '' : 's'}</span>}
+                                  {(topicMetadata.prerequisite_ids?.length || 0) > 0 && <span title={`${topicMetadata.prerequisite_ids?.length} prerequisite${topicMetadata.prerequisite_ids?.length === 1 ? '' : 's'}`} className="text-[9px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">Prereq</span>}
+                                </span>
+                              )}
                               {Boolean(topic.is_gap) && !topicCompleted && (
                                 <button
                                   type="button"

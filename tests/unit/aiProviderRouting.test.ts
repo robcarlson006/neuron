@@ -13,7 +13,7 @@ describe('AI provider routing for document learning', () => {
     })
   })
 
-  it('maps the legacy DeepSeek default to the current chat model', async () => {
+  it('preserves the configured DeepSeek flash model', async () => {
     await callAIMessages(
       [{ role: 'user', content: 'Create one card.' }],
       { provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: 'deepseek-test' },
@@ -23,7 +23,7 @@ describe('AI provider routing for document learning', () => {
     const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit]
     const body = JSON.parse(String(request.body))
     expect(url).toBe('https://api.deepseek.com/v1/chat/completions')
-    expect(body.model).toBe('deepseek-chat')
+    expect(body.model).toBe('deepseek-flash')
     expect(body.response_format).toEqual({ type: 'json_object' })
     expect((request.headers as Record<string, string>).Authorization).toBe('Bearer deepseek-test')
   })

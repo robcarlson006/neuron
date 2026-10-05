@@ -76,9 +76,9 @@ async function callAI(
     // OpenAI-compatible API (DeepSeek, OpenAI, Ollama, etc.)
     const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
     let model = config.model || DEFAULT_MODEL
-    if (baseUrl.includes('deepseek.com') && (model === 'deepseek-flash' || !model)) {
-      model = 'deepseek-chat'
-    }
+    // `deepseek-flash` is the configured product default.  Do not silently
+    // rewrite it to a different/retired model: model selection is part of the
+    // user's provider contract and the API now accepts the configured name.
     const url = `${baseUrl}/v1/chat/completions`
     const isLocal = isLocalEndpoint(baseUrl)
     const authKey = config.apiKey || (isLocal ? 'ollama' : '')
@@ -604,9 +604,8 @@ export async function callAIMessages(
 
     const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
     let model = config.model || DEFAULT_MODEL
-    if (baseUrl.includes('deepseek.com') && (model === 'deepseek-flash' || !model)) {
-      model = 'deepseek-chat'
-    }
+    // Preserve the configured DeepSeek model (including the default
+    // `deepseek-flash`) rather than routing it to a stale alias.
     const url = `${baseUrl}/v1/chat/completions`
     const isLocal = isLocalEndpoint(baseUrl)
     const authKey = config.apiKey || (isLocal ? 'ollama' : '')

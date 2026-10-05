@@ -43,6 +43,15 @@ export interface Material {
   module_id?: number | null
 }
 
+export interface ManualSyllabusWeek {
+  id: number
+  subject_id: number
+  title: string
+  sort_order: number
+  created_at: string
+  materials: Material[]
+}
+
 export interface SubjectNoteLink {
   material_id: number
   label: string
@@ -859,6 +868,8 @@ export interface SyllabusModule {
   prerequisites?: string
   topics?: ModuleTopic[]
   topic_count?: number
+  /** Curriculum graph revision from which this module was derived. */
+  curriculum_revision?: number
 }
 
 export type TopicRetentionStatus = 'fresh' | 'fading' | 'overdue' | 'due_now' | 'due_today' | 'upcoming' | 'scheduled'
@@ -924,6 +935,137 @@ export interface ModuleTopic {
   source_material_ids?: string
   // Flashcard coverage
   card_count?: number
+  /** Stable graph node identifier, present for graph-backed curricula. */
+  outcome_id?: number | null
+  curriculum_revision?: number
+}
+
+/** A bounded, source-grounded statement the learner should be able to demonstrate. */
+export type CurriculumRevisionStatus = 'draft' | 'applied' | 'superseded' | 'rejected'
+
+export interface CurriculumRevision {
+  id?: number
+  subject_id: number
+  revision_number: number
+  parent_revision_id?: number | null
+  status: CurriculumRevisionStatus
+  source_hashes: string[]
+  created_at?: string
+  applied_at?: string | null
+}
+
+export interface CurriculumGenerationRequest {
+  subject_id: number
+  /** Revision observed before generation; stale responses must not apply. */
+  expected_revision: number
+  material_ids: number[]
+  provider?: string
+  model?: string
+}
+
+export interface CurriculumOutcome {
+  id?: number
+  subject_id: number
+  revision_id?: number | null
+  topic_id?: number | null
+  outcome_key: string
+  statement: string
+  bloom_level?: BloomLevel | string | null
+  sort_order: number
+  source_evidence?: CurriculumEvidence[]
+  practice_ids?: number[]
+  mastery_id?: number | null
+  created_at?: string
+}
+
+/** Immutable pointer into a source material/chunk. The quote is a display aid, not authority. */
+export interface CurriculumEvidence {
+  id?: number
+  subject_id: number
+  revision_id?: number | null
+  material_id: number
+  chunk_id?: string | null
+  content_hash: string
+  section?: string | null
+  page?: number | null
+  slide?: number | null
+  start_offset?: number | null
+  end_offset?: number | null
+  quote: string
+  created_at?: string
+}
+
+export type CurriculumPrerequisiteRelation = 'requires' | 'recommended'
+
+/** Directed edge in the outcome prerequisite DAG. */
+export interface CurriculumPrerequisite {
+  id?: number
+  subject_id: number
+  revision_id?: number | null
+  prerequisite_outcome_id: number
+  dependent_outcome_id: number
+  relation: CurriculumPrerequisiteRelation
+  rationale?: string | null
+  created_at?: string
+}
+
+export type CurriculumPracticeKind = 'worked_example' | 'independent' | 'retrieval' | 'transfer' | 'repair'
+
+export interface CurriculumPractice {
+  id?: number
+  subject_id: number
+  revision_id?: number | null
+  outcome_id?: number | null
+  kind: CurriculumPracticeKind
+  prompt?: string | null
+  instructions: string
+  estimated_minutes: number
+  retrieval_delay_days?: number | null
+  sort_order: number
+  created_at?: string
+}
+
+export type CurriculumMasteryEvidenceKind = 'assessment' | 'teach_back' | 'practice' | 'tutor' | 'manual'
+
+export interface CurriculumMastery {
+  id?: number
+  subject_id: number
+  revision_id?: number | null
+  outcome_id?: number | null
+  criterion: string
+  evidence_kind: CurriculumMasteryEvidenceKind
+  target_score?: number | null
+  created_at?: string
+}
+
+export type CurriculumGenerationRunStatus = 'started' | 'applied' | 'rejected' | 'failed' | 'stale'
+
+export interface CurriculumChangeSummary {
+  new_outcome_count: number
+  deepened_outcome_count: number
+  preserved_progress_count: number
+  source_coverage: number
+  advisory_repairs?: string[]
+}
+
+export interface CurriculumGenerationRun {
+  id?: number
+  subject_id: number
+  requested_revision: number
+  resulting_revision?: number | null
+  provider: string
+  model: string
+  prompt_version: string
+  source_hashes: string[]
+  output_hash?: string | null
+  status: CurriculumGenerationRunStatus
+  validation_score?: number | null
+  repair_attempt: number
+  error_details?: string[]
+  change_summary?: CurriculumChangeSummary | null
+  started_at?: string
+  completed_at?: string | null
+  duration_ms?: number | null
 }
 
 /** Result of a syllabus update or reconciliation (syllabus:updateFromMaterials or syllabus:generateFromMaterials). */
@@ -936,6 +1078,17 @@ export interface SyllabusUpdateResult {
   preserved_completed_count?: number
   gap_topic_count?: number
   updated_topic_count?: number
+  /** Revision that was atomically applied, or the current revision when rejected. */
+  curriculum_revision?: number
+  /** Graph-backed entities for the applied revision. */
+  outcomes?: CurriculumOutcome[]
+  prerequisites?: CurriculumPrerequisite[]
+  practices?: CurriculumPractice[]
+  mastery?: CurriculumMastery[]
+  change_summary?: CurriculumChangeSummary
+  generation_run_id?: number
+  rejected?: boolean
+  diagnostics?: string[]
 }
 
 // ── Tutor Session Types ───────────────────────────────────────────────────

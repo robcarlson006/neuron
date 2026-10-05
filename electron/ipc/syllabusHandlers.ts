@@ -1,21 +1,95 @@
 import { ipcMain } from 'electron'
 import Database from 'better-sqlite3'
+import { createHash } from 'node:crypto'
 import { callAIMessages } from './aiHandlers'
 import { getAIConfig, getApiKey } from './aiConfigStore'
 import { safeParseAIJson } from '../../src/lib/jsonRepair'
-import { buildComprehensiveOutline } from '../../src/lib/coverage/documentTopologyParser'
+import { buildComprehensiveOutline, parseDocumentTopology } from '../../src/lib/coverage/documentTopologyParser'
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
+import type { SyllabusUpdateResult } from '../../src/types'
 import { syncModuleCompletionStatus } from './tutorHandlers'
 
 let db: Database.Database
+// A subject may only have one curriculum compiler running at a time. This
+// prevents a slower response from overwriting a newer response for the same
+// subject. The epoch is also checked immediately before persistence.
+const syllabusGenerationInFlight = new Map<number, Promise<SyllabusUpdateResult>>()
+const syllabusGenerationEpoch = new Map<number, number>()
 
 export function setSyllabusDatabase(database: Database.Database): void {
   db = database
 }
 
+function listManualWeeks(subjectId: number): any[] {
+  const weeks = db.prepare('SELECT * FROM manual_syllabus_weeks WHERE subject_id = ? ORDER BY sort_order ASC, id ASC').all(subjectId) as any[]
+  const materials = db.prepare(`
+    SELECT msm.week_id, msm.sort_order, m.*
+    FROM manual_syllabus_materials msm
+    JOIN materials m ON m.id = msm.material_id
+    WHERE m.subject_id = ?
+    ORDER BY msm.week_id ASC, msm.sort_order ASC, m.id ASC
+  `).all(subjectId) as any[]
+  return weeks.map(week => ({ ...week, materials: materials.filter(material => material.week_id === week.id).map(({ week_id: _weekId, sort_order: _sortOrder, ...material }) => material) }))
+}
+
 /** Strip markdown code fences from an AI response and parse it as JSON safely. */
 function parseAIJson<T>(responseText: string): T {
+  if (typeof responseText !== 'string' || responseText.trim().length === 0) {
+    throw new Error('AI returned an empty syllabus response')
+  }
   return safeParseAIJson<T>(responseText, {} as T)
+}
+
+/** Validate the AI intermediate representation before reconciliation mutates
+ * any rows.  This intentionally stays independent of the model/provider so a
+ * malformed or truncated response can never be interpreted as an empty
+ * syllabus (the old fallback was `{ modules: [] }`). */
+export function validateParsedCurriculum(
+  modules: unknown,
+  options?: { validMaterialIds?: Set<number>; subjectId?: number; requireSourceMaterialIds?: boolean }
+): asserts modules is ParsedReconciledModule[] {
+  if (!Array.isArray(modules) || modules.length === 0) {
+    throw new Error('Invalid syllabus response: modules must be a non-empty array')
+  }
+
+  const moduleTitles = new Set<string>()
+  let topicCount = 0
+  for (const rawModule of modules) {
+    if (!rawModule || typeof rawModule !== 'object') throw new Error('Invalid syllabus response: malformed module')
+    const mod = rawModule as Record<string, unknown>
+    if (typeof mod.title !== 'string' || !mod.title.trim()) throw new Error('Invalid syllabus response: module title is required')
+    const moduleKey = normText(mod.title)
+    if (moduleTitles.has(moduleKey)) throw new Error(`Invalid syllabus response: duplicate module "${mod.title}"`)
+    moduleTitles.add(moduleKey)
+    if (!Array.isArray(mod.topics) || mod.topics.length === 0) {
+      throw new Error(`Invalid syllabus response: module "${mod.title}" has no topics`)
+    }
+    if (mod.hours_estimated != null && (typeof mod.hours_estimated !== 'number' || !Number.isFinite(mod.hours_estimated) || mod.hours_estimated <= 0)) {
+      throw new Error(`Invalid syllabus response: invalid hours_estimated for "${mod.title}"`)
+    }
+    const topicTitles = new Set<string>()
+    for (const rawTopic of mod.topics) {
+      if (!rawTopic || typeof rawTopic !== 'object') throw new Error(`Invalid syllabus response: malformed topic in "${mod.title}"`)
+      const topic = rawTopic as Record<string, unknown>
+      if (typeof topic.title !== 'string' || !topic.title.trim()) throw new Error(`Invalid syllabus response: topic title is required in "${mod.title}"`)
+      const topicKey = normText(topic.title)
+      if (topicTitles.has(topicKey)) throw new Error(`Invalid syllabus response: duplicate topic "${topic.title}"`)
+      topicTitles.add(topicKey)
+      topicCount++
+      if (topic.estimated_minutes != null && (typeof topic.estimated_minutes !== 'number' || !Number.isFinite(topic.estimated_minutes) || topic.estimated_minutes <= 0)) {
+        throw new Error(`Invalid syllabus response: invalid estimated_minutes for "${topic.title}"`)
+      }
+      if (topic.source_material_ids != null) {
+        if (!Array.isArray(topic.source_material_ids) || topic.source_material_ids.some(id => !Number.isInteger(id) || (options?.validMaterialIds && !options.validMaterialIds.has(id as number)))) {
+          throw new Error(`Invalid syllabus response: topic "${topic.title}" references an unknown material`)
+        }
+      }
+      if (options?.requireSourceMaterialIds && (!Array.isArray(topic.source_material_ids) || topic.source_material_ids.length === 0)) {
+        throw new Error(`Invalid syllabus response: topic "${topic.title}" is missing source evidence`)
+      }
+    }
+  }
+  if (topicCount === 0) throw new Error('Invalid syllabus response: no topics generated')
 }
 
 export interface ParsedReconciledTopic {
@@ -73,6 +147,85 @@ function conceptFingerprint(str: string): string {
     .join('-')
 }
 
+function persistDocumentChunks(material: { id: number; filename: string; content_text: string }): void {
+  const topology = parseDocumentTopology(material.content_text, material.filename)
+  const upsert = db.prepare(`
+    INSERT OR REPLACE INTO document_chunks
+      (id, material_id, chunk_index, title, heading_path, chunk_type, text, char_start, char_end, token_count, content_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const write = db.transaction(() => {
+    db.prepare('DELETE FROM document_chunks WHERE material_id = ?').run(material.id)
+    topology.chunks.forEach(chunk => {
+      const contentHash = createHash('sha256').update(chunk.text).digest('hex')
+      upsert.run(`${material.id}:${chunk.index}:${contentHash.slice(0, 16)}`, material.id, chunk.index, chunk.title, chunk.sectionHeading || '', chunk.type, chunk.text, chunk.charStart, chunk.charEnd, chunk.tokenEstimate, contentHash)
+    })
+  })
+  write()
+}
+
+/** Materialize the validated topic plan as a graph-backed curriculum revision.
+ * This is deliberately derived from the already-persisted, source-ID-checked
+ * topics so legacy module/topic consumers remain compatible during migration. */
+function materializeCurriculumGraph(subjectId: number, parsedModules: ParsedReconciledModule[], materialIds: Set<number>): {
+  revision: number
+  outcomeCount: number
+  sourceCoverage: number
+} {
+  const subject = db.prepare('SELECT curriculum_revision FROM subjects WHERE id = ?').get(subjectId) as { curriculum_revision?: number } | undefined
+  const currentRevision = Number(subject?.curriculum_revision || 0)
+  const nextRevision = currentRevision + 1
+  const sources = db.prepare(`SELECT id, content_text, file_sha256 FROM materials WHERE subject_id = ? AND id IN (${[...materialIds].map(() => '?').join(',')})`).all(subjectId, ...materialIds) as { id: number; content_text?: string; file_sha256?: string | null }[]
+  const sourceById = new Map(sources.map(source => [source.id, source]))
+
+  const run = db.transaction(() => {
+    const revisionResult = db.prepare(`
+      INSERT INTO curriculum_revisions (subject_id, revision_number, parent_revision_id, status, source_hashes_json, applied_at)
+      VALUES (?, ?, (SELECT id FROM curriculum_revisions WHERE subject_id = ? ORDER BY revision_number DESC LIMIT 1), 'applied', ?, datetime('now'))
+    `).run(subjectId, nextRevision, subjectId, JSON.stringify(sources.map(source => source.file_sha256 || createHash('sha256').update(source.content_text || '').digest('hex'))))
+    const revisionId = Number(revisionResult.lastInsertRowid)
+    const outcomeIds: number[] = []
+    let sourceBackedTopics = 0
+    let sortOrder = 0
+    const insertEvidence = db.prepare(`INSERT INTO curriculum_evidence (subject_id, revision_id, material_id, content_hash, section, start_offset, end_offset, quote) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    const insertOutcome = db.prepare(`INSERT INTO curriculum_outcomes (subject_id, revision_id, topic_id, outcome_key, statement, bloom_level, sort_order, evidence_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    const insertPractice = db.prepare(`INSERT INTO curriculum_practice (subject_id, revision_id, outcome_id, kind, instructions, estimated_minutes, retrieval_delay_days, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    const insertMastery = db.prepare(`INSERT INTO curriculum_mastery (subject_id, revision_id, outcome_id, criterion, evidence_kind, target_score) VALUES (?, ?, ?, ?, 'practice', 0.8)`)
+
+    for (const module of parsedModules) {
+      const storedModule = db.prepare('SELECT id FROM syllabus_modules WHERE subject_id = ? AND title = ? ORDER BY id DESC LIMIT 1').get(subjectId, module.title) as { id: number } | undefined
+      for (const topic of module.topics || []) {
+        const storedTopic = storedModule ? db.prepare('SELECT id FROM module_topics WHERE module_id = ? AND title = ? ORDER BY id DESC LIMIT 1').get(storedModule.id, topic.title) as { id: number } | undefined : undefined
+        const evidenceIds: number[] = []
+        for (const materialId of topic.source_material_ids || []) {
+          if (!materialIds.has(materialId)) continue
+          const source = sourceById.get(materialId)
+          if (!source) continue
+          const text = source.content_text || ''
+          const needle = topic.title.trim().toLowerCase()
+          const found = needle ? text.toLowerCase().indexOf(needle) : -1
+          const start = found >= 0 ? found : 0
+          const quote = text.slice(start, start + 360).trim()
+          const hash = source.file_sha256 || createHash('sha256').update(text).digest('hex')
+          const evidence = insertEvidence.run(subjectId, revisionId, materialId, hash, module.title, start, start + quote.length, quote || topic.description || topic.title)
+          evidenceIds.push(Number(evidence.lastInsertRowid))
+        }
+        if (evidenceIds.length > 0) sourceBackedTopics++
+        const outcome = insertOutcome.run(subjectId, revisionId, storedTopic?.id || null, `${conceptFingerprint(module.title)}:${conceptFingerprint(topic.title)}`, `Demonstrate understanding of ${topic.title}.`, topic.concept_type || 'concept', sortOrder++, JSON.stringify(evidenceIds))
+        const outcomeId = Number(outcome.lastInsertRowid)
+        outcomeIds.push(outcomeId)
+        insertPractice.run(subjectId, revisionId, outcomeId, 'independent', `Explain or apply ${topic.title} without looking at the source.`, Math.max(5, Math.min(60, Number(topic.estimated_minutes) || 15)), 3, sortOrder)
+        insertMastery.run(subjectId, revisionId, outcomeId, `Provide a correct explanation or application of ${topic.title} with at least 80% rubric performance.`)
+      }
+    }
+    const insertPrereq = db.prepare(`INSERT OR IGNORE INTO curriculum_prerequisites (subject_id, revision_id, prerequisite_outcome_id, dependent_outcome_id, relation, rationale) VALUES (?, ?, ?, ?, 'recommended', 'Earlier generated outcome in the ordered curriculum')`)
+    for (let i = 1; i < outcomeIds.length; i++) insertPrereq.run(subjectId, revisionId, outcomeIds[i - 1], outcomeIds[i])
+    db.prepare('UPDATE subjects SET curriculum_revision = ?, curriculum_schema_version = 2 WHERE id = ?').run(nextRevision, subjectId)
+  })
+  run()
+  return { revision: nextRevision, outcomeCount: parsedModules.reduce((sum, module) => sum + (module.topics?.length || 0), 0), sourceCoverage: parsedModules.reduce((sum, module) => sum + (module.topics || []).filter(topic => (topic.source_material_ids || []).length > 0).length, 0) / Math.max(1, parsedModules.reduce((sum, module) => sum + (module.topics?.length || 0), 0)) }
+}
+
 /**
  * Reconciles an existing syllabus with a new curriculum structure:
  * - Updates existing module_topics in place, preserving primary keys, study logs, practice problems, and flashcards.
@@ -87,6 +240,7 @@ export function reconcileCurriculum(
   userId?: number,
   materialModuleAssignments?: { material_filename: string; module_title: string }[]
 ) {
+  validateParsedCurriculum(parsedModules)
   let actualUserId = userId
   if (!actualUserId) {
     try {
@@ -446,23 +600,37 @@ function listModulesWithCountsHelper(database: any, subjectId: number) {
 /**
  * Reconciles syllabus with AI across ALL materials while preserving learner progress.
  */
-async function reconcileSyllabusFromAI(subjectId: number, targetMaterialIds?: number[]) {
+async function reconcileSyllabusFromAI(subjectId: number, targetMaterialIds?: number[], expectedEpoch?: number) {
   const subject = db.prepare('SELECT * FROM subjects WHERE id = ?').get(subjectId) as
     { id: number; name: string; time_commitment_minutes: number; subject_type?: string; total_pages?: number; total_chapters?: number } | undefined
   if (!subject) throw new Error('Subject not found')
 
-  let materials: { id: number; filename: string; content_text: string }[]
+  let materials: { id: number; filename: string; content_text: string; file_sha256?: string | null }[]
   if (targetMaterialIds && targetMaterialIds.length > 0) {
+    if (targetMaterialIds.some(id => !Number.isInteger(id) || id <= 0)) {
+      throw new Error('Invalid material IDs')
+    }
+    const placeholders = targetMaterialIds.map(() => '?').join(',')
+    const selectedCount = db.prepare(`SELECT COUNT(*) as count FROM materials WHERE subject_id = ? AND id IN (${placeholders})`).get(subjectId, ...targetMaterialIds) as { count: number }
+    if (Number(selectedCount?.count || 0) !== new Set(targetMaterialIds).size) {
+      throw new Error('One or more materials do not belong to this subject')
+    }
     materials = db.prepare(
-      `SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND id IN (${targetMaterialIds.map(() => '?').join(',')}) ORDER BY sort_order ASC, uploaded_at DESC, id DESC`
+      `SELECT id, filename, content_text, file_sha256 FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND id IN (${targetMaterialIds.map(() => '?').join(',')}) ORDER BY sort_order ASC, uploaded_at DESC, id DESC`
     ).all(subjectId, ...targetMaterialIds) as typeof materials
   } else {
     materials = db.prepare(
-      'SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL ORDER BY sort_order ASC, uploaded_at DESC, id DESC'
+      'SELECT id, filename, content_text, file_sha256 FROM materials WHERE subject_id = ? AND content_text IS NOT NULL ORDER BY sort_order ASC, uploaded_at DESC, id DESC'
     ).all(subjectId) as typeof materials
   }
 
   if (materials.length === 0) throw new Error('No materials with content found')
+
+  // Keep a bounded, inspectable source representation for evidence and later
+  // incremental compilation. This cache is independent of curriculum writes.
+  for (const material of materials) persistDocumentChunks(material)
+
+  const validMaterialIds = new Set(materials.map(material => material.id))
 
   let actualUserId: number = 1
   try {
@@ -595,7 +763,7 @@ Rules:
 - Organize materials logically by topic (foundations first, then advanced).
 - Module titles must be descriptive topic names (do NOT use "Week 1", "Week 2").
 - Each module should have 2-5 subtopics.
-- Every topic must identify its concept type, estimated active-retrieval minutes, and supporting material IDs when known.
+- Every topic must identify its concept type, estimated active-retrieval minutes, and at least one supporting MATERIAL_ID.
 - Use the MATERIAL_ID values in SOURCE MATERIALS for source_material_ids; never invent IDs.
 - Do not merge two distinct concepts merely because their titles are similar; use matched_previous_topic only when the concept identity is clear.
 - Return ONLY valid JSON. No markdown. No commentary.`
@@ -603,6 +771,13 @@ Rules:
   const config = getAIConfig()
   const apiKey = getApiKey()
   if (!apiKey) throw new Error('AI API key not configured. Go to Settings to configure your AI provider.')
+  const generationStartedAt = Date.now()
+  const sourceHashes = materials.map(material => material.file_sha256 || createHash('sha256').update(material.content_text || '').digest('hex'))
+  const generationRun = db.prepare(`
+    INSERT INTO curriculum_generation_runs (subject_id, requested_revision, provider, model, prompt_version, source_hashes_json, status, started_at)
+    VALUES (?, (SELECT curriculum_revision FROM subjects WHERE id = ?), ?, ?, 'curriculum-graph-v1', ?, 'started', datetime('now'))
+  `).run(subjectId, subjectId, config.provider, config.model, JSON.stringify(sourceHashes))
+  const generationRunId = Number(generationRun.lastInsertRowid)
 
   const responseText = await callAIMessages(
     [{ role: 'user', content: prompt }],
@@ -618,6 +793,25 @@ Rules:
   if (!parsed.modules || !Array.isArray(parsed.modules)) {
     throw new Error('Invalid syllabus response: missing modules array')
   }
+  validateParsedCurriculum(parsed.modules, { validMaterialIds, subjectId, requireSourceMaterialIds: true })
+
+  if (parsed.material_module_assignments != null) {
+    if (!Array.isArray(parsed.material_module_assignments)) {
+      throw new Error('Invalid syllabus response: material assignments must be an array')
+    }
+    const moduleTitles = new Set(parsed.modules.map(module => normText(module.title)))
+    const materialNames = new Set(materials.map(material => material.filename))
+    for (const assignment of parsed.material_module_assignments) {
+      if (!assignment || typeof assignment.material_filename !== 'string' || typeof assignment.module_title !== 'string' ||
+        !materialNames.has(assignment.material_filename) || !moduleTitles.has(normText(assignment.module_title))) {
+        throw new Error('Invalid syllabus response: material assignment references an unknown material or module')
+      }
+    }
+  }
+
+  if (expectedEpoch != null && syllabusGenerationEpoch.get(subjectId) !== expectedEpoch) {
+    throw new Error('Syllabus generation became stale; existing curriculum was preserved')
+  }
 
   const result = reconcileCurriculum(
     db,
@@ -626,20 +820,48 @@ Rules:
     actualUserId,
     parsed.material_module_assignments
   )
+  const graph = materializeCurriculumGraph(subjectId, parsed.modules, validMaterialIds)
+  db.prepare(`
+    UPDATE curriculum_generation_runs
+    SET resulting_revision = (SELECT id FROM curriculum_revisions WHERE subject_id = ? AND revision_number = ?),
+        status = 'applied', validation_score = ?, output_hash = ?, change_summary_json = ?, completed_at = datetime('now'), duration_ms = ?
+    WHERE id = ?
+  `).run(subjectId, graph.revision, graph.sourceCoverage, createHash('sha256').update(responseText).digest('hex'), JSON.stringify({ new_topic_count: result.new_topic_count, updated_topic_count: result.updated_topic_count, preserved_completed_count: result.preserved_completed_count, source_coverage: graph.sourceCoverage }), Date.now() - generationStartedAt, generationRunId)
 
   return {
     ...result,
-    processed_material_count: materials.length
-  }
+    processed_material_count: materials.length,
+    curriculum_revision: graph.revision,
+    generation_run_id: generationRunId,
+    change_summary: {
+      new_outcome_count: result.new_topic_count,
+      deepened_outcome_count: result.updated_topic_count,
+      preserved_progress_count: result.preserved_completed_count,
+      source_coverage: graph.sourceCoverage
+    }
+  } as SyllabusUpdateResult
 }
 
 /**
  * Full syllabus generation / reconciliation from ALL of a subject's materials.
  * Preserves all topic progress, completed study logs, cards, and practice problems.
  */
-async function generateFromAllMaterials(subjectId: number) {
-  const result = await reconcileSyllabusFromAI(subjectId)
-  return result.modules
+export async function generateFromAllMaterials(subjectId: number): Promise<SyllabusUpdateResult> {
+  return generateSyllabusForSubject(subjectId)
+}
+
+/** Shared initial/update path used by class creation and syllabus IPC. */
+export function generateSyllabusForSubject(subjectId: number, materialIds?: number[]): Promise<SyllabusUpdateResult> {
+  const inFlight = syllabusGenerationInFlight.get(subjectId)
+  if (inFlight) return inFlight
+  const epoch = (syllabusGenerationEpoch.get(subjectId) ?? 0) + 1
+  syllabusGenerationEpoch.set(subjectId, epoch)
+  const promise = reconcileSyllabusFromAI(subjectId, materialIds, epoch)
+    .finally(() => {
+      if (syllabusGenerationInFlight.get(subjectId) === promise) syllabusGenerationInFlight.delete(subjectId)
+    })
+  syllabusGenerationInFlight.set(subjectId, promise)
+  return promise
 }
 
 export function registerSyllabusHandlers(): void {
@@ -648,11 +870,11 @@ export function registerSyllabusHandlers(): void {
   // ── Update syllabus when new materials added ───────────────────────────
 
   ipcMain.handle('syllabus:generateFromMaterials', async (_event, subjectId: number) => {
-    return generateFromAllMaterials(subjectId)
+    return generateSyllabusForSubject(subjectId)
   })
 
   ipcMain.handle('syllabus:updateFromMaterials', async (_event, subjectId: number, materialIds?: number[]) => {
-    return updateFromMaterials(subjectId, materialIds ?? [])
+    return generateSyllabusForSubject(subjectId, materialIds ?? [])
   })
 
   // ── Reorder modules ────────────────────────────────────────────────────
@@ -721,6 +943,65 @@ export function registerSyllabusHandlers(): void {
 
     const result = reconcileCurriculum(db, subjectId, formattedModules)
     return result.modules
+  })
+
+  // ── User-managed material schedule (kept separate from AI curriculum) ──
+  ipcMain.handle('manualSyllabus:list', (_event, subjectId: number) => listManualWeeks(subjectId))
+
+  ipcMain.handle('manualSyllabus:createWeek', (_event, subjectId: number, title: string) => {
+    const cleanTitle = String(title || '').trim() || 'New Week'
+    const result = db.prepare(`
+      INSERT INTO manual_syllabus_weeks (subject_id, title, sort_order)
+      VALUES (?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM manual_syllabus_weeks WHERE subject_id = ?))
+    `).run(subjectId, cleanTitle, subjectId)
+    return listManualWeeks(subjectId).find(week => week.id === Number(result.lastInsertRowid))
+  })
+
+  ipcMain.handle('manualSyllabus:updateWeek', (_event, weekId: number, title: string) => {
+    db.prepare('UPDATE manual_syllabus_weeks SET title = ? WHERE id = ?').run(String(title || '').trim() || 'Untitled Week', weekId)
+    return { success: true }
+  })
+
+  ipcMain.handle('manualSyllabus:deleteWeek', (_event, weekId: number) => {
+    db.prepare('DELETE FROM manual_syllabus_weeks WHERE id = ?').run(weekId)
+    return { success: true }
+  })
+
+  ipcMain.handle('manualSyllabus:assignMaterial', (_event, weekId: number, materialId: number | null) => {
+    const week = db.prepare('SELECT subject_id FROM manual_syllabus_weeks WHERE id = ?').get(weekId) as { subject_id: number } | undefined
+    if (!week) throw new Error('Manual week not found')
+    if (materialId === null) {
+      return { success: true }
+    }
+    const material = db.prepare('SELECT id FROM materials WHERE id = ? AND subject_id = ?').get(materialId, week.subject_id) as { id: number } | undefined
+    if (!material) throw new Error('Material does not belong to this subject')
+    db.prepare('DELETE FROM manual_syllabus_materials WHERE material_id = ?').run(materialId)
+    db.prepare(`
+      INSERT INTO manual_syllabus_materials (week_id, material_id, sort_order)
+      VALUES (?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM manual_syllabus_materials WHERE week_id = ?))
+    `).run(weekId, materialId, weekId)
+    return { success: true }
+  })
+
+  ipcMain.handle('manualSyllabus:unassignMaterial', (_event, materialId: number) => {
+    db.prepare('DELETE FROM manual_syllabus_materials WHERE material_id = ?').run(materialId)
+    return { success: true }
+  })
+
+  ipcMain.handle('manualSyllabus:reorderWeeks', (_event, subjectId: number, weekIds: number[]) => {
+    const update = db.prepare('UPDATE manual_syllabus_weeks SET sort_order = ? WHERE id = ? AND subject_id = ?')
+    const transaction = db.transaction ? db.transaction(() => weekIds.forEach((id, index) => update.run(index, id, subjectId))) : null
+    if (transaction) transaction()
+    else weekIds.forEach((id, index) => update.run(index, id, subjectId))
+    return { success: true }
+  })
+
+  ipcMain.handle('manualSyllabus:reorderMaterials', (_event, weekId: number, materialIds: number[]) => {
+    const update = db.prepare('UPDATE manual_syllabus_materials SET sort_order = ? WHERE week_id = ? AND material_id = ?')
+    const transaction = db.transaction ? db.transaction(() => materialIds.forEach((id, index) => update.run(index, weekId, id))) : null
+    if (transaction) transaction()
+    else materialIds.forEach((id, index) => update.run(index, weekId, id))
+    return { success: true }
   })
 
   // ── Analyze deadline changes ───────────────────────────────────────────
@@ -815,7 +1096,7 @@ interface UpdateFromMaterialsResult {
   updated_topic_count?: number
 }
 
-async function updateFromMaterials(
+export async function updateFromMaterials(
   subjectId: number,
   materialIds?: number[]
 ): Promise<UpdateFromMaterialsResult> {

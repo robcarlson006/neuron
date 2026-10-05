@@ -241,5 +241,48 @@ describe('CurriculumView', () => {
     expect(screen.queryByText('New Content Added')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /study new content/i })).not.toBeInTheDocument()
   })
-})
 
+  it('shows automatic-apply changes and advisory learning metadata when provided', () => {
+    const graphModules = [{
+      ...mockModules[0],
+      topics: [{
+        ...mockModules[0].topics![0],
+        learning_outcome: 'Explain the pathway',
+        practice_activity: 'Complete a worked example',
+        mastery_criterion: 'Score 80% on retrieval',
+        source_evidence: [{ material_id: 4 }],
+        prerequisite_ids: [99]
+      }]
+    }] as any
+
+    render(
+      <CurriculumView
+        modules={graphModules}
+        subjectName="Biology 101"
+        onStartTutor={mockOnStartTutor}
+        onGenerateCards={mockOnGenerateCards}
+        onToggleTopic={mockOnToggleTopic}
+        changeSummary={{
+          revision: 3,
+          newTopicCount: 2,
+          updatedTopicCount: 1,
+          preservedCompletedCount: 4,
+          processedMaterialCount: 2,
+          sourceCoverage: 0.75,
+          recommendations: [{ title: 'Review glycolysis', detail: 'Retrieval is due today' }]
+        }}
+      />
+    )
+
+    expect(screen.getByRole('status', { name: /curriculum update summary/i })).toBeInTheDocument()
+    expect(screen.getByText(/2 new outcomes/i)).toBeInTheDocument()
+    expect(screen.getByText(/4 completed preserved/i)).toBeInTheDocument()
+    expect(screen.getByText(/75% source coverage/i)).toBeInTheDocument()
+    expect(screen.getByText(/Review glycolysis/i)).toBeInTheDocument()
+    expect(screen.getByText('Outcome')).toBeInTheDocument()
+    expect(screen.getByText('Practice')).toBeInTheDocument()
+    expect(screen.getByText('Mastery')).toBeInTheDocument()
+    expect(screen.getByText('1 source')).toBeInTheDocument()
+    expect(screen.getByText('Prereq')).toBeInTheDocument()
+  })
+})
