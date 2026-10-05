@@ -10,6 +10,8 @@ interface CurriculumViewProps {
   onStartSpacedReview?: (moduleId?: number, selectedTopics?: string[]) => void
   onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
   onToggleTopic: (topicId: number, studied: boolean) => void
+  onReorderModules?: (moduleIds: number[]) => void
+  onReorderTopics?: (moduleId: number, topicIds: number[]) => void
   loadingCards?: Record<number, boolean>
   focusTopicId?: number
 }
@@ -61,6 +63,8 @@ export default function CurriculumView({
   onStartSpacedReview,
   onGenerateCards,
   onToggleTopic,
+  onReorderModules,
+  onReorderTopics,
   loadingCards,
   focusTopicId
 }: CurriculumViewProps): React.JSX.Element {
@@ -70,6 +74,29 @@ export default function CurriculumView({
   const [modalModule, setModalModule] = useState<(SyllabusModule & { topics?: ModuleTopic[] }) | null>(null)
   const [modalInitialTopicId, setModalInitialTopicId] = useState<number | undefined>(undefined)
   const [selectedTopicsByModule, setSelectedTopicsByModule] = useState<Record<number, Set<number>>>({})
+  const [draggedModuleId, setDraggedModuleId] = useState<number | null>(null)
+
+  function moveModule(moduleId: number, direction: -1 | 1): void {
+    if (!onReorderModules) return
+    const index = modules.findIndex(module => module.id === moduleId)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= modules.length) return
+    const next = modules.map(module => module.id)
+    ;[next[index], next[target]] = [next[target], next[index]]
+    onReorderModules(next)
+  }
+
+  function moveTopic(moduleId: number, topicId: number, direction: -1 | 1): void {
+    if (!onReorderTopics) return
+    const module = modules.find(item => item.id === moduleId)
+    const topics = module?.topics || []
+    const index = topics.findIndex(topic => topic.id === topicId)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= topics.length) return
+    const next = topics.map(topic => topic.id)
+    ;[next[index], next[target]] = [next[target], next[index]]
+    onReorderTopics(moduleId, next)
+  }
 
   useEffect(() => {
     if (!focusTopicId) return
@@ -194,9 +221,33 @@ export default function CurriculumView({
           <div
             key={mod.id}
             className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden transition-all"
+            onDragOver={(event) => { if (draggedModuleId !== null) event.preventDefault() }}
+            onDrop={(event) => {
+              event.preventDefault()
+              if (draggedModuleId === null || draggedModuleId === mod.id || !onReorderModules) return
+              const next = modules.map(module => module.id)
+              const from = next.indexOf(draggedModuleId)
+              const to = next.indexOf(mod.id)
+              if (from >= 0 && to >= 0) {
+                next.splice(from, 1)
+                next.splice(to, 0, draggedModuleId)
+                onReorderModules(next)
+              }
+              setDraggedModuleId(null)
+            }}
           >
+            {onReorderModules && (
+              <div className="flex items-center justify-end gap-1 px-3 py-1 bg-slate-50/80 dark:bg-slate-900/30 border-b border-slate-100 dark:border-slate-700">
+                <span className="mr-auto text-[10px] text-slate-400">Drag module to reorder</span>
+                <button type="button" aria-label={`Move ${mod.title} up`} disabled={index === 0} onClick={() => moveModule(mod.id, -1)} className="px-1.5 py-0.5 text-xs rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↑</button>
+                <button type="button" aria-label={`Move ${mod.title} down`} disabled={index === modules.length - 1} onClick={() => moveModule(mod.id, 1)} className="px-1.5 py-0.5 text-xs rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↓</button>
+              </div>
+            )}
             {/* Module header */}
             <button
+              draggable={Boolean(onReorderModules)}
+              onDragStart={() => setDraggedModuleId(mod.id)}
+              onDragEnd={() => setDraggedModuleId(null)}
               onClick={() => toggleModule(mod.id)}
               className={`w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors
                 ${isCompleted
@@ -385,7 +436,7 @@ export default function CurriculumView({
                     </div>
 
                     <div className="space-y-1">
-                      {modTopics.map(topic => {
+                      {modTopics.map((topic, topicIndex) => {
                         const topicCompleted = Boolean(topic.completed || (topic as ModuleTopic & { studied?: boolean }).studied)
                         const isSelected = selectedSet.has(topic.id)
 
@@ -393,6 +444,30 @@ export default function CurriculumView({
                           <div
                             key={topic.id}
                             data-curriculum-topic={topic.id}
+                            draggable={Boolean(onReorderTopics)}
+                            onDragStart={() => {
+                              if (onReorderTopics) {
+                                ;(window as Window & { __neuronDraggedTopic?: { moduleId: number; topicId: number } }).__neuronDraggedTopic = { moduleId: mod.id, topicId: topic.id }
+                              }
+                            }}
+                            onDragOver={(event) => {
+                              if (onReorderTopics) event.preventDefault()
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault()
+                              const dragged = (window as Window & { __neuronDraggedTopic?: { moduleId: number; topicId: number } }).__neuronDraggedTopic
+                              if (!dragged || dragged.moduleId !== mod.id || dragged.topicId === topic.id || !onReorderTopics) return
+                              const next = modTopics.map(item => item.id)
+                              const from = next.indexOf(dragged.topicId)
+                              const to = next.indexOf(topic.id)
+                              if (from >= 0 && to >= 0) {
+                                next.splice(from, 1)
+                                next.splice(to, 0, dragged.topicId)
+                                onReorderTopics(mod.id, next)
+                              }
+                              delete (window as Window & { __neuronDraggedTopic?: { moduleId: number; topicId: number } }).__neuronDraggedTopic
+                            }}
+                            onDragEnd={() => { delete (window as Window & { __neuronDraggedTopic?: { moduleId: number; topicId: number } }).__neuronDraggedTopic }}
                             className={`flex items-center justify-between gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors ${
                               isSelected
                                 ? 'bg-violet-50 dark:bg-violet-950/30 border border-violet-200/80 dark:border-violet-800/50'
@@ -400,6 +475,7 @@ export default function CurriculumView({
                             }`}
                           >
                             <label className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer select-none">
+                              {onReorderTopics && <span className="text-slate-300 dark:text-slate-600 cursor-grab" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>}
                               <input
                                 type="checkbox"
                                 checked={isSelected}
@@ -447,6 +523,12 @@ export default function CurriculumView({
 
                             {/* Completed indicator & Retention badge with toggle option */}
                             <div className="flex items-center gap-2 flex-shrink-0">
+                              {onReorderTopics && (
+                                <div className="flex items-center gap-1">
+                                  <button type="button" aria-label={`Move ${topic.title} up`} disabled={topicIndex === 0} onClick={(e) => { e.preventDefault(); e.stopPropagation(); moveTopic(mod.id, topic.id, -1) }} className="px-1 text-[10px] rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↑</button>
+                                  <button type="button" aria-label={`Move ${topic.title} down`} disabled={topicIndex === modTopics.length - 1} onClick={(e) => { e.preventDefault(); e.stopPropagation(); moveTopic(mod.id, topic.id, 1) }} className="px-1 text-[10px] rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↓</button>
+                                </div>
+                              )}
                               {/* Flashcard Coverage Badge */}
                               {topic.card_count !== undefined && topic.card_count > 0 ? (
                                 <span

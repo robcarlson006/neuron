@@ -39,6 +39,7 @@ export const DB_SCHEMA = `
     file_size INTEGER DEFAULT NULL,
     file_sha256 TEXT DEFAULT NULL,
     relative_path TEXT DEFAULT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (subject_id) REFERENCES subjects(id)
   );
 
@@ -470,6 +471,19 @@ export const DB_SCHEMA = `
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS tutor_session_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    topic_id INTEGER,
+    topic_label TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    gap_evidence_json TEXT NOT NULL DEFAULT '[]',
+    recommended_minutes INTEGER,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tutor_session_targets_session ON tutor_session_targets(session_id, sort_order, id);
+
   CREATE TABLE IF NOT EXISTS daily_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -898,6 +912,8 @@ export const MIGRATIONS_SQL = [
   `CREATE TABLE IF NOT EXISTS tutor_task_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, concept TEXT NOT NULL, task_type TEXT NOT NULL, task_key TEXT NOT NULL, difficulty REAL NOT NULL DEFAULT 50, observations INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(subject_id, task_key), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE)`,
   `CREATE TABLE IF NOT EXISTS tutor_turn_assessments (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, student_message_id TEXT, tutor_message_id TEXT, concept TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('correct','partial','incorrect','unassessed')), score REAL, confidence REAL NOT NULL DEFAULT 0.5, assistance_level TEXT NOT NULL DEFAULT 'unassessed', task_type TEXT, task_difficulty REAL, evidence_span TEXT, misconception TEXT, followed_scaffold INTEGER, changed_goal INTEGER, source_evidence_json TEXT NOT NULL DEFAULT '[]', idempotency_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE)`,
   "CREATE INDEX IF NOT EXISTS idx_tutor_turn_assessments_session ON tutor_turn_assessments(session_id, created_at DESC)",
+  `CREATE TABLE IF NOT EXISTS tutor_teach_back_gates (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, topic_id INTEGER, concept TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','needs_revision','passed','incomplete')), attempt_count INTEGER NOT NULL DEFAULT 0, feedback TEXT, required_assessment_id INTEGER, passed_assessment_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(session_id, concept), FOREIGN KEY(session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE, FOREIGN KEY(topic_id) REFERENCES module_topics(id) ON DELETE SET NULL, FOREIGN KEY(required_assessment_id) REFERENCES tutor_turn_assessments(id) ON DELETE SET NULL, FOREIGN KEY(passed_assessment_id) REFERENCES tutor_turn_assessments(id) ON DELETE SET NULL)`,
+  "CREATE INDEX IF NOT EXISTS idx_tutor_teach_back_gates_active ON tutor_teach_back_gates(session_id, status, updated_at DESC)",
   "ALTER TABLE materials ADD COLUMN file_size INTEGER",
   "ALTER TABLE materials ADD COLUMN file_path TEXT",
   "ALTER TABLE materials ADD COLUMN tags TEXT DEFAULT ''",
@@ -980,6 +996,15 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE materials ADD COLUMN file_size INTEGER DEFAULT NULL",
   "ALTER TABLE materials ADD COLUMN file_sha256 TEXT DEFAULT NULL",
   "ALTER TABLE materials ADD COLUMN relative_path TEXT DEFAULT NULL",
+  "ALTER TABLE materials ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+  `UPDATE materials SET sort_order = (
+    SELECT COUNT(*) FROM materials newer
+    WHERE newer.subject_id = materials.subject_id
+      AND (newer.uploaded_at > materials.uploaded_at
+        OR (newer.uploaded_at = materials.uploaded_at AND newer.id > materials.id))
+  ) WHERE sort_order = 0
+    AND NOT EXISTS (SELECT 1 FROM app_meta WHERE key = 'materials_sort_order_migrated')`,
+  "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('materials_sort_order_migrated', 'v1')",
   // V4.3: Lecture audio recording & notes
   "CREATE TABLE IF NOT EXISTS lectures (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, title TEXT NOT NULL, audio_path TEXT NOT NULL, audio_mime_type TEXT NOT NULL DEFAULT 'audio/webm', duration_seconds INTEGER NOT NULL DEFAULT 0, file_size_bytes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'recording' CHECK(status IN ('recording', 'recorded', 'transcribing', 'ready', 'failed')), raw_transcript TEXT, error_message TEXT, material_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL)",
   "CREATE INDEX IF NOT EXISTS idx_lectures_subject ON lectures (subject_id)",
@@ -1190,6 +1215,18 @@ export const MIGRATIONS_SQL = [
   "ALTER TABLE tutor_sessions ADD COLUMN last_message_at INTEGER",
   "ALTER TABLE tutor_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0",
   "CREATE INDEX IF NOT EXISTS idx_tutor_sessions_subject ON tutor_sessions(subject_id, last_message_at DESC)",
+  `CREATE TABLE IF NOT EXISTS tutor_session_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    topic_id INTEGER,
+    topic_label TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    gap_evidence_json TEXT NOT NULL DEFAULT '[]',
+    recommended_minutes INTEGER,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_tutor_session_targets_session ON tutor_session_targets(session_id, sort_order, id)",
   // V5.4: Practice Problem Psychometrics & Cognitive Demands
   "ALTER TABLE practice_problems ADD COLUMN stimulus TEXT",
   "ALTER TABLE practice_problems ADD COLUMN stem_lead_in TEXT",

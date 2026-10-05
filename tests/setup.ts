@@ -139,6 +139,9 @@ const mockElectronAPI = {
   syllabusCreateTopic: jest.fn().mockResolvedValue({ id: 1 }),
   syllabusUpdateTopic: jest.fn().mockResolvedValue({ success: true }),
   syllabusDeleteTopic: jest.fn().mockResolvedValue({ success: true }),
+  syllabusReorderModules: jest.fn().mockResolvedValue({ success: true }),
+  syllabusReorderTopics: jest.fn().mockResolvedValue({ success: true }),
+  reorderMaterials: jest.fn().mockResolvedValue({ success: true }),
 
   // Library
   libraryOpenFileDialog: jest.fn().mockResolvedValue(null),

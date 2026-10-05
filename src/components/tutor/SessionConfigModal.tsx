@@ -12,6 +12,7 @@ import {
   SyllabusModule,
   ModuleTopic,
   LibraryFile,
+  GapAnalysisItem,
   GapAnalysisResult,
   QuickReviewTopic,
   DocumentAnnotation,
@@ -70,6 +71,8 @@ export default function SessionConfigModal({
   const [selectedLectureAnnotationIds, setSelectedLectureAnnotationIds] = useState<number[]>([])
   const [customTopic, setCustomTopic] = useState(initialTopic || '')
   const [quickReviewTopics, setQuickReviewTopics] = useState<QuickReviewTopic[]>([])
+  const [selectedGapKeys, setSelectedGapKeys] = useState<string[]>([])
+  const [useSuggestedGapTime, setUseSuggestedGapTime] = useState(false)
 
   // ── Config State ──
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
@@ -116,6 +119,23 @@ export default function SessionConfigModal({
       .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
       .map(t => ({ topic: t, module: mod }))
   )
+
+  const gapKey = (item: GapAnalysisItem): string => item.topicId ? `topic:${item.topicId}` : `${item.type}:${item.moduleId || 'none'}:${item.topic.toLocaleLowerCase()}`
+  const gapItems = gapAnalysis ? (gapAnalysis.items || [...gapAnalysis.struggledTopics, ...gapAnalysis.uncoveredTopics]) : []
+  const selectedGapItems = gapItems.filter(item => selectedGapKeys.includes(gapKey(item)))
+  const suggestedGapMinutes = selectedGapItems.reduce((total, item) => total + (item.recommendedMinutes || item.estimatedMinutes || 20), 0)
+
+  function selectRecommendedGaps(analysis = gapAnalysis): void {
+    if (!analysis) return
+    const all = analysis.items || [...analysis.struggledTopics, ...analysis.uncoveredTopics]
+    const recommended = analysis.recommendedTopics || []
+    const matches = all.filter(item => recommended.some(topic => topic.toLocaleLowerCase() === item.topic.toLocaleLowerCase()))
+    setSelectedGapKeys((matches.length > 0 ? matches : all.slice(0, 1)).map(gapKey))
+  }
+
+  function getGapTopicId(item: GapAnalysisItem): number | undefined {
+    return item.topicId
+  }
 
   // ── Load syllabus, materials, and gap analysis ──
   useEffect(() => {
@@ -225,6 +245,12 @@ export default function SessionConfigModal({
         const gaps = (await window.electronAPI.tutorGetGapAnalysis(subjectId, user.id)) as GapAnalysisResult
         if (isMounted) {
           setGapAnalysis(gaps)
+          const allGapItems = gaps.items || [...gaps.struggledTopics, ...gaps.uncoveredTopics]
+          const initialGap = initialTopic
+            ? allGapItems.find(item => item.topic.toLocaleLowerCase() === initialTopic.toLocaleLowerCase())
+            : undefined
+          if (initialGap) setSelectedGapKeys([gapKey(initialGap)])
+          else selectRecommendedGaps(gaps)
         }
       } catch (err) {
         console.error('Failed to load gap analysis:', err)
@@ -325,9 +351,10 @@ export default function SessionConfigModal({
       }
     } else if (studyMode === 'fill_gaps') {
       isFillGaps = true
-      gapTopics = gapAnalysis?.recommendedTopics?.slice(0, 1) || []
+      gapTopics = selectedGapItems.map(item => item.topic)
       chosenTopic = gapTopics[0] || gapAnalysis?.recommendedFocus || 'Identified Knowledge Gap'
-      chosenModuleId = gapAnalysis?.recommendedModuleId
+      chosenModuleId = selectedGapItems[0]?.moduleId || gapAnalysis?.recommendedModuleId
+      chosenTopics = gapTopics
     } else if (studyMode === 'active_recall') {
       isActiveRecall = true
       chosenTopic = 'Active Recall Drill — Rapid Q&A'
@@ -355,7 +382,7 @@ export default function SessionConfigModal({
 
     const finalDuration = selectedTime !== null
       ? selectedTime
-      : (studyMode === 'fill_gaps' && gapAnalysis?.recommendedEstimatedMinutes ? gapAnalysis.recommendedEstimatedMinutes : null)
+      : (studyMode === 'fill_gaps' && useSuggestedGapTime ? suggestedGapMinutes || gapAnalysis?.recommendedEstimatedMinutes || null : null)
 
     const config: TutorSessionConfig = {
       duration_minutes: finalDuration,
@@ -376,7 +403,21 @@ export default function SessionConfigModal({
       module_name: chosenModuleName,
       target_topic: chosenTopic,
       target_topics: chosenTopics.length > 0 ? chosenTopics : undefined,
-      target_topic_ids: isQuickReview ? quickReviewTopics.map(t => t.id).filter(id => id > 0) : undefined,
+      target_topic_ids: isQuickReview
+        ? quickReviewTopics.map(t => t.id).filter(id => id > 0)
+        : isFillGaps
+          ? selectedGapItems.map(getGapTopicId).filter((id): id is number => id !== undefined)
+          : undefined,
+      gap_topic_ids: isFillGaps
+        ? selectedGapItems.map(getGapTopicId).filter((id): id is number => id !== undefined)
+        : undefined,
+      gap_target_ids: isFillGaps ? selectedGapItems.map(item => getGapTopicId(item) ?? null) : undefined,
+      gap_evidence_by_topic_id: isFillGaps
+        ? Object.fromEntries(selectedGapItems.filter(item => item.topicId).map(item => [item.topicId, item.evidence || []]))
+        : undefined,
+      recommended_minutes_by_topic_id: isFillGaps
+        ? Object.fromEntries(selectedGapItems.filter(item => item.topicId).map(item => [item.topicId, item.recommendedMinutes || item.estimatedMinutes || 20]))
+        : undefined,
       is_fill_gaps: isFillGaps,
       gap_topics: gapTopics,
       is_active_recall: isActiveRecall,
@@ -795,58 +836,52 @@ export default function SessionConfigModal({
                     Analyzing your learning history & syllabus...
                   </div>
                 ) : gapAnalysis ? (
-                  <div className="space-y-2.5 pt-1">
-                    {gapAnalysis.struggledTopics.length > 0 && (
-                      <div>
-                        <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block mb-1">
-                          ⚠️ Struggled Topics to Reinforce
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {gapAnalysis.struggledTopics.map((item, idx) => (
-                            <span
-                              key={idx}
-                              className="text-xs px-2.5 py-1 rounded-lg bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/60 font-medium"
-                            >
-                              {item.topic}
-                            </span>
-                          ))}
+                  <div className="space-y-3 pt-1">
+                    {gapItems.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-violet-200 dark:border-violet-800 px-3 py-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                        No gaps have been detected yet. Try Syllabus or Custom study to choose a topic directly.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                          <span className="font-semibold text-violet-700 dark:text-violet-300">Select the gaps to study</span>
+                          <div className="flex gap-1.5">
+                            <button type="button" onClick={() => selectRecommendedGaps()} className="rounded-md border border-violet-200 px-2 py-1 font-medium text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:text-violet-200 dark:hover:bg-violet-900/40">Select recommended</button>
+                            <button type="button" onClick={() => setSelectedGapKeys(gapItems.map(gapKey))} className="rounded-md border border-slate-200 px-2 py-1 font-medium text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Select all</button>
+                            <button type="button" onClick={() => setSelectedGapKeys([])} className="rounded-md border border-slate-200 px-2 py-1 font-medium text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Clear</button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-
-                    {gapAnalysis.uncoveredTopics.length > 0 && (
-                      <div>
-                        <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider block mb-1">
-                          🆕 Uncovered Topics to Introduce
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {gapAnalysis.uncoveredTopics.slice(0, 5).map((item, idx) => (
-                            <span
-                              key={idx}
-                              className="text-xs px-2.5 py-1 rounded-lg bg-blue-100/80 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800/60 font-medium"
-                            >
-                              {item.topic}
-                            </span>
-                          ))}
+                        {(['struggled', 'refresh', 'uncovered'] as const).map((kind) => {
+                          const items = gapItems.filter(item => kind === 'struggled' ? item.type === 'struggled' : kind === 'uncovered' ? item.type === 'uncovered' : item.type === 'refresh')
+                          if (items.length === 0) return null
+                          const heading = kind === 'struggled' ? 'Needs attention' : kind === 'refresh' ? 'Refresh soon' : 'Not yet assessed'
+                          return (
+                            <div key={kind} className="space-y-1.5">
+                              <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{heading}</span>
+                              <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+                                {items.map((item) => {
+                                  const key = gapKey(item)
+                                  const checked = selectedGapKeys.includes(key)
+                                  return (
+                                    <label key={key} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 transition-colors ${checked ? 'border-violet-300 bg-violet-50 dark:border-violet-700 dark:bg-violet-900/30' : 'border-slate-200 bg-white/70 hover:border-violet-200 dark:border-slate-700 dark:bg-slate-800/50'}`}>
+                                      <input aria-label={`Study ${item.topic}`} type="checkbox" checked={checked} onChange={() => setSelectedGapKeys(previous => checked ? previous.filter(value => value !== key) : [...previous, key])} className="mt-0.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                                      <span className="min-w-0 flex-1">
+                                        <span className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-800 dark:text-slate-100"><span className="truncate">{item.topic}</span><span className="shrink-0 text-[10px] font-medium text-violet-600 dark:text-violet-300">~{item.recommendedMinutes || item.estimatedMinutes || 20} min</span></span>
+                                        <span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">{item.details || item.evidence?.[0]?.detail || item.moduleTitle || 'Detected from your learning history'}</span>
+                                      </span>
+                                    </label>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-violet-200/60 pt-2 dark:border-violet-800/60">
+                          <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">{selectedGapItems.length} selected · ~{suggestedGapMinutes} min suggested</span>
+                          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300"><input type="checkbox" checked={useSuggestedGapTime} onChange={event => { const checked = event.target.checked; setUseSuggestedGapTime(checked); if (checked) { setSelectedTime(suggestedGapMinutes || null); setInputValue(suggestedGapMinutes ? String(suggestedGapMinutes) : '') } else if (selectedTime === suggestedGapMinutes) { setSelectedTime(null); setInputValue('') } }} className="rounded border-slate-300 text-violet-600 focus:ring-violet-500" /> Use suggested time</label>
                         </div>
-                      </div>
+                      </>
                     )}
-
-                    <div className="pt-2 border-t border-violet-200/60 dark:border-violet-800/60 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">
-                          Target Knowledge Gap:
-                        </span>
-                        {gapAnalysis.recommendedEstimatedMinutes && (
-                          <span className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/40 px-2 py-0.5 rounded-full">
-                            ⏱️ Suggested ~{gapAnalysis.recommendedEstimatedMinutes} min
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-700 dark:text-slate-300">
-                        {gapAnalysis.recommendedFocus}
-                      </p>
-                    </div>
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1300,9 +1335,9 @@ export default function SessionConfigModal({
           <button
             type="button"
             onClick={handleStart}
-            disabled={starting}
+            disabled={starting || (studyMode === 'fill_gaps' && selectedGapItems.length === 0)}
             className={`inline-flex shrink-0 items-center justify-center rounded-xl px-5 py-2.5 text-xs font-bold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 focus-visible:ring-offset-2 ${
-              starting
+              starting || (studyMode === 'fill_gaps' && selectedGapItems.length === 0)
                 ? 'bg-violet-400 text-white cursor-not-allowed'
                 : 'bg-violet-600 hover:bg-violet-700 text-white shadow-md hover:shadow-lg'
             }`}

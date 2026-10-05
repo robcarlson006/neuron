@@ -273,9 +273,19 @@ export function reconcileCurriculum(
 
     // Execute Module and Topic Updates / Inserts
     const activeModuleIds: number[] = []
+    const plannedModuleIndex = new Map(plannedModules.map((plan, index) => [plan, index]))
+    const orderedPlannedModules = [...plannedModules].sort((a, b) => {
+      if (isInitialGeneration) return (plannedModuleIndex.get(a) || 0) - (plannedModuleIndex.get(b) || 0)
+      const aExisting = existingModules.find(module => module.id === a.existingModuleId)
+      const bExisting = existingModules.find(module => module.id === b.existingModuleId)
+      if (aExisting && bExisting) return aExisting.sort_order - bExisting.sort_order
+      if (aExisting) return -1
+      if (bExisting) return 1
+      return (plannedModuleIndex.get(a) || 0) - (plannedModuleIndex.get(b) || 0)
+    })
 
-    for (let i = 0; i < plannedModules.length; i++) {
-      const plan = plannedModules[i]
+    for (let i = 0; i < orderedPlannedModules.length; i++) {
+      const plan = orderedPlannedModules[i]
       const mod = plan.moduleData
       let moduleId: number
 
@@ -315,9 +325,20 @@ export function reconcileCurriculum(
       }
       activeModuleIds.push(moduleId)
 
-      // Re-anchor or insert topics
-      for (let j = 0; j < plan.topics.length; j++) {
-        const tp = plan.topics[j]
+      // Re-anchor or insert topics. Existing topics retain their manual
+      // relative order; newly discovered topics append after them.
+      const plannedTopicIndex = new Map(plan.topics.map((topic, index) => [topic, index]))
+      const orderedTopics = [...plan.topics].sort((a, b) => {
+        if (isInitialGeneration) return (plannedTopicIndex.get(a) || 0) - (plannedTopicIndex.get(b) || 0)
+        const aExisting = existingTopics.find(topic => topic.id === a.existingTopicId)
+        const bExisting = existingTopics.find(topic => topic.id === b.existingTopicId)
+        if (aExisting && bExisting) return aExisting.sort_order - bExisting.sort_order
+        if (aExisting) return -1
+        if (bExisting) return 1
+        return (plannedTopicIndex.get(a) || 0) - (plannedTopicIndex.get(b) || 0)
+      })
+      for (let j = 0; j < orderedTopics.length; j++) {
+        const tp = orderedTopics[j]
         if (tp.existingTopicId) {
           database.prepare(`
             UPDATE module_topics
@@ -433,11 +454,11 @@ async function reconcileSyllabusFromAI(subjectId: number, targetMaterialIds?: nu
   let materials: { id: number; filename: string; content_text: string }[]
   if (targetMaterialIds && targetMaterialIds.length > 0) {
     materials = db.prepare(
-      `SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND id IN (${targetMaterialIds.map(() => '?').join(',')})`
+      `SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND id IN (${targetMaterialIds.map(() => '?').join(',')}) ORDER BY sort_order ASC, uploaded_at DESC, id DESC`
     ).all(subjectId, ...targetMaterialIds) as typeof materials
   } else {
     materials = db.prepare(
-      'SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL'
+      'SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL ORDER BY sort_order ASC, uploaded_at DESC, id DESC'
     ).all(subjectId) as typeof materials
   }
 
@@ -637,6 +658,11 @@ export function registerSyllabusHandlers(): void {
   // ── Reorder modules ────────────────────────────────────────────────────
 
   ipcMain.handle('syllabus:reorderModules', (_event, subjectId: number, moduleIds: number[]) => {
+    const existing = db.prepare('SELECT id FROM syllabus_modules WHERE subject_id = ? ORDER BY sort_order ASC, id ASC').all(subjectId) as { id: number }[]
+    const existingIds = existing.map(row => row.id)
+    if (!Array.isArray(moduleIds) || moduleIds.length !== existingIds.length || new Set(moduleIds).size !== moduleIds.length || moduleIds.some(id => !existingIds.includes(id))) {
+      throw new Error('Module order must contain exactly the modules for this subject')
+    }
     const updateOrder = db.transaction((ids: number[]) => {
       for (let i = 0; i < ids.length; i++) {
         db.prepare('UPDATE syllabus_modules SET sort_order = ? WHERE id = ? AND subject_id = ?')
@@ -644,6 +670,21 @@ export function registerSyllabusHandlers(): void {
       }
     })
     updateOrder(moduleIds)
+    return { success: true }
+  })
+
+  ipcMain.handle('syllabus:reorderTopics', (_event, moduleId: number, topicIds: number[]) => {
+    const module = db.prepare('SELECT id FROM syllabus_modules WHERE id = ?').get(moduleId) as { id: number } | undefined
+    if (!module) throw new Error('Module not found')
+    const existing = db.prepare('SELECT id FROM module_topics WHERE module_id = ? ORDER BY sort_order ASC, id ASC').all(moduleId) as { id: number }[]
+    const existingIds = existing.map(row => row.id)
+    if (!Array.isArray(topicIds) || topicIds.length !== existingIds.length || new Set(topicIds).size !== topicIds.length || topicIds.some(id => !existingIds.includes(id))) {
+      throw new Error('Topic order must contain exactly the topics for this module')
+    }
+    db.transaction((ids: number[]) => {
+      const update = db.prepare('UPDATE module_topics SET sort_order = ? WHERE id = ? AND module_id = ?')
+      ids.forEach((id, index) => update.run(index, id, moduleId))
+    })(topicIds)
     return { success: true }
   })
 

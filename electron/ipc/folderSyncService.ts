@@ -287,9 +287,9 @@ export class FolderSyncService {
           try {
             const parsed = await parseFileToText(fullPath)
             const inserted = db.prepare(`
-              INSERT INTO materials (subject_id, filename, file_type, content_text, file_path, file_mtime, file_size, file_sha256, relative_path)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(subjectId, filename, parsed.fileType, parsed.contentText, fullPath, mtime, size, fileSha256, relPath)
+              INSERT INTO materials (subject_id, filename, file_type, content_text, file_path, file_mtime, file_size, file_sha256, relative_path, sort_order)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM materials WHERE subject_id = ?))
+            `).run(subjectId, filename, parsed.fileType, parsed.contentText, fullPath, mtime, size, fileSha256, relPath, subjectId)
             if (isRAGDatabaseReady()) {
               try { await indexMaterialById(Number((inserted as { lastInsertRowid: number | bigint }).lastInsertRowid)) } catch (indexError) { console.warn(`Failed to index ${relPath}:`, indexError) }
             }

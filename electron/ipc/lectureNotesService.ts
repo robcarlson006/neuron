@@ -163,14 +163,15 @@ class LectureNotesServiceManager {
       const filename = `Lecture - ${lecture.title}.md`
       const contentBuffer = Buffer.from(markdown, 'utf-8')
       const insertStmt = this.db.prepare(`
-        INSERT INTO materials (subject_id, filename, file_type, content_text, file_size)
-        VALUES (?, ?, 'md', ?, ?)
+        INSERT INTO materials (subject_id, filename, file_type, content_text, file_size, sort_order)
+        VALUES (?, ?, 'md', ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM materials WHERE subject_id = ?))
       `)
       const matInfo = insertStmt.run(
         lecture.subject_id,
         filename,
         markdown,
-        contentBuffer.length
+        contentBuffer.length,
+        lecture.subject_id
       ) as { lastInsertRowid: number | bigint }
       const materialId = Number(matInfo.lastInsertRowid)
 

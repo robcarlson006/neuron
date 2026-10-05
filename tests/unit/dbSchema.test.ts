@@ -135,4 +135,19 @@ describe('Database schema (real SQLite)', () => {
     expect(mat.module_id).toBeNull()
     db.close()
   })
+
+  it('materials exposes a persistent sort order for manual ordering', () => {
+    const db = createFreshDatabase()
+    const userId = db.prepare('INSERT INTO users (name) VALUES (?)').run('Dana').lastInsertRowid
+    const subjectId = db.prepare('INSERT INTO subjects (user_id, name, status) VALUES (?, ?, ?)').run(userId, 'Chemistry', 'active').lastInsertRowid
+    const first = db.prepare('INSERT INTO materials (subject_id, filename, file_type, content_text, sort_order) VALUES (?, ?, ?, ?, ?)').run(subjectId, 'first.pdf', 'pdf', 'one', 0).lastInsertRowid
+    const second = db.prepare('INSERT INTO materials (subject_id, filename, file_type, content_text, sort_order) VALUES (?, ?, ?, ?, ?)').run(subjectId, 'second.pdf', 'pdf', 'two', 1).lastInsertRowid
+
+    db.prepare('UPDATE materials SET sort_order = ? WHERE id = ?').run(0, second)
+    db.prepare('UPDATE materials SET sort_order = ? WHERE id = ?').run(1, first)
+    const ordered = db.prepare('SELECT id FROM materials WHERE subject_id = ? ORDER BY sort_order ASC, id ASC').all(subjectId) as Array<{ id: number }>
+
+    expect(ordered.map(row => row.id)).toEqual([second, first])
+    db.close()
+  })
 })

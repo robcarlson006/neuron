@@ -39,6 +39,8 @@ import type {
   PacingStatus,
   TutorTopicMemory,
   TutorSessionEvaluation,
+  TutorTeachBackGate,
+  TutorPhaseTransitionResult,
   GapAnalysisResult,
   GapAnalysisItem,
   QuickReviewTopic,
@@ -56,6 +58,27 @@ export function setTutorDatabase(database: Database.Database): void {
   } catch {
     // already exists
   }
+  // Keep handler tests and databases created before this feature compatible;
+  // normal app startup also creates this table through the schema migration.
+  db.exec(`CREATE TABLE IF NOT EXISTS tutor_session_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    topic_id INTEGER,
+    topic_label TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    gap_evidence_json TEXT NOT NULL DEFAULT '[]',
+    recommended_minutes INTEGER,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL
+  ); CREATE INDEX IF NOT EXISTS idx_tutor_session_targets_session ON tutor_session_targets(session_id, sort_order, id);`)
+  db.exec(`CREATE TABLE IF NOT EXISTS tutor_teach_back_gates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, topic_id INTEGER, concept TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','needs_revision','passed','incomplete')),
+    attempt_count INTEGER NOT NULL DEFAULT 0, feedback TEXT, required_assessment_id INTEGER, passed_assessment_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(session_id, concept), FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL
+  ); CREATE INDEX IF NOT EXISTS idx_tutor_teach_back_gates_active ON tutor_teach_back_gates(session_id, status, updated_at DESC);`)
 }
 
 /**
@@ -92,6 +115,69 @@ function ensureConversationRecord(sessionId: number): void {
   } catch {
     // FK constraint may not be active on existing databases — no-op is fine
   }
+}
+
+type TeachBackGateRow = {
+  id: number
+  session_id: number
+  topic_id: number | null
+  concept: string
+  status: 'pending' | 'needs_revision' | 'passed' | 'incomplete'
+  attempt_count: number
+  feedback: string | null
+  required_assessment_id: number | null
+  passed_assessment_id: number | null
+  created_at: string
+  updated_at: string
+}
+
+function toTeachBackGate(row: TeachBackGateRow): TutorTeachBackGate {
+  return {
+    id: row.id, sessionId: row.session_id, topicId: row.topic_id, concept: row.concept,
+    status: row.status, attemptCount: row.attempt_count, feedback: row.feedback,
+    requiredAssessmentId: row.required_assessment_id, passedAssessmentId: row.passed_assessment_id,
+    createdAt: row.created_at, updatedAt: row.updated_at
+  }
+}
+
+function getActiveTeachBackGate(sessionId: number): TutorTeachBackGate | null {
+  const row = db.prepare(`SELECT * FROM tutor_teach_back_gates
+    WHERE session_id = ? AND status IN ('pending', 'needs_revision')
+    ORDER BY updated_at DESC, id DESC LIMIT 1`).get(sessionId) as TeachBackGateRow | undefined
+  return row ? toTeachBackGate(row) : null
+}
+
+export function evaluateTutorPhaseTransition(
+  currentPhase: string,
+  requestedPhase: string,
+  activeGate: TutorTeachBackGate | null
+): TutorPhaseTransitionResult {
+  const validPhases = new Set(['structured_qa', 'socratic', 'summary'])
+  if (!validPhases.has(requestedPhase)) throw new Error('Invalid tutor phase transition')
+
+  const isActiveGate = activeGate?.status === 'pending' || activeGate?.status === 'needs_revision'
+  const isAdvancingPhase = currentPhase !== requestedPhase && (requestedPhase === 'socratic' || requestedPhase === 'summary')
+  if (isActiveGate && isAdvancingPhase) {
+    return { success: false, blockedByTeachBack: true, gate: activeGate }
+  }
+  return { success: true, gate: activeGate }
+}
+
+function resolveTopicId(sessionId: number, concept: string): number | null {
+  const target = db.prepare(`SELECT topic_id FROM tutor_session_targets
+    WHERE session_id = ? AND LOWER(topic_label) = LOWER(?) LIMIT 1`).get(sessionId, concept) as { topic_id: number | null } | undefined
+  return target?.topic_id ?? null
+}
+
+function createTeachBackGate(sessionId: number, concept: string): TutorTeachBackGate {
+  const cleanConcept = concept.trim() || 'Current concept'
+  const now = new Date().toISOString()
+  db.prepare(`INSERT INTO tutor_teach_back_gates (session_id, topic_id, concept, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'pending', ?, ?)
+    ON CONFLICT(session_id, concept) DO UPDATE SET
+      status = CASE WHEN tutor_teach_back_gates.status = 'passed' THEN 'pending' ELSE tutor_teach_back_gates.status END,
+      feedback = NULL, updated_at = excluded.updated_at`).run(sessionId, resolveTopicId(sessionId, cleanConcept), cleanConcept, now, now)
+  return getActiveTeachBackGate(sessionId)!
 }
 
 // ── Time context builder ─────────────────────────────────────────────────
@@ -565,33 +651,78 @@ export function computeGapAnalysis(
   `).all(subjectId, userId) as { concept: string; mastery_prob: number }[]
 
   const studiedTopics = database.prepare(`
-    SELECT topic_id FROM module_topic_study_log
-    WHERE user_id = ?
-  `).all(userId) as { topic_id: number }[]
+    SELECT sl.topic_id FROM module_topic_study_log sl
+    JOIN module_topics mt ON mt.id = sl.topic_id
+    JOIN syllabus_modules sm ON sm.id = mt.module_id
+    WHERE sl.user_id = ? AND sm.subject_id = ?
+  `).all(userId, subjectId) as { topic_id: number }[]
   const studiedTopicIds = new Set(studiedTopics.map(s => s.topic_id))
 
   // Build struggles list (Priority 1)
   const struggledItems: GapAnalysisItem[] = []
   const strugglingMemories = memories.filter(m => m.mastery_level === 'struggling' || m.mastery_level === 'developing')
   for (const m of strugglingMemories) {
+    const matchedTopic = topics.find(t => t.title.toLowerCase() === m.topic.toLowerCase())
+    const isStruggling = m.mastery_level === 'struggling'
     struggledItems.push({
       type: 'struggled',
       topic: m.topic,
       details: m.struggles || 'Struggled with this concept in a previous session',
       priority: 1,
-      estimatedMinutes: m.mastery_level === 'struggling' ? 25 : 20
+      estimatedMinutes: isStruggling ? 25 : 20,
+      recommendedMinutes: isStruggling ? 25 : 20,
+      topicId: matchedTopic?.id,
+      moduleId: matchedTopic?.module_id,
+      moduleTitle: modules.find(mod => mod.id === matchedTopic?.module_id)?.title,
+      gapKinds: [isStruggling ? 'struggling' : 'low_mastery'],
+      evidence: [{ kind: isStruggling ? 'struggling' : 'low_mastery', detail: m.struggles || `Recorded ${m.mastery_level} performance` }]
     })
   }
   for (const cm of conceptMastery) {
     if (cm.mastery_prob < 0.5 && !struggledItems.some(i => i.topic.toLowerCase() === cm.concept.toLowerCase())) {
+      const matchedTopic = topics.find(t => t.title.toLowerCase() === cm.concept.toLowerCase())
+      const minutes = cm.mastery_prob < 0.35 ? 25 : 20
       struggledItems.push({
         type: 'struggled',
         topic: cm.concept,
         details: `Low mastery level (${Math.round(cm.mastery_prob * 100)}%)`,
         priority: 1,
-        estimatedMinutes: cm.mastery_prob < 0.35 ? 25 : 20
+        estimatedMinutes: minutes,
+        recommendedMinutes: minutes,
+        topicId: matchedTopic?.id,
+        moduleId: matchedTopic?.module_id,
+        moduleTitle: modules.find(mod => mod.id === matchedTopic?.module_id)?.title,
+        gapKinds: ['low_mastery'],
+        evidence: [{ kind: 'low_mastery', detail: `Estimated mastery ${Math.round(cm.mastery_prob * 100)}%` }]
       })
     }
+  }
+
+  // Retention decay is a separate, lower-confidence gap signal: a topic can
+  // be well understood but still due for a spaced retrieval check.
+  try {
+    const retention = getTopicsRetention(database, userId, subjectId)
+    for (const metric of retention.values()) {
+      if (metric.retentionStatus !== 'fading' && metric.retentionStatus !== 'overdue') continue
+      if (struggledItems.some(item => item.topicId === metric.topicId)) continue
+      const minutes = metric.estimatedMinutes || (metric.retentionStatus === 'overdue' ? 25 : 15)
+      struggledItems.push({
+        type: 'refresh',
+        topic: metric.topicTitle,
+        details: metric.retentionStatus === 'overdue' ? `Overdue spaced retrieval check (${metric.daysOverdue} day${metric.daysOverdue === 1 ? '' : 's'})` : 'Retention is fading; a retrieval check is due soon',
+        priority: metric.retentionStatus === 'overdue' ? 1 : 2,
+        estimatedMinutes: minutes,
+        recommendedMinutes: minutes,
+        topicId: metric.topicId,
+        moduleId: metric.moduleId,
+        moduleTitle: metric.moduleTitle,
+        gapKinds: ['refresh'],
+        evidence: [{ kind: 'refresh', detail: `Retrievability ${Math.round(metric.retrievability * 100)}%` }]
+      })
+    }
+  } catch {
+    // Older databases may not have Topic-SRS rows yet; syllabus and tutor
+    // evidence remain sufficient to populate the gap inventory.
   }
 
   // Build uncovered list (Priority 2)
@@ -602,7 +733,8 @@ export function computeGapAnalysis(
   for (const t of topics) {
     const mod = modules.find(m => m.id === t.module_id)
     const isStudied = studiedTopicIds.has(t.id) || memoryTopicsLower.has(t.title.toLowerCase())
-    if (!isStudied) {
+    const hasEvidence = struggledItems.some(item => item.topicId === t.id || item.topic.toLowerCase() === t.title.toLowerCase())
+    if (!isStudied && !hasEvidence) {
       uncoveredItems.push({
         type: 'uncovered',
         topic: t.title,
@@ -610,7 +742,11 @@ export function computeGapAnalysis(
         moduleTitle: mod?.title,
         details: mod ? `From module: ${mod.title}` : undefined,
         priority: 2,
-        estimatedMinutes: 20
+        estimatedMinutes: 20,
+        recommendedMinutes: 20,
+        topicId: t.id,
+        gapKinds: ['unseen'],
+        evidence: [{ kind: 'unseen', detail: 'Not yet assessed in Tutor' }]
       })
     }
   }
@@ -624,10 +760,13 @@ export function computeGapAnalysis(
           topic: mod.title,
           moduleId: mod.id,
           moduleTitle: mod.title,
-          details: 'Syllabus module not yet covered in tutor',
-          priority: 2,
-          estimatedMinutes: 20
-        })
+        details: 'Syllabus module not yet covered in tutor',
+        priority: 2,
+        estimatedMinutes: 20,
+        recommendedMinutes: 20,
+        gapKinds: ['unseen'],
+        evidence: [{ kind: 'unseen', detail: 'Not yet assessed in Tutor' }]
+      })
       }
     }
   }
@@ -639,7 +778,26 @@ export function computeGapAnalysis(
   let recommendedMaterialId: number | undefined
   let recommendedEstimatedMinutes = 20
 
-  const topGap = struggledItems[0] || uncoveredItems[0]
+  const merged = new Map<string, GapAnalysisItem>()
+  for (const item of [...struggledItems, ...uncoveredItems]) {
+    const key = item.topicId ? `topic:${item.topicId}` : `${item.type}:${item.topic.toLowerCase()}`
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, item)
+      continue
+    }
+    existing.priority = Math.min(existing.priority, item.priority) as 1 | 2 | 3
+    existing.estimatedMinutes = Math.max(existing.estimatedMinutes || 0, item.estimatedMinutes || 0)
+    existing.recommendedMinutes = Math.max(existing.recommendedMinutes || 0, item.recommendedMinutes || 0)
+    existing.gapKinds = Array.from(new Set([...(existing.gapKinds || []), ...(item.gapKinds || [])])) as GapAnalysisItem['gapKinds']
+    existing.evidence = [...(existing.evidence || []), ...(item.evidence || [])]
+    existing.details = existing.details || item.details
+  }
+  const allItems = Array.from(merged.values()).sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority
+    return a.topic.localeCompare(b.topic)
+  })
+  const topGap = allItems[0]
 
   if (topGap) {
     recommendedTopics.push(topGap.topic)
@@ -649,6 +807,8 @@ export function computeGapAnalysis(
 
     if (topGap.type === 'struggled') {
       recommendedFocus = `Targeted Knowledge Gap: Reinforce struggled topic "${topGap.topic}".`
+    } else if (topGap.type === 'refresh') {
+      recommendedFocus = `Targeted Knowledge Gap: Refresh fading retention for "${topGap.topic}".`
     } else {
       recommendedFocus = `Targeted Knowledge Gap: Master unstudied topic "${topGap.topic}".`
     }
@@ -663,12 +823,13 @@ export function computeGapAnalysis(
     }
   }
 
-  const totalGapsCount = struggledItems.length + uncoveredItems.length
+  const totalGapsCount = allItems.length
   const hasHistory = memories.length > 0 || conceptMastery.length > 0
 
   return {
-    struggledTopics: struggledItems,
-    uncoveredTopics: uncoveredItems,
+    items: allItems,
+    struggledTopics: allItems.filter(item => item.type === 'struggled'),
+    uncoveredTopics: allItems.filter(item => item.type === 'uncovered'),
     recommendedFocus,
     recommendedTopics,
     recommendedModuleId,
@@ -839,6 +1000,14 @@ Return STRICT JSON ONLY, no extra text, in this format:
   }
 
   const now = new Date().toISOString()
+
+  // Only a passed teach-back can promote a concept to a session strength or
+  // downstream mastery evidence. Ordinary correct answers remain useful turn
+  // evidence, but must not complete a concept by themselves.
+  const passedTeachBackConcepts = new Set((database.prepare(`
+    SELECT concept FROM tutor_teach_back_gates WHERE session_id = ? AND status = 'passed'
+  `).all(sessionId) as Array<{ concept: string }>).map(row => row.concept.trim().toLowerCase()))
+  evaluation.strengths = evaluation.strengths.filter(strength => passedTeachBackConcepts.has(strength.trim().toLowerCase()))
 
   // Save session evaluation
   database.prepare(`
@@ -1355,7 +1524,7 @@ export function registerTutorHandlers(): void {
   // TUTOR SESSION CRUD
   // ═══════════════════════════════════════════════════════════════════════════
 
-  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number | boolean; title?: string }) => {
+  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number | boolean; title?: string; target_topic_ids?: number[]; target_topics?: string[]; gap_target_ids?: Array<number | null>; gap_evidence_by_topic_id?: Record<number, unknown>; recommended_minutes_by_topic_id?: Record<number, number> }) => {
     const now = new Date().toISOString()
     const nowMs = Date.now()
     // Use null for subject when 0 (general chat) — FK allows null
@@ -1379,7 +1548,22 @@ export function registerTutorHandlers(): void {
       initialTitle,
       nowMs
     )
-    return db.prepare('SELECT * FROM tutor_sessions WHERE id = ?').get(result.lastInsertRowid)
+    const sessionId = Number(result.lastInsertRowid)
+    const targetIds = Array.isArray(config?.gap_target_ids)
+      ? config.gap_target_ids
+      : (Array.isArray(config?.target_topic_ids) ? config.target_topic_ids : [])
+    const targetLabels = Array.isArray(config?.target_topics) ? config.target_topics : []
+    const insertTarget = db.prepare(`INSERT INTO tutor_session_targets (session_id, topic_id, topic_label, sort_order, gap_evidence_json, recommended_minutes) VALUES (?, ?, ?, ?, ?, ?)`)
+    const insertTargets = db.transaction(() => {
+      targetLabels.forEach((label, index) => {
+        const topicId = typeof targetIds[index] === 'number' ? targetIds[index] : null
+        const evidence = topicId !== null ? config?.gap_evidence_by_topic_id?.[topicId] : undefined
+        const minutes = topicId !== null ? config?.recommended_minutes_by_topic_id?.[topicId] : undefined
+        insertTarget.run(sessionId, topicId, String(label), index, JSON.stringify(evidence || []), minutes ?? null)
+      })
+    })
+    if (targetLabels.length > 0) insertTargets()
+    return db.prepare('SELECT * FROM tutor_sessions WHERE id = ?').get(sessionId)
   })
 
   ipcMain.handle('tutor:getSession', (_event, sessionId: number) => {
@@ -1398,7 +1582,9 @@ export function registerTutorHandlers(): void {
       created_at: string
     }[]
 
-    return { session, messages }
+    const targets = db.prepare('SELECT * FROM tutor_session_targets WHERE session_id = ? ORDER BY sort_order ASC, id ASC').all(sessionId)
+    const teachBackGates = db.prepare('SELECT * FROM tutor_teach_back_gates WHERE session_id = ? ORDER BY updated_at DESC, id DESC').all(sessionId) as TeachBackGateRow[]
+    return { session, messages, targets, teachBackGates: teachBackGates.map(toTeachBackGate) }
   })
 
   ipcMain.handle('tutor:listSessions', (_event, subjectId?: number | null, limit: number = 50) => {
@@ -1446,9 +1632,15 @@ export function registerTutorHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('tutor:updateSessionPhase', (_event, sessionId: number, phase: string) => {
+  ipcMain.handle('tutor:updateSessionPhase', (_event, sessionId: number, phase: string): TutorPhaseTransitionResult => {
+    const session = db.prepare('SELECT phase FROM tutor_sessions WHERE id = ?').get(sessionId) as { phase: string } | undefined
+    if (!session) throw new Error('Tutor session not found')
+
+    const result = evaluateTutorPhaseTransition(session.phase, phase, getActiveTeachBackGate(sessionId))
+    if (!result.success) return result
+
     db.prepare('UPDATE tutor_sessions SET phase = ? WHERE id = ?').run(phase, sessionId)
-    return { success: true }
+    return result
   })
 
   ipcMain.handle('tutor:updateSessionDuration', (_event, sessionId: number, durationMinutes: number | null) => {
@@ -1458,6 +1650,8 @@ export function registerTutorHandlers(): void {
 
   ipcMain.handle('tutor:endSession', async (_event, sessionId: number, summary?: string, options?: { targetTopics?: string[]; targetTopicIds?: number[]; moduleId?: number }) => {
     const now = new Date().toISOString()
+    db.prepare(`UPDATE tutor_teach_back_gates SET status = 'incomplete', updated_at = ?
+      WHERE session_id = ? AND status IN ('pending', 'needs_revision')`).run(now, sessionId)
     db.prepare(`
       UPDATE tutor_sessions SET phase = 'complete', summary = ?, ended_at = ? WHERE id = ?
     `).run(summary || null, now, sessionId)
@@ -1825,6 +2019,7 @@ Category tags should clearly specify the purpose:
     // A failed or ambiguous assessment is deliberately harmless: it is stored
     // as unassessed and cannot move the learner model.
     let assessmentId: number | undefined
+    let activeTeachBackGate = params.sessionType === 'tutor' ? getActiveTeachBackGate(params.sessionId) : null
     let adaptiveState: import('../../src/types').AdaptiveConceptState | null = null
     if (userId && !isFirstTurn) {
       const previousTutorMessage = [...(params.conversationHistory || [])].reverse().find(message => message.role === 'assistant')
@@ -1835,12 +2030,22 @@ Category tags should clearly specify the purpose:
         if (previousTutorMessage && apiKey) {
           const assessmentRaw = await callAIMessages([
             { role: 'system', content: 'You are a conservative educational assessment service. Return only valid JSON.' },
-            { role: 'user', content: buildTutorAssessmentPrompt(previousTutorMessage.content, params.message, targetConcept) }
+            { role: 'user', content: buildTutorAssessmentPrompt(previousTutorMessage.content, params.message, activeTeachBackGate?.concept || targetConcept, { isTeachBack: Boolean(activeTeachBackGate) }) }
           ], { ...aiConfig, apiKey }, { type: 'json_object' })
-          const assessment = parseTutorAssessment(assessmentRaw, params.sessionId, targetConcept, studentMessageKey, params.studentMessageId)
+          const assessment = parseTutorAssessment(assessmentRaw, params.sessionId, activeTeachBackGate?.concept || targetConcept, studentMessageKey, params.studentMessageId)
+          if (activeTeachBackGate) assessment.taskType = 'teach_back'
           const recorded = new LearnerMemoryService(db).recordTutorAssessment(assessment)
           assessmentId = recorded.id
           adaptiveState = recorded.state
+          if (activeTeachBackGate && !recorded.duplicate) {
+            const passed = assessment.teachBackStatus === 'passed' && assessment.outcome === 'correct' && assessment.ownWords === true
+            const feedback = passed ? null : (assessment.missingElements?.join('; ') || assessment.misconception || 'Explain the central mechanism in your own words and include one correct example or implication.')
+            db.prepare(`UPDATE tutor_teach_back_gates SET status = ?, attempt_count = attempt_count + 1,
+              feedback = ?, passed_assessment_id = ?, updated_at = ? WHERE id = ?`).run(
+              passed ? 'passed' : 'needs_revision', feedback, passed ? recorded.id : null, new Date().toISOString(), activeTeachBackGate.id
+            )
+            activeTeachBackGate = getActiveTeachBackGate(params.sessionId)
+          }
         }
       } catch (assessmentError) {
         console.warn('Tutor answer assessment unavailable; continuing without adaptive update:', assessmentError)
@@ -1910,7 +2115,15 @@ Category tags should clearly specify the purpose:
       params.durationMinutes,
       isAdaptive
     )
-    const adaptiveDecisionBlock = isAdaptive ? [
+    const teachBackBlock = activeTeachBackGate ? [
+      '',
+      'MANDATORY TEACH-BACK GATE (server-enforced):',
+      `- The learner must still explain "${activeTeachBackGate.concept}" in their own words before any new concept, phase transition, summary, or Quick Review advancement.`,
+      activeTeachBackGate.feedback ? `- Give concise feedback first: ${activeTeachBackGate.feedback}` : '- Ask the learner to teach the central mechanism and one example or implication back to you.',
+      '- Stay on this concept. Do not accept a request to move on, skip, summarize mastery, or switch topics.',
+      ''
+    ].join('\n') : ''
+    const adaptiveDecisionBlock = isAdaptive && !activeTeachBackGate ? [
       '',
       'ADAPTIVE DECISION CONTEXT (policy-controlled; do not expose raw scores):',
       `- Current challenge band: Level ${adaptiveDecision.visibleLevel} of 5`,
@@ -2079,7 +2292,7 @@ Category tags should clearly specify the purpose:
     }
 
     // Append all context blocks to syllabusContext
-    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + adaptiveDecisionBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + srsWarmupBlock + '\n' + materialContextBlock
+    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + adaptiveDecisionBlock + '\n' + teachBackBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + srsWarmupBlock + '\n' + materialContextBlock
 
     // Use the same bounded evidence seam as the grounded helper. This keeps
     // tutor answers aligned with the selected class/material instead of relying
@@ -2162,8 +2375,9 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
    - Never mark an answer as "completely wrong" when it is conceptually right or logically entails the correct answer.
    - Distinguish true misconceptions from alternative phrasings, informal explanations, or implied deductions.
 5. Give crisp, specific corrective feedback (affirming what was right, highlighting what was missed) grounded in the source materials.
-6. CONTINUOUS ADVANCEMENT: When the student has mastered a concept, smoothly elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or advance to the next syllabus subtopic. Never end early.
-7. FORMATTING:
+6. TEACH-BACK PROTOCOL: Whenever you explain or correct a concept, finish the visible response by asking the learner to explain it back in their own words, including the mechanism and one example or implication. Append exactly one hidden control marker on its own final line: [TEACH_BACK: canonical concept name]. Do not add this marker for a question-only turn.
+7. CONTINUOUS ADVANCEMENT: A concept is not mastered until the learner passes the teach-back gate. Only then elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or the next syllabus subtopic. Never end early.
+8. FORMATTING:
    - Use LaTeX for mathematical formulas, variables, and equations ($...$ inline, $$...$$ standalone, e.g. $P$, $Q$, $E = mc^2$, $(1, 2)$). Do NOT wrap currency amounts like $5 or $3 in LaTeX math — write currency as standard plain text ($5, $3).
    - ZERO-DEFECT TABLES: When presenting payoff matrices, comparison matrices, econometric regressions, financial schedules, or summary data, format them as clean Markdown tables (| Col 1 | Col 2 |) with each row on a new line. For numerical schedules, verify that vertical column sums match totals. For econometric tables, format clustered standard errors in parentheses directly below each coefficient and report significance markers ($^*p < 0.10, ^{**}p < 0.05, ^{***}p < 0.01$).
    - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):
@@ -2185,8 +2399,9 @@ PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 6. Ask them to connect concepts across different sections of the uploaded material.
 7. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
 8. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
-9. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
-10. FORMATTING:
+9. Whenever you explain or correct a concept, end by asking the learner to teach it back in their own words with the mechanism and one example or implication, then append [TEACH_BACK: canonical concept name] on its own final line. Do not add this marker for a question-only turn.
+10. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
+11. FORMATTING:
    - When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, coordinates $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$. Do not wrap plain currency ($5, $10) in LaTeX.
    - When presenting payoff matrices, comparisons, econometric models, or tabular data, use clean Markdown tables with standard markdown table syntax (| Col 1 | Col 2 |) with each row on a new line and verified footing calculations.
    - INTERACTIVE GRAPHS & VISUALIZATIONS (Vega-Lite):
@@ -2259,6 +2474,13 @@ PEDAGOGICAL METHOD — Session Summary Phase:
 
       // Apply post-processing cleanup to fix garbled text
       fullResponse = cleanupAIResponse(fullResponse)
+      // The marker is an authoring protocol, never learner-facing. It opens a
+      // durable gate only for structured Tutor sessions after an explanation.
+      const teachBackMarker = /\[TEACH_BACK:\s*([^\]]+)\]/i.exec(fullResponse)
+      if (params.sessionType === 'tutor' && teachBackMarker?.[1] && !activeTeachBackGate) {
+        activeTeachBackGate = createTeachBackGate(params.sessionId, teachBackMarker[1])
+      }
+      fullResponse = fullResponse.replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
       const verification = verifyTutorAnswer(fullResponse, contextPack.evidence)
       if (verification.needsAbstention) {
         fullResponse += '\n\nI could not verify one or more source references against the selected material, so please treat those claims as unconfirmed.'
@@ -2281,6 +2503,7 @@ PEDAGOGICAL METHOD — Session Summary Phase:
           assessmentId,
           retentionStatus: adaptiveDecision.retentionStatus,
           uncertainty: adaptiveDecision.uncertainty,
+          teachBackGate: activeTeachBackGate,
           budget: contextPack.budget
         })
       })
@@ -3250,15 +3473,15 @@ The previous response was rejected because it did not produce exactly ${totalMin
 
     const now = new Date().toISOString()
     const result = db.prepare(`
-      INSERT INTO materials (subject_id, filename, file_type, content_text, file_size, file_path, uploaded_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(subjectId, filename, fileType, contentText, fileSize || null, destPath || filePath, now)
+      INSERT INTO materials (subject_id, filename, file_type, content_text, file_size, file_path, uploaded_at, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM materials WHERE subject_id = ?))
+    `).run(subjectId, filename, fileType, contentText, fileSize || null, destPath || filePath, now, subjectId)
 
     return db.prepare('SELECT * FROM materials WHERE id = ?').get(result.lastInsertRowid)
   })
 
   ipcMain.handle('library:getFiles', (_event, subjectId: number) => {
-    return db.prepare('SELECT * FROM materials WHERE subject_id = ? ORDER BY uploaded_at DESC').all(subjectId)
+    return db.prepare('SELECT * FROM materials WHERE subject_id = ? ORDER BY sort_order ASC, uploaded_at DESC, id DESC').all(subjectId)
   })
 
   ipcMain.handle('library:getFileContent', (_event, fileId: number) => {

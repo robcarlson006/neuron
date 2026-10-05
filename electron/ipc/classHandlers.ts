@@ -54,8 +54,8 @@ export function registerClassHandlers(): void {
     const savedMaterials: { id: number; filename: string; fileType: string }[] = []
     if (data.materials?.length > 0) {
       const insertMaterial = db.prepare(`
-        INSERT INTO materials (subject_id, filename, file_type, content_text, uploaded_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO materials (subject_id, filename, file_type, content_text, uploaded_at, sort_order)
+        VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM materials WHERE subject_id = ?))
       `)
 
       for (const material of data.materials) {
@@ -64,7 +64,8 @@ export function registerClassHandlers(): void {
           material.filename,
           material.fileType,
           material.contentText,
-          new Date().toISOString()
+          new Date().toISOString(),
+          subjectId
         )
         savedMaterials.push({
           id: result.lastInsertRowid as number,
@@ -140,8 +141,8 @@ export function registerClassHandlers(): void {
     if (!subject) throw new Error('Subject not found')
 
     const insertMaterial = db.prepare(`
-      INSERT INTO materials (subject_id, filename, file_type, content_text, uploaded_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO materials (subject_id, filename, file_type, content_text, uploaded_at, sort_order)
+      VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM materials WHERE subject_id = ?))
     `)
 
     const savedMaterials: { id: number; filename: string }[] = []
@@ -151,7 +152,8 @@ export function registerClassHandlers(): void {
         material.filename,
         material.fileType,
         material.contentText,
-        new Date().toISOString()
+        new Date().toISOString(),
+        subjectId
       )
       savedMaterials.push({
         id: result.lastInsertRowid as number,
@@ -181,7 +183,7 @@ async function generateSyllabusForClass(subjectId: number): Promise<unknown[]> {
   if (!subject) throw new Error('Subject not found')
 
   const materials = db.prepare(
-    'SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL'
+    'SELECT id, filename, content_text FROM materials WHERE subject_id = ? AND content_text IS NOT NULL ORDER BY sort_order ASC, uploaded_at DESC, id DESC'
   ).all(subjectId) as { id: number; filename: string; content_text: string }[]
 
   if (materials.length === 0) throw new Error('No materials found')

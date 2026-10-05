@@ -44,6 +44,22 @@ import type {
 
 let db: Database.Database
 
+export function reorderMaterials(database: Database.Database, subjectId: number, materialIds: number[]): { success: boolean } {
+  if (!Number.isInteger(subjectId) || !Array.isArray(materialIds) || materialIds.some(id => !Number.isInteger(id))) {
+    throw new Error('Invalid material order')
+  }
+  const existing = database.prepare('SELECT id FROM materials WHERE subject_id = ? ORDER BY sort_order ASC, id ASC').all(subjectId) as { id: number }[]
+  const existingIds = existing.map(row => row.id)
+  if (materialIds.length !== existingIds.length || new Set(materialIds).size !== materialIds.length || materialIds.some(id => !existingIds.includes(id))) {
+    throw new Error('Material order must contain exactly the materials for this subject')
+  }
+  database.transaction((ids: number[]) => {
+    const update = database.prepare('UPDATE materials SET sort_order = ? WHERE id = ? AND subject_id = ?')
+    ids.forEach((id, index) => update.run(index, id, subjectId))
+  })(materialIds)
+  return { success: true }
+}
+
 export function setDatabase(database: Database.Database): void {
   db = database
 }
@@ -450,7 +466,7 @@ export function registerDbHandlers(): void {
 
   // Materials handlers
   ipcMain.handle('db:getMaterials', (_event, subjectId: number) => {
-    return db.prepare('SELECT * FROM materials WHERE subject_id = ? ORDER BY uploaded_at DESC').all(subjectId)
+    return db.prepare('SELECT * FROM materials WHERE subject_id = ? ORDER BY sort_order ASC, uploaded_at DESC, id DESC').all(subjectId)
   })
 
   ipcMain.handle('db:getMaterial', (_event, materialId: number) => {
@@ -459,8 +475,9 @@ export function registerDbHandlers(): void {
 
   ipcMain.handle('db:saveMaterial', async (_event, material: { subject_id: number; filename: string; file_type: string; content_text: string; file_path?: string | null }) => {
     const result = db.prepare(
-      'INSERT INTO materials (subject_id, filename, file_type, content_text, file_path, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(material.subject_id, material.filename, material.file_type, material.content_text, material.file_path || null, new Date().toISOString())
+      `INSERT INTO materials (subject_id, filename, file_type, content_text, file_path, uploaded_at, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM materials WHERE subject_id = ?))`
+    ).run(material.subject_id, material.filename, material.file_type, material.content_text, material.file_path || null, new Date().toISOString(), material.subject_id)
     try {
       if (isRAGDatabaseReady()) await indexMaterialById(Number(result.lastInsertRowid))
     } catch (error) {
@@ -469,6 +486,10 @@ export function registerDbHandlers(): void {
       console.warn('Material saved but indexing was deferred:', error)
     }
     return { id: result.lastInsertRowid }
+  })
+
+  ipcMain.handle('db:reorderMaterials', (_event, subjectId: number, materialIds: number[]) => {
+    return reorderMaterials(db, subjectId, materialIds)
   })
 
   ipcMain.handle('db:getMaterialFileUrl', (_event, materialId: number): string | null => {

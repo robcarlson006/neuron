@@ -7,7 +7,7 @@ import TutorCardReviewModal from '../../components/tutor/TutorCardReviewModal'
 import QuickCardModal, { type QuickCardCandidate } from '../../components/tutor/QuickCardModal'
 import TutorChatSidebar from './TutorChatSidebar'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
-import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation } from '../../types'
+import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation, TutorTeachBackGate, TutorPhaseTransitionResult } from '../../types'
 import { adjustTutorTimer, formatTutorTimer, getTutorTimerState } from '../../lib/tutorTimer'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
@@ -82,6 +82,7 @@ export default function TutorSession(): React.JSX.Element {
   // Quick Review state
   const [quickReviewTopicIndex, setQuickReviewTopicIndex] = useState<number>(1)
   const [showRoadmapModal, setShowRoadmapModal] = useState<boolean>(false)
+  const [teachBackGate, setTeachBackGate] = useState<TutorTeachBackGate | null>(null)
 
   const checkpointKey = sessionId ? `neuron:tutor-checkpoint:${sessionId}` : null
 
@@ -356,20 +357,26 @@ export default function TutorSession(): React.JSX.Element {
               : ((s.depth_level as 1 | 2 | 3 | 4 | 5) ?? (config.depth_level === 'adaptive' ? 3 : config.depth_level ?? 3)),
             never_studied: Boolean(s.never_studied ?? config.never_studied),
             module_id: s.module_id || config.module_id || undefined,
-            target_topic: config.target_topic,
-            target_topics: config.target_topics,
+            target_topic: config.target_topic || sessionData.targets?.[0]?.topic_label,
+            target_topics: config.target_topics || sessionData.targets?.map(target => target.topic_label),
             target_topic_id: config.target_topic_id,
-            target_topic_ids: config.target_topic_ids,
+            target_topic_ids: config.target_topic_ids || sessionData.targets?.map(target => target.topic_id).filter((id): id is number => typeof id === 'number'),
             is_spaced_review: config.is_spaced_review,
             spaced_review_topics: config.spaced_review_topics,
             is_fill_gaps: config.is_fill_gaps,
-            gap_topics: config.gap_topics,
+            gap_topics: config.gap_topics || sessionData.targets?.map(target => target.topic_label),
+            gap_topic_ids: config.gap_topic_ids || sessionData.targets?.map(target => target.topic_id).filter((id): id is number => typeof id === 'number'),
+            gap_target_ids: config.gap_target_ids || sessionData.targets?.map(target => target.topic_id ?? null),
+            gap_evidence_by_topic_id: config.gap_evidence_by_topic_id,
+            recommended_minutes_by_topic_id: config.recommended_minutes_by_topic_id,
             is_quick_review: isQuickReviewSession,
             quick_review_topics: restoredQrTopics,
             material_id: config.material_id,
             material_name: config.material_name
           }
           setSessionConfig(restoredConfig)
+          const restoredGate = (sessionData.teachBackGates || []).find((gate: TutorTeachBackGate) => gate.status === 'pending' || gate.status === 'needs_revision') || null
+          setTeachBackGate(restoredGate)
 
           if (s.module_id) {
             const targetMod = mods.find(m => m.id === s.module_id)
@@ -531,7 +538,12 @@ export default function TutorSession(): React.JSX.Element {
           depth_level: config.depth_level === 'adaptive' ? 3 : config.depth_level,
           difficulty_mode: config.depth_level === 'adaptive' ? 'adaptive' : 'fixed',
           never_studied: config.never_studied ? 1 : 0,
-          title: sessionTitle
+          title: sessionTitle,
+          target_topic_ids: config.target_topic_ids || config.gap_topic_ids,
+          target_topics: config.target_topics || config.gap_topics,
+          gap_target_ids: config.gap_target_ids,
+          gap_evidence_by_topic_id: config.gap_evidence_by_topic_id,
+          recommended_minutes_by_topic_id: config.recommended_minutes_by_topic_id
         }
       ) as { id: number; phase: string }
 
@@ -951,8 +963,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
         if (chunk.metadata) {
           try {
-            const parsed = JSON.parse(chunk.metadata) as typeof difficultyMeta
+            const parsed = JSON.parse(chunk.metadata) as typeof difficultyMeta & { teachBackGate?: TutorTeachBackGate | null }
             setDifficultyMeta(parsed)
+            if ('teachBackGate' in parsed) setTeachBackGate(parsed.teachBackGate || null)
           } catch { /* diagnostic metadata is optional */ }
         }
 
@@ -960,9 +973,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         if (finalContent && activeSessionId) {
           // If session is timed and still has time remaining, strip premature [SESSION_END] tag
           const hasTimeRemaining = runtime.config.duration_minutes !== null && runtime.time_remaining_seconds > 30 && !runtime.is_time_up
-          const displayContent = hasTimeRemaining
+          const displayContent = (hasTimeRemaining
             ? finalContent.replace(/\[SESSION_END\]/g, '').trim()
-            : finalContent
+            : finalContent).replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
 
           // Save assistant message
           window.electronAPI.tutorSaveMessage({
@@ -1074,7 +1087,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 
   // ── Quick Review advance to next topic ──
   async function handleAdvanceToNextTopic(): Promise<void> {
-    if (!sessionId || sending) return
+    if (!sessionId || sending || teachBackGate) return
     const qrTopics = sessionConfig?.quick_review_topics || []
     const totalCount = qrTopics.length || sessionConfig?.target_topics?.length || 1
     const nextIdx = quickReviewTopicIndex + 1
@@ -1092,7 +1105,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   }
 
   async function handleJumpToTopic(targetIndex: number): Promise<void> {
-    if (!sessionId || sending) return
+    if (!sessionId || sending || teachBackGate) return
     const qrTopics = sessionConfig?.quick_review_topics || []
     const totalCount = qrTopics.length || sessionConfig?.target_topics?.length || 1
     if (targetIndex < 1 || targetIndex > totalCount) return
@@ -1106,9 +1119,25 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   }
 
   // ── Phase transition handlers ──
+  async function requestPhaseTransition(nextPhase: 'structured_qa' | 'socratic' | 'summary'): Promise<boolean> {
+    if (!sessionId) return false
+    const result = await window.electronAPI.tutorUpdateSessionPhase(sessionId, nextPhase) as TutorPhaseTransitionResult
+    if (!result.success) {
+      if (result.blockedByTeachBack && result.gate) {
+        setTeachBackGate(result.gate)
+        setPageState('awaiting_input')
+        addToast({ type: 'info', title: 'Teach it back first', message: `Explain “${result.gate.concept}” in your own words before moving on.` })
+      }
+      return false
+    }
+    setSessionPhase(nextPhase)
+    sessionPhaseRef.current = nextPhase
+    return true
+  }
+
   async function handleTransitionToSocratic(): Promise<void> {
-    setSessionPhase('socratic')
-    await window.electronAPI.tutorUpdateSessionPhase(sessionId!, 'socratic')
+    if (teachBackGate) return
+    if (!await requestPhaseTransition('socratic')) return
     setPageState('streaming')
 
     const transitionMsg = "I'm ready for the deep dive. Challenge me with harder questions."
@@ -1128,8 +1157,8 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
   }
 
   async function handleTransitionToSummary(): Promise<void> {
-    setSessionPhase('summary')
-    await window.electronAPI.tutorUpdateSessionPhase(sessionId!, 'summary')
+    if (teachBackGate) return
+    if (!await requestPhaseTransition('summary')) return
     setPageState('streaming')
 
     const transitionMsg = "Let's wrap up the session. Please summarize what we covered and generate study cards."
@@ -1500,10 +1529,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 </button>
                 <button
                   onClick={async () => {
-                    if (sessionId) {
-                      await window.electronAPI.tutorUpdateSessionPhase(sessionId, 'socratic')
-                      setSessionPhase('socratic')
-                      sessionPhaseRef.current = 'socratic'
+                    if (await requestPhaseTransition('socratic')) {
                       setSessionEnded(false)
                       setViewTranscript(true)
                       setPageState('awaiting_input')
@@ -1890,9 +1916,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 <button
                   type="button"
                   onClick={handleAdvanceToNextTopic}
-                  disabled={sending || endingSession}
-                  className="flex items-center gap-1 px-2.5 py-1 bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded-lg text-xs font-semibold transition-all border border-amber-300 dark:border-amber-700/60 shadow-2xs"
-                  title="Advance to next topic in Quick Review"
+                  disabled={sending || endingSession || Boolean(teachBackGate)}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-amber-100 hover:bg-amber-200 disabled:opacity-45 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded-lg text-xs font-semibold transition-all border border-amber-300 dark:border-amber-700/60 shadow-2xs"
+                  title={teachBackGate ? `Teach back ${teachBackGate.concept} before advancing` : 'Advance to next topic in Quick Review'}
                 >
                   <span>Next Topic</span>
                   <span>⏭️</span>
@@ -1942,6 +1968,17 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
       {/* Messages area */}
       <div className="flex-1 min-h-0 overflow-y-auto" ref={chatContainerRef}>
         <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+          {teachBackGate && (
+            <div className="rounded-xl border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/35 px-4 py-3" role="status">
+              <div className="flex items-center gap-2 text-xs font-bold text-violet-900 dark:text-violet-100">
+                <span>🗣️</span><span>Teach it back: {teachBackGate.concept}</span>
+                <span className="ml-auto text-[10px] font-semibold">Attempt {teachBackGate.attemptCount + 1}</span>
+              </div>
+              <p className="mt-1 text-xs text-violet-700 dark:text-violet-300">
+                {teachBackGate.feedback || 'Explain the central mechanism in your own words and include one correct example or implication before moving on.'}
+              </p>
+            </div>
+          )}
           {/* Quick Review Progress Banner */}
           {sessionConfig?.is_quick_review && (() => {
             const qrTopics = sessionConfig.quick_review_topics || []
@@ -1991,9 +2028,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                       <button
                         type="button"
                         onClick={handleAdvanceToNextTopic}
-                        disabled={sending || endingSession}
-                        className="px-3 py-1 text-xs font-semibold text-amber-900 dark:text-amber-100 bg-amber-200 hover:bg-amber-300 dark:bg-amber-900/60 dark:hover:bg-amber-900/90 border border-amber-300 dark:border-amber-700 rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
-                        title="Skip ahead to the next topic in the curriculum"
+                        disabled={sending || endingSession || Boolean(teachBackGate)}
+                        className="px-3 py-1 text-xs font-semibold text-amber-900 dark:text-amber-100 bg-amber-200 hover:bg-amber-300 disabled:opacity-45 dark:bg-amber-900/60 dark:hover:bg-amber-900/90 border border-amber-300 dark:border-amber-700 rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+                        title={teachBackGate ? `Teach back ${teachBackGate.concept} before advancing` : 'Skip ahead to the next topic in the curriculum'}
                       >
                         <span>Next Topic</span>
                         <span>⏭️</span>
@@ -2042,10 +2079,7 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 </button>
                 <button
                   onClick={async () => {
-                    if (sessionId) {
-                      await window.electronAPI.tutorUpdateSessionPhase(sessionId, 'socratic')
-                      setSessionPhase('socratic')
-                      sessionPhaseRef.current = 'socratic'
+                    if (await requestPhaseTransition('socratic')) {
                       setSessionEnded(false)
                       setPageState('awaiting_input')
                     }
@@ -2104,7 +2138,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
                 </button>
                 <button
                   onClick={sessionPhase === 'structured_qa' ? handleTransitionToSocratic : handleTransitionToSummary}
-                  className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors"
+                  disabled={Boolean(teachBackGate)}
+                  title={teachBackGate ? `Teach back ${teachBackGate.concept} before changing phase` : undefined}
+                  className="px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-45 text-white rounded-xl text-sm font-medium transition-colors"
                 >
                   {sessionPhase === 'structured_qa' ? 'Start Deep Dive →' : 'Generate Summary →'}
                 </button>

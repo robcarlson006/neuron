@@ -95,6 +95,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const materialSelectionInitializedRef = useRef(false)
   const loadedMaterialIdsRef = useRef<Set<number>>(new Set())
   const [expandedLectureMaterials, setExpandedLectureMaterials] = useState<Set<number>>(new Set())
+  const [draggedMaterialId, setDraggedMaterialId] = useState<number | null>(null)
   const [materialAnnotationCounts, setMaterialAnnotationCounts] = useState<Record<number, number>>({})
   const [isSynthesizing, setIsSynthesizing] = useState(false)
   const [isGeneratingCards, setIsGeneratingCards] = useState(false)
@@ -171,6 +172,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     .filter((row): row is { lecture: Lecture; material: Material } => Boolean(row.material)), [lectures, materials])
   const attachedMaterialIds = useMemo(() => new Set(lectureMaterialRows.map((row) => row.material.id)), [lectureMaterialRows])
   const standaloneMaterials = useMemo(() => materials.filter((material) => !attachedMaterialIds.has(material.id)), [materials, attachedMaterialIds])
+
+  const orderedLectureMaterialRows = useMemo(() => [...lectureMaterialRows].sort((a, b) => (a.material.sort_order ?? 0) - (b.material.sort_order ?? 0) || a.material.id - b.material.id), [lectureMaterialRows])
 
   useEffect(() => {
     setExpandedLectureMaterials((current) => {
@@ -650,6 +653,59 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setToast({ message: `Deleted "${filename}"`, type: 'success' })
     } catch (err: any) {
       setToast({ message: `Failed to delete material: ${err.message}`, type: 'error' })
+    }
+  }
+
+  async function persistMaterialOrder(nextIds: number[]): Promise<void> {
+    const previous = materials
+    const byId = new Map(materials.map(material => [material.id, material]))
+    const nextMaterials = nextIds.map((id, index) => ({ ...byId.get(id)!, sort_order: index }))
+    setMaterials(nextMaterials)
+    try {
+      await window.electronAPI.reorderMaterials(subjectId, nextIds)
+    } catch (error) {
+      setMaterials(previous)
+      addToast({ type: 'error', title: 'Could not reorder materials', message: error instanceof Error ? error.message : 'Please try again.' })
+    }
+  }
+
+  function moveMaterial(materialId: number, groupIds: number[], direction: -1 | 1): void {
+    const index = groupIds.indexOf(materialId)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= groupIds.length) return
+    const nextGroup = [...groupIds]
+    ;[nextGroup[index], nextGroup[target]] = [nextGroup[target], nextGroup[index]]
+    const groupSet = new Set(groupIds)
+    const byId = new Map(materials.map(material => [material.id, material]))
+    let cursor = 0
+    const replacement = materials.map(material => groupSet.has(material.id) ? byId.get(nextGroup[cursor++])! : material)
+    const nextIds = replacement.map(material => material.id)
+    void persistMaterialOrder(nextIds)
+  }
+
+  async function handleReorderModules(moduleIds: number[]): Promise<void> {
+    const previous = modules
+    const byId = new Map(modules.map(module => [module.id, module]))
+    setModules(moduleIds.map((id, index) => ({ ...byId.get(id)!, sort_order: index })))
+    try {
+      await window.electronAPI.syllabusReorderModules(subjectId, moduleIds)
+    } catch (error) {
+      setModules(previous)
+      addToast({ type: 'error', title: 'Could not reorder modules', message: error instanceof Error ? error.message : 'Please try again.' })
+    }
+  }
+
+  async function handleReorderTopics(moduleId: number, topicIds: number[]): Promise<void> {
+    const previous = modules
+    setModules(current => current.map(module => module.id !== moduleId ? module : {
+      ...module,
+      topics: topicIds.map((id, index) => ({ ...module.topics!.find(topic => topic.id === id)!, sort_order: index }))
+    }))
+    try {
+      await window.electronAPI.syllabusReorderTopics(moduleId, topicIds)
+    } catch (error) {
+      setModules(previous)
+      addToast({ type: 'error', title: 'Could not reorder topics', message: error instanceof Error ? error.message : 'Please try again.' })
     }
   }
 
@@ -1295,6 +1351,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               onStartSpacedReview={handleStartSpacedReview}
               onGenerateCards={handleGenerateCards}
               onToggleTopic={handleToggleTopic}
+              onReorderModules={handleReorderModules}
+              onReorderTopics={handleReorderTopics}
               loadingCards={loadingCards}
               focusTopicId={focusCurriculumTopicId}
             />
@@ -1579,12 +1637,38 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               {lectureMaterialRows.length > 0 && (
                 <section className="space-y-2">
                   <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Lecture materials</div>
-                  {lectureMaterialRows.map(({ lecture, material: mat }) => {
+                  {orderedLectureMaterialRows.map(({ lecture, material: mat }, lectureIndex) => {
+                    const lectureMaterialIds = orderedLectureMaterialRows.map(({ material }) => material.id)
                     const expanded = expandedLectureMaterials.has(lecture.id)
                     return (
-                      <div key={`lecture-material-${lecture.id}`} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
-                        <button
-                          type="button"
+                      <div
+                        key={`lecture-material-${lecture.id}`}
+                        draggable
+                        onDragStart={() => setDraggedMaterialId(mat.id)}
+                        onDragEnd={() => setDraggedMaterialId(null)}
+                        onDragOver={(event) => { if (draggedMaterialId !== null) event.preventDefault() }}
+                        onDrop={(event) => {
+                          event.preventDefault()
+                          if (draggedMaterialId !== null && draggedMaterialId !== mat.id) {
+                            const from = lectureMaterialIds.indexOf(draggedMaterialId)
+                            const to = lectureMaterialIds.indexOf(mat.id)
+                            if (from >= 0 && to >= 0) {
+                              const next = [...lectureMaterialIds]
+                              next.splice(from, 1)
+                              next.splice(to, 0, draggedMaterialId)
+                              const groupSet = new Set(lectureMaterialIds)
+                              const byId = new Map(materials.map(material => [material.id, material]))
+                              let cursor = 0
+                              void persistMaterialOrder(materials.map(material => groupSet.has(material.id) ? byId.get(next[cursor++])! : material).map(material => material.id))
+                            }
+                          }
+                          setDraggedMaterialId(null)
+                        }}
+                        className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden"
+                      >
+                        <div
+                          role="button"
+                          tabIndex={0}
                           aria-expanded={expanded}
                           onClick={() => setExpandedLectureMaterials((current) => {
                             const next = new Set(current)
@@ -1592,16 +1676,32 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                             else next.add(lecture.id)
                             return next
                           })}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              setExpandedLectureMaterials((current) => {
+                                const next = new Set(current)
+                                if (next.has(lecture.id)) next.delete(lecture.id)
+                                else next.add(lecture.id)
+                                return next
+                              })
+                            }
+                          }}
                           className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50"
                         >
                           <span className="text-xs text-slate-400" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+                          <span className="text-slate-300 dark:text-slate-600 cursor-grab" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
                           <span className="text-sm">🎙️</span>
                           <span className="min-w-0 flex-1">
                             <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{lecture.title}</span>
                             <span className="block text-[11px] text-slate-400 truncate">Attached material: {mat.filename}</span>
                           </span>
                           <span className="text-[10px] text-slate-400">{materialAnnotationCounts[mat.id] || 0} annotations</span>
-                        </button>
+                          <span className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                            <button type="button" aria-label={`Move ${mat.filename} up`} disabled={lectureIndex === 0} onClick={() => moveMaterial(mat.id, lectureMaterialIds, -1)} className="px-1 text-[10px] rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↑</button>
+                            <button type="button" aria-label={`Move ${mat.filename} down`} disabled={lectureIndex === lectureMaterialIds.length - 1} onClick={() => moveMaterial(mat.id, lectureMaterialIds, 1)} className="px-1 text-[10px] rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↓</button>
+                          </span>
+                        </div>
                         {expanded && (
                           <div className="border-t border-slate-200 dark:border-slate-700 px-4 py-3 space-y-2">
                             <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
@@ -1622,9 +1722,32 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
               )}
 
               {standaloneMaterials.length > 0 && <div className="space-y-1.5">
-              {standaloneMaterials.map(mat => (
+              {standaloneMaterials.map((mat, standaloneIndex) => {
+                const standaloneMaterialIds = standaloneMaterials.map(material => material.id)
+                return (
                 <div
                   key={mat.id}
+                  draggable
+                  onDragStart={() => setDraggedMaterialId(mat.id)}
+                  onDragEnd={() => setDraggedMaterialId(null)}
+                  onDragOver={(event) => { if (draggedMaterialId !== null) event.preventDefault() }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    if (draggedMaterialId !== null && draggedMaterialId !== mat.id) {
+                      const from = standaloneMaterialIds.indexOf(draggedMaterialId)
+                      const to = standaloneMaterialIds.indexOf(mat.id)
+                      if (from >= 0 && to >= 0) {
+                        const next = [...standaloneMaterialIds]
+                        next.splice(from, 1)
+                        next.splice(to, 0, draggedMaterialId)
+                        const groupSet = new Set(standaloneMaterialIds)
+                        const byId = new Map(materials.map(material => [material.id, material]))
+                        let cursor = 0
+                        void persistMaterialOrder(materials.map(material => groupSet.has(material.id) ? byId.get(next[cursor++])! : material).map(material => material.id))
+                      }
+                    }
+                    setDraggedMaterialId(null)
+                  }}
                   className={`flex items-center gap-3 px-4 py-3 rounded-lg bg-white dark:bg-slate-800 border transition-all ${
                     selectedMaterialIds.has(mat.id)
                       ? 'border-violet-500/70 dark:border-violet-500/70 bg-violet-50/20 dark:bg-violet-950/20 shadow-xs'
@@ -1639,6 +1762,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                     title="Select material"
                   />
                   <span className="text-sm shrink-0">📄</span>
+                  <span className="text-slate-300 dark:text-slate-600 cursor-grab" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
 
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     <span className="text-sm text-slate-700 dark:text-slate-300 truncate">
@@ -1658,6 +1782,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                   </span>
                   <span className="text-xs text-slate-400 dark:text-slate-500">
                     {new Date(mat.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </span>
+                  <span className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                    <button type="button" aria-label={`Move ${mat.filename} up`} disabled={standaloneIndex === 0} onClick={() => moveMaterial(mat.id, standaloneMaterialIds, -1)} className="px-1 text-[10px] rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↑</button>
+                    <button type="button" aria-label={`Move ${mat.filename} down`} disabled={standaloneIndex === standaloneMaterialIds.length - 1} onClick={() => moveMaterial(mat.id, standaloneMaterialIds, 1)} className="px-1 text-[10px] rounded border border-slate-200 dark:border-slate-600 disabled:opacity-30">↓</button>
                   </span>
                   <button
                     onClick={() => navigate(`/subject/${subjectId}/material/${mat.id}`)}
@@ -1702,7 +1830,8 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                     </svg>
                   </button>
                 </div>
-              ))}
+                )
+              })}
               </div>}
             </div>
           ) : (

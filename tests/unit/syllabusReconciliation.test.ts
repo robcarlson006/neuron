@@ -220,4 +220,38 @@ describe('Syllabus Reconciliation & Progress Preservation', () => {
     const modAfter = db.prepare('SELECT status FROM syllabus_modules WHERE subject_id = ?').get(subjectId) as any
     expect(modAfter.status).toBe('completed')
   })
+
+  it('preserves manual module and topic order while appending new syllabus content', () => {
+    const firstModule = insert(db, 'INSERT INTO syllabus_modules (subject_id, title, status, sort_order) VALUES (?, ?, ?, ?)', subjectId, 'First', 'pending', 1)
+    const secondModule = insert(db, 'INSERT INTO syllabus_modules (subject_id, title, status, sort_order) VALUES (?, ?, ?, ?)', subjectId, 'Second', 'pending', 0)
+    const firstTopic = insert(db, 'INSERT INTO module_topics (module_id, title, sort_order) VALUES (?, ?, ?)', firstModule, 'First topic', 1)
+    const secondTopic = insert(db, 'INSERT INTO module_topics (module_id, title, sort_order) VALUES (?, ?, ?)', firstModule, 'Second topic', 0)
+
+    reconcileCurriculum(db, subjectId, [
+      {
+        title: 'First',
+        topics: [
+          { title: 'First topic', matched_previous_topic: 'First topic', coverage_delta: 'identical' },
+          { title: 'Second topic', matched_previous_topic: 'Second topic', coverage_delta: 'identical' },
+          { title: 'New topic', coverage_delta: 'new_topic' }
+        ]
+      },
+      {
+        title: 'Second',
+        topics: [{ title: 'Existing second topic', coverage_delta: 'new_topic' }]
+      },
+      {
+        title: 'New module',
+        topics: [{ title: 'New module topic', coverage_delta: 'new_topic' }]
+      }
+    ], userId)
+
+    const modules = db.prepare('SELECT id, title, sort_order FROM syllabus_modules WHERE subject_id = ? ORDER BY sort_order ASC').all(subjectId) as { id: number; title: string; sort_order: number }[]
+    expect(modules.map(module => module.title)).toEqual(['Second', 'First', 'New module'])
+    expect(modules.map(module => module.sort_order)).toEqual([0, 1, 2])
+
+    const topics = db.prepare('SELECT id, title, sort_order FROM module_topics WHERE module_id = ? ORDER BY sort_order ASC').all(firstModule) as { id: number; title: string; sort_order: number }[]
+    expect(topics.map(topic => topic.id)).toEqual([secondTopic, firstTopic, expect.any(Number)])
+    expect(topics.map(topic => topic.sort_order)).toEqual([0, 1, 2])
+  })
 })

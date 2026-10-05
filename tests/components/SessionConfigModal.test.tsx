@@ -90,6 +90,40 @@ describe('SessionConfigModal - New Content & Multi-Module Study', () => {
     expect(screen.getByRole('button', { name: /custom/i })).toBeInTheDocument()
   })
 
+  it('shows every gap, preselects the recommended gap, and carries selected targets plus optional time', async () => {
+    ;(window.electronAPI.tutorGetGapAnalysis as jest.Mock).mockResolvedValue({
+      items: [
+        { type: 'struggled', topic: 'Utility Functions', topicId: 21, priority: 1, recommendedMinutes: 25, details: 'Low mastery' },
+        { type: 'uncovered', topic: 'Indifference Curves', topicId: 22, priority: 2, recommendedMinutes: 20, details: 'Not yet assessed' }
+      ],
+      struggledTopics: [{ type: 'struggled', topic: 'Utility Functions', topicId: 21, priority: 1, recommendedMinutes: 25 }],
+      uncoveredTopics: [{ type: 'uncovered', topic: 'Indifference Curves', topicId: 22, priority: 2, recommendedMinutes: 20 }],
+      recommendedTopics: ['Utility Functions'],
+      recommendedFocus: 'Utility Functions',
+      totalGapsCount: 2,
+      hasHistory: true
+    })
+
+    render(
+      <MemoryRouter>
+        <SessionConfigModal subjectId={101} subjectName="Principles of Microeconomics" initialMode="fill_gaps" onClose={jest.fn()} />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => expect(screen.getByLabelText(/Study Utility Functions/i)).toBeChecked())
+    expect(screen.getByLabelText(/Study Indifference Curves/i)).not.toBeChecked()
+    fireEvent.click(screen.getByLabelText(/Study Indifference Curves/i))
+    fireEvent.click(screen.getByLabelText(/Use suggested time/i))
+    fireEvent.click(screen.getByRole('button', { name: /Start session/i }))
+
+    const targetUrl = mockNavigate.mock.calls[0][0]
+    const configParam = new URLSearchParams(targetUrl.split('?')[1]).get('config')
+    const parsedConfig = JSON.parse(decodeURIComponent(configParam!))
+    expect(parsedConfig.target_topics).toEqual(['Utility Functions', 'Indifference Curves'])
+    expect(parsedConfig.gap_topic_ids).toEqual([21, 22])
+    expect(parsedConfig.duration_minutes).toBe(45)
+  })
+
   it('renders New Content tab with all new topics across modules selected by default', async () => {
     render(
       <MemoryRouter>

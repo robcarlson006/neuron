@@ -76,6 +76,7 @@ describe('Tutor Memory & Gap Analysis Engine', () => {
       expect(result.recommendedFocus).toContain('Module 1: Pointers')
       expect(result.recommendedTopics.length).toBe(1)
       expect(result.recommendedEstimatedMinutes).toBe(20)
+      expect(result.items[0]).toMatchObject({ topic: 'Module 1: Pointers', type: 'uncovered', priority: 2 })
     })
 
     it('identifies struggled concepts from tutor_topic_memories and prioritizes them', () => {
@@ -100,6 +101,7 @@ describe('Tutor Memory & Gap Analysis Engine', () => {
       expect(result.recommendedTopics).toEqual(['AVL Rotations'])
       expect(result.recommendedFocus).toContain('AVL Rotations')
       expect(result.recommendedEstimatedMinutes).toBe(25)
+      expect(result.items[0]).toMatchObject({ topic: 'AVL Rotations', topicId: expect.any(Number), recommendedMinutes: 25 })
     })
 
     it('identifies low concept_mastery probability as a struggled gap', () => {

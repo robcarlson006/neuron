@@ -35,6 +35,7 @@ export interface Material {
   file_size?: number | null
   file_sha256?: string | null
   relative_path?: string | null
+  sort_order?: number
   /** Set to 1 once this material's content has been folded into the syllabus
    * (either at initial generation or by an incremental update). */
   syllabus_processed?: number
@@ -664,6 +665,27 @@ export type LearnerMemoryType = 'semantic_fact' | 'episodic' | 'teaching_prefere
 export type LearnerMemoryStatus = 'active' | 'uncertain' | 'superseded' | 'resolved'
 export type LearningOutcome = 'correct' | 'partial' | 'incorrect' | 'unassessed'
 export type TutorAssistanceLevel = 'none' | 'hint' | 'scaffold' | 'worked_example' | 'direct_answer' | 'unassessed'
+export type TutorTeachBackStatus = 'pending' | 'needs_revision' | 'passed' | 'incomplete'
+
+export interface TutorTeachBackGate {
+  id?: number
+  sessionId: number
+  topicId?: number | null
+  concept: string
+  status: TutorTeachBackStatus
+  attemptCount: number
+  feedback?: string | null
+  requiredAssessmentId?: number | null
+  passedAssessmentId?: number | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface TutorPhaseTransitionResult {
+  success: boolean
+  blockedByTeachBack?: boolean
+  gate?: TutorTeachBackGate | null
+}
 
 export interface AdaptiveConceptState {
   id?: number
@@ -700,6 +722,9 @@ export interface TutorTurnAssessment {
   misconception?: string
   followedScaffold?: boolean
   changedGoal?: boolean
+  teachBackStatus?: 'passed' | 'needs_revision'
+  missingElements?: string[]
+  ownWords?: boolean
   sourceEvidence?: EvidenceRef[]
   idempotencyKey?: string
   createdAt?: string
@@ -939,6 +964,17 @@ export interface TutorSession {
   adaptive_uncertainty?: number
   adaptive_reason?: string
   never_studied?: number
+  targets?: TutorSessionTarget[]
+}
+
+export interface TutorSessionTarget {
+  id: number
+  session_id: number
+  topic_id?: number | null
+  topic_label: string
+  sort_order: number
+  gap_evidence_json?: string
+  recommended_minutes?: number | null
 }
 
 export interface TutorTopicMemory {
@@ -969,7 +1005,7 @@ export interface TutorSessionEvaluation {
 }
 
 export interface GapAnalysisItem {
-  type: 'struggled' | 'uncovered'
+  type: 'struggled' | 'uncovered' | 'refresh'
   topic: string
   details?: string
   moduleId?: number
@@ -978,9 +1014,19 @@ export interface GapAnalysisItem {
   materialName?: string
   priority: 1 | 2 | 3
   estimatedMinutes?: number
+  /** Canonical curriculum ID when this gap maps to a syllabus topic. */
+  topicId?: number
+  /** Signals merged into this single learner-facing gap. */
+  gapKinds?: Array<'unseen' | 'new_content' | 'low_mastery' | 'struggling' | 'refresh'>
+  /** Short, inspectable explanations for the signals above. */
+  evidence?: Array<{ kind: 'unseen' | 'new_content' | 'low_mastery' | 'struggling' | 'refresh'; detail: string }>
+  /** Preferred name for new consumers; `estimatedMinutes` remains compatible. */
+  recommendedMinutes?: number
 }
 
 export interface GapAnalysisResult {
+  /** Every detected gap, deduplicated and ordered by urgency. */
+  items: GapAnalysisItem[]
   struggledTopics: GapAnalysisItem[]
   uncoveredTopics: GapAnalysisItem[]
   recommendedFocus: string
@@ -1061,6 +1107,11 @@ export interface TutorSessionConfig {
   target_topic_ids?: number[]
   is_fill_gaps?: boolean
   gap_topics?: string[]
+  gap_topic_ids?: number[]
+  /** Ordered IDs aligned 1:1 with gap_topics; null means an unmapped concept. */
+  gap_target_ids?: Array<number | null>
+  gap_evidence_by_topic_id?: Record<number, unknown>
+  recommended_minutes_by_topic_id?: Record<number, number>
   is_spaced_review?: boolean
   spaced_review_topics?: string[]
   is_active_recall?: boolean

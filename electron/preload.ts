@@ -75,7 +75,8 @@ const electronAPI = {
     ipcRenderer.invoke('db:saveDiagnostics', diagnostic),
 
   // Materials
-  getMaterials: (subjectId: number): Promise<unknown[]> => ipcRenderer.invoke('db:getMaterials', subjectId),
+  getMaterials: (subjectId: number): Promise<import('../src/types').Material[]> => ipcRenderer.invoke('db:getMaterials', subjectId),
+  reorderMaterials: (subjectId: number, materialIds: number[]): Promise<{ success: boolean }> => ipcRenderer.invoke('db:reorderMaterials', subjectId, materialIds),
   getMaterial: (materialId: number): Promise<unknown> => ipcRenderer.invoke('db:getMaterial', materialId),
   getMaterialFileUrl: (materialId: number): Promise<string | null> => ipcRenderer.invoke('db:getMaterialFileUrl', materialId),
   getMaterialVisualUrl: (materialId: number): Promise<string | null> => ipcRenderer.invoke('db:getMaterialVisualUrl', materialId),
@@ -374,10 +375,12 @@ const electronAPI = {
 
   // ── Tutor Sessions ──
   tutorCreateSession: (subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: {
-    duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number; title?: string
+    duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number; title?: string;
+    target_topic_ids?: number[]; target_topics?: string[]; gap_target_ids?: Array<number | null>;
+    gap_evidence_by_topic_id?: Record<number, unknown>; recommended_minutes_by_topic_id?: Record<number, number>
   }): Promise<TutorSession> =>
     ipcRenderer.invoke('tutor:createSession', subjectId, userId, sessionType, moduleId, config),
-  tutorGetSession: (sessionId: number): Promise<{ session: TutorSession; messages: Message[] } | null> =>
+  tutorGetSession: (sessionId: number): Promise<{ session: TutorSession; messages: Message[]; targets: import('../src/types').TutorSessionTarget[]; teachBackGates: import('../src/types').TutorTeachBackGate[] } | null> =>
     ipcRenderer.invoke('tutor:getSession', sessionId),
   tutorListSessions: (subjectId?: number | null, limit?: number): Promise<TutorSession[]> =>
     ipcRenderer.invoke('tutor:listSessions', subjectId, limit),
@@ -385,7 +388,7 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:updateSessionTitle', sessionId, title),
   tutorToggleSessionPin: (sessionId: number, isPinned: boolean): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:toggleSessionPin', sessionId, isPinned),
-  tutorUpdateSessionPhase: (sessionId: number, phase: string): Promise<{ success: boolean }> =>
+  tutorUpdateSessionPhase: (sessionId: number, phase: string): Promise<import('../src/types').TutorPhaseTransitionResult> =>
     ipcRenderer.invoke('tutor:updateSessionPhase', sessionId, phase),
   tutorUpdateSessionDuration: (sessionId: number, durationMinutes: number | null): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('tutor:updateSessionDuration', sessionId, durationMinutes),
@@ -500,6 +503,8 @@ const electronAPI = {
     ipcRenderer.invoke('syllabus:getModule', moduleId),
   syllabusReorderModules: (subjectId: number, moduleIds: number[]): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('syllabus:reorderModules', subjectId, moduleIds),
+  syllabusReorderTopics: (moduleId: number, topicIds: number[]): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('syllabus:reorderTopics', moduleId, topicIds),
   syllabusSaveManualSyllabus: (subjectId: number, modules: { title: string; description?: string; week_number?: number; hours_estimated?: number; topics: { title: string; description?: string }[] }[]): Promise<import('../src/types').SyllabusModule[]> =>
     ipcRenderer.invoke('syllabus:saveManualSyllabus', subjectId, modules),
   syllabusEditDeadline: (subjectId: number, newDeadline: string): Promise<{ fits_deadline: boolean; proposed_adjustments?: string; new_weekly_hours?: number | null; summary?: string }> =>
