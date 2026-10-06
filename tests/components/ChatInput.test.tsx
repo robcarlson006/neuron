@@ -1,5 +1,5 @@
-import React from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import React, { useState } from 'react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import ChatInput from '../../src/components/tutor/ChatInput'
 
@@ -39,5 +39,39 @@ describe('ChatInput Component', () => {
 
     expect(screen.getByText(/Live Math Preview:/i)).toBeInTheDocument()
     expect(container.querySelector('.katex')).not.toBeNull()
+  })
+
+  it('clears a controlled draft immediately while send is pending', async () => {
+    let resolveSend: (() => void) | undefined
+    const handleSend = jest.fn(() => new Promise<void>(resolve => { resolveSend = resolve }))
+    function Harness(): React.JSX.Element {
+      const [draft, setDraft] = useState('Answer')
+      return <ChatInput onSend={handleSend} value={draft} onChange={setDraft} />
+    }
+    render(<Harness />)
+
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => expect(handleSend).toHaveBeenCalledWith('Answer'))
+    expect(textarea.value).toBe('')
+    resolveSend?.()
+  })
+
+  it('ignores a rapid duplicate submit while the first send is pending', async () => {
+    let resolveSend: (() => void) | undefined
+    const handleSend = jest.fn(() => new Promise<void>(resolve => { resolveSend = resolve }))
+    function Harness(): React.JSX.Element {
+      const [draft, setDraft] = useState('Answer')
+      return <ChatInput onSend={handleSend} value={draft} onChange={setDraft} />
+    }
+    render(<Harness />)
+
+    const textarea = screen.getByRole('textbox')
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => expect(handleSend).toHaveBeenCalledTimes(1))
+    resolveSend?.()
   })
 })

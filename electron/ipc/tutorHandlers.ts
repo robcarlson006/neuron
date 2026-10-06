@@ -14,6 +14,7 @@ import { hasSufficientEvidence } from '../../src/lib/groundedRetrieval'
 import { retrieveGroundedEvidenceAsync } from './groundedHandlers'
 import { buildTutorContext } from '../../src/lib/tutorContextBuilder'
 import { verifyTutorAnswer } from '../../src/lib/tutorAnswerVerifier'
+import { chooseFinalTutorResponse } from '../../src/lib/tutorResponse'
 import { LearnerMemoryService } from '../../src/lib/memory/learnerMemoryService'
 import { buildTutorPolicyBlock } from '../../src/lib/tutorLearningPolicy'
 import { buildExactFocusPlan, hasExactFocusDuration, selectFocusSubjects, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
@@ -2487,11 +2488,6 @@ PEDAGOGICAL METHOD — Session Summary Phase:
 
       for await (const chunk of streamAI(messages, { ...config, apiKey }, abortController.signal)) {
         fullResponse += chunk
-        win.webContents.send('tutor:chunk', {
-          conversationId: params.sessionId,
-          content: chunk,
-          type: 'text'
-        })
       }
 
       // Apply post-processing cleanup to fix garbled text
@@ -2517,17 +2513,25 @@ PEDAGOGICAL METHOD — Session Summary Phase:
             }
           ], { ...getAIConfig(), apiKey: getApiKey() }, { type: 'text' })
           const repairedText = cleanupAIResponse(repaired).replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
-          if (repairedText) {
-            const suffix = repairedText.startsWith(fullResponse) ? repairedText.slice(fullResponse.length).trim() : repairedText
-            if (suffix) {
-              fullResponse = `${fullResponse}\n\n${suffix}`
-              win.webContents.send('tutor:chunk', { conversationId: params.sessionId, content: `\n\n${suffix}`, type: 'text' })
-            }
-          }
+          fullResponse = repairedText || fullResponse
         } catch (repairError) {
           console.warn('Tutor response contract repair unavailable:', repairError)
         }
       }
+      const finalizedResponse = chooseFinalTutorResponse(fullResponse)
+      if (!finalizedResponse) {
+        throw new Error('Tutor response did not include a final active-recall question. Please try again.')
+      }
+      fullResponse = finalizedResponse
+
+      // Keep the draft hidden until the response contract is satisfied, then
+      // emit one canonical response instead of a draft plus a repaired copy.
+      win.webContents.send('tutor:chunk', {
+        conversationId: params.sessionId,
+        content: fullResponse,
+        type: 'text'
+      })
+
       const verification = verifyTutorAnswer(fullResponse, contextPack.evidence)
       if (verification.needsAbstention) {
         fullResponse += '\n\nI could not verify one or more source references against the selected material, so please treat those claims as unconfirmed.'

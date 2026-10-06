@@ -34,12 +34,15 @@ export default function ChatInput({
   const [uncontrolledInput, setUncontrolledInput] = useState('')
   const isControlled = controlledValue !== undefined
   const input = controlledValue ?? uncontrolledInput
+  const inputRef = useRef(input)
+  inputRef.current = input
   const setInput = (next: string): void => {
     if (!isControlled) setUncontrolledInput(next)
     onControlledChange?.(next)
   }
   const [showMathPalette, setShowMathPalette] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const submittingRef = useRef(false)
 
   // Auto-resize textarea
   useEffect(() => {
@@ -82,15 +85,17 @@ export default function ChatInput({
 
   async function handleSubmit(): Promise<void> {
     const trimmed = input.trim()
-    if (!trimmed || disabled) return
+    if (!trimmed || disabled || submittingRef.current) return
+    submittingRef.current = true
+    setInput('')
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
     try {
       await onSend(trimmed)
-      setInput('')
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-      }
     } catch {
-      // Keep the draft visible when persistence or streaming fails.
+      // Restore only when the submission was rejected before acceptance.
+      if (!inputRef.current.trim()) setInput(trimmed)
+    } finally {
+      submittingRef.current = false
     }
   }
 
