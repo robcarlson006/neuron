@@ -14,7 +14,7 @@ import { hasSufficientEvidence } from '../../src/lib/groundedRetrieval'
 import { retrieveGroundedEvidenceAsync } from './groundedHandlers'
 import { buildTutorContext } from '../../src/lib/tutorContextBuilder'
 import { verifyTutorAnswer } from '../../src/lib/tutorAnswerVerifier'
-import { chooseFinalTutorResponse } from '../../src/lib/tutorResponse'
+import { chooseFinalTutorResponse, hasFinalActiveRecallQuestion } from '../../src/lib/tutorResponse'
 import { LearnerMemoryService } from '../../src/lib/memory/learnerMemoryService'
 import { buildTutorPolicyBlock } from '../../src/lib/tutorLearningPolicy'
 import { buildExactFocusPlan, hasExactFocusDuration, selectFocusSubjects, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
@@ -2501,28 +2501,27 @@ PEDAGOGICAL METHOD — Session Summary Phase:
       fullResponse = fullResponse.replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
 
       // The active-recall question is the learner's handoff into the next
-      // turn. If the model violates the contract, make one bounded repair
-      // request using the same grounded context before persisting the answer.
-      if (params.sessionType === 'tutor' && params.phase !== 'summary' && !/\?\s*$/.test(fullResponse)) {
-        try {
-          const repaired = await callAIMessages([
-            ...messages,
-            {
-              role: 'user',
-              content: `REPAIR THIS TUTOR RESPONSE. Keep its useful explanation, then append exactly one final section titled "Active recall" containing one source-grounded, open-ended question about the newly explained concept. Use one target only; do not ask yes/no or compound questions; do not include the answer. Return only the repaired response.\n\nDRAFT:\n${fullResponse}`
-            }
-          ], { ...getAIConfig(), apiKey: getApiKey() }, { type: 'text' })
-          const repairedText = cleanupAIResponse(repaired).replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
-          fullResponse = repairedText || fullResponse
-        } catch (repairError) {
-          console.warn('Tutor response contract repair unavailable:', repairError)
+      // turn. For structured tutor sessions (non-summary), verify and ensure
+      // the response concludes with an active-recall question.
+      if (params.sessionType === 'tutor' && params.phase !== 'summary') {
+        let repairedText: string | null = null
+        if (!hasFinalActiveRecallQuestion(fullResponse)) {
+          try {
+            const repaired = await callAIMessages([
+              ...messages,
+              {
+                role: 'user',
+                content: `REPAIR THIS TUTOR RESPONSE. Keep its useful explanation, then append exactly one final section titled "Active recall" containing one source-grounded, open-ended question about the newly explained concept. Use one target only; do not ask yes/no or compound questions; do not include the answer. Return only the repaired response.\n\nDRAFT:\n${fullResponse}`
+              }
+            ], { ...getAIConfig(), apiKey: getApiKey() }, { type: 'text' })
+            repairedText = cleanupAIResponse(repaired).replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
+          } catch (repairError) {
+            console.warn('Tutor response contract repair unavailable:', repairError)
+          }
         }
+        // Finalize response: prefer valid repair, then draft, or append guaranteed active-recall question
+        fullResponse = chooseFinalTutorResponse(fullResponse, repairedText, targetConcept) || fullResponse
       }
-      const finalizedResponse = chooseFinalTutorResponse(fullResponse)
-      if (!finalizedResponse) {
-        throw new Error('Tutor response did not include a final active-recall question. Please try again.')
-      }
-      fullResponse = finalizedResponse
 
       // Keep the draft hidden until the response contract is satisfied, then
       // emit one canonical response instead of a draft plus a repaired copy.
