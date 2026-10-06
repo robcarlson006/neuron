@@ -534,6 +534,18 @@ const electronAPI = {
     ipcRenderer.invoke('cards:batchGenerate', subjectId, materialIds),
   cardsGenerateFromMultiple: (subjectId: number, materialIds: number[]): Promise<{ success: boolean; count: number; error?: string; filenames?: string[] }> =>
     ipcRenderer.invoke('cards:generateFromMultiple', subjectId, materialIds),
+  cardsGenerateFromMaterials: (
+    subjectId: number,
+    materialIds: number[],
+    options?: {
+      type?: 'flashcard' | 'active_recall' | 'auto'
+      count?: number
+      autoCount?: boolean
+      userId?: number
+      weekTitle?: string
+    }
+  ): Promise<{ success: boolean; count: number; module_name?: string; error?: string; duplicates_filtered?: number }> =>
+    ipcRenderer.invoke('cards:generateFromMaterials', subjectId, materialIds, options),
   cardsGenerateStatus: (subjectId: number): Promise<{ totalFiles: number; filesWithCards: number; pending: number }> =>
 
     ipcRenderer.invoke('cards:generateStatus', subjectId),

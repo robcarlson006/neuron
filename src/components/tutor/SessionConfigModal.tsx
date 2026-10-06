@@ -23,6 +23,7 @@ interface SessionConfigModalProps {
   subjectId: number
   subjectName: string
   materialId?: number
+  materialIds?: number[]
   materialName?: string
   initialTopic?: string
   initialTopics?: string[]
@@ -37,6 +38,7 @@ export default function SessionConfigModal({
   subjectId,
   subjectName,
   materialId: propMaterialId,
+  materialIds: propMaterialIds,
   materialName: propMaterialName,
   initialTopic,
   initialTopics,
@@ -49,7 +51,7 @@ export default function SessionConfigModal({
 
   // ── Mode & Topic State ──
   const [studyMode, setStudyMode] = useState<StudyMode>(
-    propInitialMode || (propMaterialId ? 'material' : propInitialModuleId ? 'syllabus' : initialTopic ? 'custom' : 'new_content')
+    propInitialMode || (propMaterialIds && propMaterialIds.length > 0 ? 'material' : propMaterialId ? 'material' : propInitialModuleId ? 'syllabus' : initialTopic ? 'custom' : 'new_content')
   )
   const [modules, setModules] = useState<(SyllabusModule & { topics?: ModuleTopic[] })[]>([])
   const [materialsList, setMaterialsList] = useState<LibraryFile[]>([])
@@ -62,7 +64,13 @@ export default function SessionConfigModal({
   const [selectedTopics, setSelectedTopics] = useState<string[]>(
     initialTopics && initialTopics.length > 0 ? initialTopics : initialTopic ? [initialTopic] : []
   )
-  const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>(propMaterialId ? [propMaterialId] : [])
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>(
+    propMaterialIds && propMaterialIds.length > 0
+      ? propMaterialIds
+      : propMaterialId
+        ? [propMaterialId]
+        : []
+  )
   const [materialAnnotationsById, setMaterialAnnotationsById] = useState<Record<number, DocumentAnnotation[]>>({})
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<number[]>([])
   const [lecturesList, setLecturesList] = useState<Lecture[]>([])

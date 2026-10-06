@@ -537,6 +537,192 @@ export function registerCardGenerationHandlers(): void {
     }
   })
 
+  // ── Generate cards from materials (with options: flashcard/active_recall, count, etc.) ─
+
+  ipcMain.handle('cards:generateFromMaterials', async (
+    _event,
+    subjectId: number,
+    materialIds: number[],
+    options?: {
+      type?: 'flashcard' | 'active_recall' | 'auto'
+      count?: number
+      autoCount?: boolean
+      userId?: number
+      weekTitle?: string
+    }
+  ) => {
+    try {
+      if (!materialIds || materialIds.length === 0) {
+        return { success: false, count: 0, error: 'Select at least 1 material for card generation' }
+      }
+
+      const placeholders = materialIds.map(() => '?').join(',')
+      const materials = db.prepare(
+        `SELECT id, filename, content_text FROM materials WHERE id IN (${placeholders}) AND subject_id = ?`
+      ).all(...materialIds, subjectId) as { id: number; filename: string; content_text: string }[]
+
+      if (materials.length === 0) {
+        return { success: false, count: 0, error: 'Could not find selected materials' }
+      }
+
+      const subject = db.prepare('SELECT name FROM subjects WHERE id = ?').get(subjectId) as
+        { name: string } | undefined
+      if (!subject) throw new Error('Subject not found')
+
+      const cleanedMaterials = materials.map(m => ({
+        id: m.id,
+        filename: m.filename,
+        text: stripRawTranscript(m.content_text) || m.content_text
+      })).filter(m => m.text && m.text.trim().length > 50)
+
+      if (cleanedMaterials.length === 0) {
+        return { success: false, count: 0, error: 'Selected materials do not have sufficient text content to generate cards' }
+      }
+
+      const config = getAIConfig()
+      const apiKey = getApiKey()
+      if (!apiKey) throw new Error('AI API key not configured.')
+
+      const existingCards = db.prepare(
+        'SELECT front, back FROM cards WHERE subject_id = ?'
+      ).all(subjectId) as { front: string; back: string }[]
+
+      const requestedType = options?.type || 'auto'
+      const totalCount = Math.max(1, Math.min(100, options?.count ?? 15))
+      const combinedText = cleanedMaterials
+        .map(m => `========================================\n[DOCUMENT: ${m.filename}]\n========================================\n${m.text}`)
+        .join('\n\n\n')
+
+      const filenames = cleanedMaterials.map(m => m.filename)
+      const weekLabel = options?.weekTitle || (filenames.length === 1 ? filenames[0] : `${filenames.length} materials`)
+
+      let prompt: string
+      if (requestedType === 'flashcard') {
+        prompt = buildFlashcardOnlyPrompt(
+          combinedText,
+          subject.name,
+          weekLabel,
+          totalCount,
+          existingCards,
+          filenames,
+          options?.autoCount === true
+        )
+      } else if (requestedType === 'active_recall') {
+        prompt = buildActiveRecallOnlyPrompt(
+          combinedText,
+          subject.name,
+          weekLabel,
+          totalCount,
+          existingCards,
+          filenames,
+          options?.autoCount === true
+        )
+      } else {
+        prompt = buildMultiSourceCardGenerationPrompt(
+          combinedText,
+          subject.name,
+          filenames,
+          existingCards,
+          Math.max(4, Math.round(totalCount * 0.75)),
+          Math.max(1, Math.round(totalCount * 0.25))
+        )
+      }
+
+      const responseText = await callAIMessages(
+        [{ role: 'user', content: prompt }],
+        { ...config, apiKey },
+        { type: 'json_object' }
+      )
+
+      const parsed = safeParseAICards(responseText)
+      const extracted = extractCardCandidates(parsed, requestedType)
+
+      const allCandidateCards: Partial<Card>[] = []
+      const primaryMaterialId = cleanedMaterials.length === 1 ? cleanedMaterials[0].id : null
+      const folderId = getOrCreateMaterialFolder(db, subjectId, primaryMaterialId, weekLabel)
+
+      for (const fc of extracted.flashcards) {
+        const base = {
+          subject_id: subjectId,
+          material_id: primaryMaterialId,
+          folder_id: folderId,
+          concept: fc.concept || weekLabel,
+          type: 'flashcard' as const,
+          front: fc.front.trim(),
+          back: fc.back.trim(),
+          is_manual: 0 as const,
+          source: JSON.stringify(filenames)
+        }
+        const { valid, cards } = validateCardQuality(base)
+        if (valid && cards && cards.length > 0) {
+          allCandidateCards.push(...cards.map(c => ({
+            ...base,
+            front: c.front,
+            back: c.back
+          })))
+        } else if (base.front.length > 0 && base.back.length > 0) {
+          allCandidateCards.push({ ...base })
+        }
+      }
+
+      for (const ar of extracted.activeRecall) {
+        const base = {
+          subject_id: subjectId,
+          material_id: primaryMaterialId,
+          folder_id: folderId,
+          concept: ar.concept || weekLabel,
+          type: 'active_recall' as const,
+          front: ar.question.trim(),
+          back: ar.model_answer.trim(),
+          is_manual: 0 as const,
+          source: JSON.stringify(filenames)
+        }
+        const { valid, cards } = validateCardQuality(base)
+        if (valid && cards && cards.length > 0) {
+          allCandidateCards.push(...cards.map(c => ({
+            ...base,
+            front: c.front,
+            back: c.back
+          })))
+        } else if (base.front.length > 0 && base.back.length > 0) {
+          allCandidateCards.push({ ...base })
+        }
+      }
+
+      const dupResults = findCardDuplicates(
+        allCandidateCards.map(c => ({ front: c.front || '', back: c.back || '' })),
+        existingCards
+      )
+
+      const nonDuplicateCards = allCandidateCards.filter((_, idx) => !dupResults[idx]?.isDuplicate)
+      const duplicatesFiltered = allCandidateCards.length - nonDuplicateCards.length
+
+      if (nonDuplicateCards.length === 0) {
+        return {
+          success: false,
+          count: 0,
+          error: duplicatesFiltered > 0
+            ? 'All generated cards were duplicates of existing concepts.'
+            : 'No valid cards passed quality check.',
+          duplicates_filtered: duplicatesFiltered
+        }
+      }
+
+      const cardsToSave = nonDuplicateCards.slice(0, totalCount)
+      const savedCards = saveGeneratedCards(cardsToSave, db, options?.userId)
+
+      return {
+        success: true,
+        count: savedCards.length,
+        module_name: weekLabel,
+        duplicates_filtered: duplicatesFiltered
+      }
+    } catch (err: any) {
+      console.error('Error generating cards from materials:', err)
+      return { success: false, count: 0, error: err?.message || 'Failed to generate cards' }
+    }
+  })
+
 
   // ── Check generation status for a subject ───────────────────────────────
 

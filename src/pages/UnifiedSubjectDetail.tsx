@@ -63,6 +63,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
     subjectId: number
     subjectName: string
     materialId?: number
+    materialIds?: number[]
     materialName?: string
     initialTopic?: string
     initialTopics?: string[]
@@ -445,7 +446,57 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
 
   function handleTutorMaterial(material: Material): void {
     if (!subject) return
-    setShowConfigModal({ subjectId, subjectName: subject.name, materialId: material.id, materialName: material.filename, initialMode: 'material' })
+    setShowConfigModal({ subjectId, subjectName: subject.name, materialId: material.id, materialIds: [material.id], materialName: material.filename, initialMode: 'material' })
+  }
+
+  function handleTutorMaterials(targetMaterials: Material[], weekTitle?: string): void {
+    if (!subject || targetMaterials.length === 0) return
+    const ids = targetMaterials.map(m => m.id)
+    const names = targetMaterials.map(m => m.filename).join(', ')
+    setShowConfigModal({
+      subjectId,
+      subjectName: subject.name,
+      materialId: ids[0],
+      materialIds: ids,
+      materialName: targetMaterials.length === 1 ? targetMaterials[0].filename : `${weekTitle ? `${weekTitle}: ` : ''}${targetMaterials.length} materials (${names})`,
+      initialMode: 'material'
+    })
+  }
+
+  async function handleGenerateCardsForWeek(
+    week: ManualSyllabusWeek,
+    materialIds: number[],
+    options?: import('../types').ModuleCardGenOptions
+  ): Promise<void> {
+    setLoadingCards(prev => ({ ...prev, [week.id]: true }))
+    try {
+      const result = await window.electronAPI.cardsGenerateFromMaterials(
+        subjectId,
+        materialIds,
+        {
+          type: options?.type,
+          count: options?.count,
+          autoCount: options?.autoCount,
+          weekTitle: week.title
+        }
+      )
+      if (result.success) {
+        const typeStr = options?.type === 'flashcard' ? 'flashcards' : options?.type === 'active_recall' ? 'active recall questions' : 'cards'
+        const dupNote = result.duplicates_filtered && result.duplicates_filtered > 0 ? ` (${result.duplicates_filtered} duplicates skipped)` : ''
+        addToast({
+          type: 'success',
+          title: 'Cards Generated',
+          message: `${result.count} ${typeStr} created from ${result.module_name || week.title}${dupNote}.`
+        })
+        await loadAllData()
+      } else {
+        addToast({ type: 'error', title: 'Generation Failed', message: result.error || 'Unknown error' })
+      }
+    } catch (err: any) {
+      addToast({ type: 'error', title: 'Generation Error', message: err?.message || 'Failed to generate cards' })
+    } finally {
+      setLoadingCards(prev => ({ ...prev, [week.id]: false }))
+    }
   }
 
   function handleStartSpacedReview(moduleId?: number, selectedTopics?: string[]): void {
@@ -1475,11 +1526,16 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       {activeTab === 'manual' && hasCurriculum && (
         <ManualSyllabusView
           subjectId={subjectId}
+          subjectName={subject?.name}
           weeks={manualWeeks}
           materials={materials}
+          cards={cards}
+          loadingCards={loadingCards}
           onReload={loadAllData}
           onTutorMaterial={handleTutorMaterial}
+          onTutorMaterials={handleTutorMaterials}
           onOpenMaterial={(material) => navigate(`/subject/${subjectId}/material/${material.id}`)}
+          onGenerateCards={handleGenerateCardsForWeek}
         />
       )}
 
@@ -2378,6 +2434,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
           subjectId={showConfigModal.subjectId}
           subjectName={showConfigModal.subjectName}
           materialId={showConfigModal.materialId}
+          materialIds={showConfigModal.materialIds}
           materialName={showConfigModal.materialName}
           initialTopic={showConfigModal.initialTopic}
           initialTopics={showConfigModal.initialTopics}

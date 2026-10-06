@@ -1,42 +1,48 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import LoadingProgressBar from '../common/LoadingProgressBar'
-import type { SyllabusModule, ModuleTopic, ModuleCardGenOptions, ModuleCardGenType } from '../../types'
+import type { SyllabusModule, ModuleTopic, ManualSyllabusWeek, ModuleCardGenOptions, ModuleCardGenType } from '../../types'
 
 const CARD_GEN_PRESETS = [5, 10, 15, 20, 30]
 
 interface GenerateCardsModalProps {
   isOpen: boolean
-  module: SyllabusModule & { topics?: ModuleTopic[] }
+  module?: SyllabusModule & { topics?: ModuleTopic[] }
+  week?: ManualSyllabusWeek
   subjectName?: string
   isGenerating?: boolean
   initialTopicId?: number
+  initialMaterialId?: number
   onClose: () => void
-  onGenerate: (options: ModuleCardGenOptions) => void
+  onGenerate: (options: ModuleCardGenOptions & { materialIds?: number[] }) => void
 }
 
 export default function GenerateCardsModal({
   isOpen,
   module,
+  week,
   subjectName,
   isGenerating = false,
   initialTopicId,
+  initialMaterialId,
   onClose,
   onGenerate
 }: GenerateCardsModalProps): React.JSX.Element | null {
   const [selectedType, setSelectedType] = useState<ModuleCardGenType>('flashcard')
-  const [cardCount, setCardCount] = useState<number>(initialTopicId ? 5 : 15)
+  const [cardCount, setCardCount] = useState<number>(initialTopicId || initialMaterialId ? 5 : 15)
   const [isAutoCount, setIsAutoCount] = useState<boolean>(false)
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(initialTopicId ?? null)
+  const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(initialMaterialId ?? null)
 
-  // Reset state when modal opens for a new module or initialTopicId changes
+  // Reset state when modal opens for a new module/week or initial IDs change
   useEffect(() => {
     if (isOpen) {
       setSelectedType('flashcard')
       setSelectedTopicId(initialTopicId ?? null)
-      setCardCount(initialTopicId ? 5 : 15)
+      setSelectedMaterialId(initialMaterialId ?? null)
+      setCardCount(initialTopicId || initialMaterialId ? 5 : 15)
       setIsAutoCount(false)
     }
-  }, [isOpen, module.id, initialTopicId])
+  }, [isOpen, module?.id, week?.id, initialTopicId, initialMaterialId])
 
   // Handle keyboard shortcuts (Escape to close, Enter to submit)
   const handleKeyDown = useCallback(
@@ -48,7 +54,7 @@ export default function GenerateCardsModal({
         handleConfirm()
       }
     },
-    [isOpen, isGenerating, onClose, selectedType, cardCount, isAutoCount, selectedTopicId]
+    [isOpen, isGenerating, onClose, selectedType, cardCount, isAutoCount, selectedTopicId, selectedMaterialId]
   )
 
   useEffect(() => {
@@ -62,15 +68,27 @@ export default function GenerateCardsModal({
     if (isGenerating) return
 
     const finalCount = Math.max(1, cardCount)
-    const selectedTopic = (module.topics || []).find(t => t.id === selectedTopicId)
-
-    onGenerate({
-      type: selectedType,
-      count: finalCount,
-      autoCount: isAutoCount,
-      topicId: selectedTopicId,
-      concept: selectedTopic?.title
-    })
+    if (module) {
+      const selectedTopic = (module.topics || []).find(t => t.id === selectedTopicId)
+      onGenerate({
+        type: selectedType,
+        count: finalCount,
+        autoCount: isAutoCount,
+        topicId: selectedTopicId,
+        concept: selectedTopic?.title
+      })
+    } else if (week) {
+      const targetMaterials = selectedMaterialId
+        ? (week.materials || []).filter(m => m.id === selectedMaterialId)
+        : (week.materials || [])
+      onGenerate({
+        type: selectedType,
+        count: finalCount,
+        autoCount: isAutoCount,
+        materialIds: targetMaterials.map(m => m.id),
+        concept: targetMaterials.length === 1 ? targetMaterials[0].filename : week.title
+      })
+    }
   }
 
   return (
@@ -90,7 +108,7 @@ export default function GenerateCardsModal({
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
-                  {module.chapter_number ? `Chapter ${module.chapter_number}` : 'Curriculum Module'}
+                  {module ? (module.chapter_number ? `Chapter ${module.chapter_number}` : 'Curriculum Module') : 'Manual Syllabus'}
                 </span>
                 {subjectName && (
                   <span className="text-xs text-slate-400 dark:text-slate-500 truncate max-w-[180px]">
@@ -102,11 +120,11 @@ export default function GenerateCardsModal({
                 id="generate-cards-modal-title"
                 className="text-lg font-bold text-slate-900 dark:text-white line-clamp-1"
               >
-                {module.title}
+                {module?.title || week?.title}
               </h2>
-              {module.description && (
+              {(module?.description || week) && (
                 <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
-                  {module.description}
+                  {module?.description || `${week?.materials?.length || 0} material${(week?.materials?.length || 0) === 1 ? '' : 's'} assigned to this week`}
                 </p>
               )}
             </div>
@@ -126,8 +144,8 @@ export default function GenerateCardsModal({
 
         {/* Body */}
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
-          {/* Target Scope Selection */}
-          {module.topics && module.topics.length > 0 && (
+          {/* Target Scope Selection for Module */}
+          {module?.topics && module.topics.length > 0 && (
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
                 Target Scope
@@ -177,6 +195,65 @@ export default function GenerateCardsModal({
                     {module.topics.map(t => (
                       <option key={t.id} value={t.id}>
                         {t.title} {(t.card_count ?? 0) === 0 ? '⚠️ (No cards yet)' : `(${t.card_count} cards)`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Target Scope Selection for Week */}
+          {week && week.materials && week.materials.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+                Target Scope
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedMaterialId(null)
+                    setCardCount(15)
+                  }}
+                  className={`flex-1 py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    selectedMaterialId === null
+                      ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  <span>📚 Entire Week ({week.materials.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstMatId = week.materials?.[0]?.id ?? null
+                    setSelectedMaterialId(firstMatId)
+                    setCardCount(5)
+                  }}
+                  className={`flex-1 py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    selectedMaterialId !== null
+                      ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  <span>📄 Specific Material</span>
+                </button>
+              </div>
+
+              {selectedMaterialId !== null && (
+                <div className="mt-2">
+                  <select
+                    value={selectedMaterialId}
+                    onChange={e => {
+                      setSelectedMaterialId(Number(e.target.value))
+                      setCardCount(5)
+                    }}
+                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                  >
+                    {week.materials.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.filename}
                       </option>
                     ))}
                   </select>
