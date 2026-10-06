@@ -1524,7 +1524,7 @@ export function registerTutorHandlers(): void {
   // TUTOR SESSION CRUD
   // ═══════════════════════════════════════════════════════════════════════════
 
-  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number | boolean; title?: string; target_topic_ids?: number[]; target_topics?: string[]; gap_target_ids?: Array<number | null>; gap_evidence_by_topic_id?: Record<number, unknown>; recommended_minutes_by_topic_id?: Record<number, number> }) => {
+  ipcMain.handle('tutor:createSession', (_event, subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: { duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number | boolean; title?: string; material_ids?: number[]; source_lecture_ids?: number[]; source_annotation_ids?: number[]; target_topic_ids?: number[]; target_topics?: string[]; gap_target_ids?: Array<number | null>; gap_evidence_by_topic_id?: Record<number, unknown>; recommended_minutes_by_topic_id?: Record<number, number> }) => {
     const now = new Date().toISOString()
     const nowMs = Date.now()
     // Use null for subject when 0 (general chat) — FK allows null
@@ -1533,8 +1533,8 @@ export function registerTutorHandlers(): void {
     const neverStudiedVal = config?.never_studied ? 1 : 0
     const initialTitle = config?.title || null
     const result = db.prepare(`
-      INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase, module_id, started_at, duration_minutes, depth_level, difficulty_mode, never_studied, title, last_message_at, is_pinned)
-      VALUES (?, ?, ?, 'structured_qa', ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      INSERT INTO tutor_sessions (subject_id, user_id, session_type, phase, module_id, started_at, duration_minutes, depth_level, difficulty_mode, never_studied, title, source_material_ids, source_lecture_ids, source_annotation_ids, last_message_at, is_pinned)
+      VALUES (?, ?, ?, 'structured_qa', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(
       actualSubjectId,
       actualUserId,
@@ -1546,6 +1546,9 @@ export function registerTutorHandlers(): void {
       config?.difficulty_mode || 'fixed',
       neverStudiedVal,
       initialTitle,
+      JSON.stringify(config?.material_ids || []),
+      JSON.stringify(config?.source_lecture_ids || []),
+      JSON.stringify(config?.source_annotation_ids || []),
       nowMs
     )
     const sessionId = Number(result.lastInsertRowid)
@@ -2163,7 +2166,10 @@ Category tags should clearly specify the purpose:
       const material = params.materialId
         ? db.prepare('SELECT filename, LENGTH(content_text) AS length FROM materials WHERE id = ?').get(params.materialId) as { filename: string; length: number } | undefined
         : undefined
-      const materialCount = db.prepare('SELECT COUNT(*) AS count FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND content_text != \'\'').get(params.subjectId) as { count: number }
+      const selectedMaterialIds = params.materialIds?.length ? params.materialIds : (params.materialId ? [params.materialId] : [])
+      const materialCount = selectedMaterialIds.length > 0
+        ? db.prepare(`SELECT COUNT(*) AS count FROM materials WHERE subject_id = ? AND id IN (${selectedMaterialIds.map(() => '?').join(',')}) AND content_text IS NOT NULL AND content_text != ''`).get(params.subjectId, ...selectedMaterialIds) as { count: number }
+        : db.prepare('SELECT COUNT(*) AS count FROM materials WHERE subject_id = ? AND content_text IS NOT NULL AND content_text != \'\'').get(params.subjectId) as { count: number }
       materialContextBlock = material
         ? `\nSOURCE SCOPE: ${material.filename} is indexed (${(material.length || 0).toLocaleString()} characters). Use retrieved passages, not assumed document coverage.`
         : `\nSOURCE SCOPE: ${materialCount.count} course material(s) are indexed. Use retrieved passages, not assumed document coverage.`
@@ -2176,7 +2182,7 @@ Category tags should clearly specify the purpose:
     // the current material scope or explicit annotation selection permits it.
     try {
       const explicitIds = params.annotationContext?.annotationIds
-      const materialIds = params.annotationContext?.materialIds || (params.materialId ? [params.materialId] : [])
+      const materialIds = params.annotationContext?.materialIds ?? params.materialIds ?? (params.materialId ? [params.materialId] : [])
       const lectureIds = params.annotationContext?.lectureIds || []
       const clauses: string[] = ['subject_id = ?', 'deleted_at IS NULL']
       const args: number[] = [params.subjectId]
@@ -2301,7 +2307,7 @@ Category tags should clearly specify the purpose:
     let learnerMemoryRefs: import('../../src/types').MemoryRef[] = []
     try {
       const recentImpasses = (params.questionsAsked || []).filter(question => /stuck|hint|help|wrong|again/i.test(question)).length
-      groundedEvidence = await retrieveGroundedEvidenceAsync(params.message, params.subjectId || null, params.materialId || null)
+      groundedEvidence = await retrieveGroundedEvidenceAsync(params.message, params.subjectId || null, params.materialId || null, params.materialIds)
       if (assessmentId && userId) {
         new LearnerMemoryService(db).attachAssessmentEvidence(assessmentId, groundedEvidence.map(item => ({
           materialId: item.materialId,
@@ -2351,14 +2357,30 @@ Category tags should clearly specify the purpose:
       } catch { /* non-critical — config already saved on create */ }
     }
 
+    const continuousLearningLoopBlock = params.sessionType === 'tutor' ? `
+
+MANDATORY CONTINUOUS LEARNING LOOP:
+${isFirstTurn
+  ? '- This is the opening turn: begin with a concise explanation or orientation, then end with exactly one active-recall question about that explanation.'
+  : '- Begin by evaluating the learner\'s answer to the previous active-recall question. State what was correct, what was missing or mistaken, and why.'}
+- After assessing the previous answer, ask the learner for a Feynman-style teach-back of that same concept: explain it in plain language, include the mechanism or relationship, and give one accurate example or implication. Treat this as self-explanation, not a request to repeat your wording.
+- Then explain or correct the concept as needed and teach exactly one next source-grounded concept, relationship, or application. Do not dump a long lecture.
+- End with exactly ONE clearly labeled ACTIVE RECALL question about the newly explained material. The learner must answer it on the next turn.
+- Prefer open-ended free recall or short-answer prompts. Use one target, one task, and enough context to make the question answerable without revealing the answer.
+- Select the most useful question type for the source: mechanism (why/how), comparison, prediction, application, diagnosis of a misconception, or transfer to a changed scenario. Avoid yes/no, trivia, compound prompts, answer-revealing wording, and verbatim repeats.
+- After a correct answer, increase depth or vary the context. After an incomplete or incorrect answer, give precise corrective feedback, use the smallest useful hint, then ask a parallel or slightly easier retrieval question.
+- Revisit prior weak or due concepts after a delay and interleave closely related concepts that are easy to confuse. Keep every explanation and question grounded in the selected source evidence.
+- Do not end an active turn with a statement, summary, offer of help, or Feynman prompt alone. The final visible content must be the single new active-recall question.
+` : ''
+
     // Build phase-specific system prompt
     const phaseInstructions: Record<string, string> = {
-      structured_qa: `You are a rigorous university tutor teaching "${className}".
+      structured_qa: `You are a rigorous university tutor teaching "${className}".${continuousLearningLoopBlock}
 
-FIRST MESSAGE — Your opening response MUST follow this exact format:
-Sentence 1: "Welcome! Let's dive into [topic]."
-Sentence 2: A specific question about [topic].
-Example: "Welcome! Let's explore the Prologue of The Alchemist. What lesson does the narrator draw from the myth of Narcissus and the lake?"
+FIRST MESSAGE — Your opening response must explain or orient the learner before asking anything:
+1. Welcome the learner and give a concise, source-grounded explanation of the first concept.
+2. Ask the learner to explain that concept back in simple language only if useful; do not pretend there is a previous answer to assess.
+3. End with exactly one active-recall question about the explanation.
 
 PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
 1. STRICT SOURCE GROUNDING: Ask questions and teach concepts present in the student's uploaded source materials.
@@ -2375,7 +2397,7 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
    - Never mark an answer as "completely wrong" when it is conceptually right or logically entails the correct answer.
    - Distinguish true misconceptions from alternative phrasings, informal explanations, or implied deductions.
 5. Give crisp, specific corrective feedback (affirming what was right, highlighting what was missed) grounded in the source materials.
-6. TEACH-BACK PROTOCOL: Whenever you explain or correct a concept, finish the visible response by asking the learner to explain it back in their own words, including the mechanism and one example or implication. Append exactly one hidden control marker on its own final line: [TEACH_BACK: canonical concept name]. Do not add this marker for a question-only turn.
+6. TEACH-BACK PROTOCOL: Use the continuous learning loop above. Whenever you explain or correct a concept, ask for a plain-language teach-back and include the mechanism plus one example or implication. Append exactly one hidden control marker on its own final line: [TEACH_BACK: canonical concept name]. The marker is never learner-facing.
 7. CONTINUOUS ADVANCEMENT: A concept is not mastered until the learner passes the teach-back gate. Only then elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or the next syllabus subtopic. Never end early.
 8. FORMATTING:
    - Use LaTeX for mathematical formulas, variables, and equations ($...$ inline, $$...$$ standalone, e.g. $P$, $Q$, $E = mc^2$, $(1, 2)$). Do NOT wrap currency amounts like $5 or $3 in LaTeX math — write currency as standard plain text ($5, $3).
@@ -2386,7 +2408,7 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
      * Output a valid Vega-Lite v5 JSON specification inside a vega-lite fenced code block with "width": "container".
 8. STRICT SESSION COMPLETION RULE: Do NOT end the session, say goodbye, or output [SESSION_END] while time remains. Always conclude your message with a question or scenario.${syllabusContext}`,
 
-      socratic: `You are now in the SOCRATIC DEEP DIVE phase for "${className}".
+      socratic: `You are now in the SOCRATIC DEEP DIVE phase for "${className}".${continuousLearningLoopBlock}
 
 PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 1. STRICT SOURCE GROUNDING: Probe deeply into concepts, causal mechanisms, and applications found within the uploaded materials.
@@ -2399,7 +2421,7 @@ PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 6. Ask them to connect concepts across different sections of the uploaded material.
 7. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
 8. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
-9. Whenever you explain or correct a concept, end by asking the learner to teach it back in their own words with the mechanism and one example or implication, then append [TEACH_BACK: canonical concept name] on its own final line. Do not add this marker for a question-only turn.
+9. Whenever you explain or correct a concept, use the continuous learning loop: request a plain-language teach-back, teach one next concept, and finish with exactly one new active-recall question. Append [TEACH_BACK: canonical concept name] on its own final line. The marker is never learner-facing.
 10. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
 11. FORMATTING:
    - When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, coordinates $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$. Do not wrap plain currency ($5, $10) in LaTeX.
@@ -2429,7 +2451,7 @@ PEDAGOGICAL METHOD — Session Summary Phase:
     }
 
     const systemInstruction = phaseInstructions[params.phase] ||
-      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics. Wrap math in LaTeX ($...$) and format tabular data in Markdown tables (do not wrap currency in LaTeX). If visualizing complex economic or scientific models, you may provide a vega-lite specification, but do not overuse graphs.${syllabusContext}`
+      `You are a helpful AI tutor for "${className}". Answer questions and help the student learn strictly from the provided source materials. Do not hallucinate or quiz on unuploaded topics. Wrap math in LaTeX ($...$) and format tabular data in Markdown tables (do not wrap currency in LaTeX). If visualizing complex economic or scientific models, you may provide a vega-lite specification, but do not overuse graphs.${continuousLearningLoopBlock}${syllabusContext}`
 
     // Add attached content if present
     let userMessage = params.message
@@ -2481,6 +2503,31 @@ PEDAGOGICAL METHOD — Session Summary Phase:
         activeTeachBackGate = createTeachBackGate(params.sessionId, teachBackMarker[1])
       }
       fullResponse = fullResponse.replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
+
+      // The active-recall question is the learner's handoff into the next
+      // turn. If the model violates the contract, make one bounded repair
+      // request using the same grounded context before persisting the answer.
+      if (params.sessionType === 'tutor' && params.phase !== 'summary' && !/\?\s*$/.test(fullResponse)) {
+        try {
+          const repaired = await callAIMessages([
+            ...messages,
+            {
+              role: 'user',
+              content: `REPAIR THIS TUTOR RESPONSE. Keep its useful explanation, then append exactly one final section titled "Active recall" containing one source-grounded, open-ended question about the newly explained concept. Use one target only; do not ask yes/no or compound questions; do not include the answer. Return only the repaired response.\n\nDRAFT:\n${fullResponse}`
+            }
+          ], { ...getAIConfig(), apiKey: getApiKey() }, { type: 'text' })
+          const repairedText = cleanupAIResponse(repaired).replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
+          if (repairedText) {
+            const suffix = repairedText.startsWith(fullResponse) ? repairedText.slice(fullResponse.length).trim() : repairedText
+            if (suffix) {
+              fullResponse = `${fullResponse}\n\n${suffix}`
+              win.webContents.send('tutor:chunk', { conversationId: params.sessionId, content: `\n\n${suffix}`, type: 'text' })
+            }
+          }
+        } catch (repairError) {
+          console.warn('Tutor response contract repair unavailable:', repairError)
+        }
+      }
       const verification = verifyTutorAnswer(fullResponse, contextPack.evidence)
       if (verification.needsAbstention) {
         fullResponse += '\n\nI could not verify one or more source references against the selected material, so please treat those claims as unconfirmed.'

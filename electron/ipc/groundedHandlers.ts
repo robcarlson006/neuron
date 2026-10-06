@@ -21,11 +21,12 @@ export function setGroundedDatabase(database: Database.Database): void {
   db = database
 }
 
-export function retrieveGroundedEvidence(query: string, subjectId?: number | null, materialId?: number | null): GroundedEvidence[] {
+export function retrieveGroundedEvidence(query: string, subjectId?: number | null, materialId?: number | null, materialIds?: number[]): GroundedEvidence[] {
   const filters: string[] = []
   const params: number[] = []
   if (subjectId) { filters.push('m.subject_id = ?'); params.push(subjectId) }
   if (materialId) { filters.push('m.id = ?'); params.push(materialId) }
+  if (materialIds?.length) { filters.push(`m.id IN (${materialIds.map(() => '?').join(',')})`); params.push(...materialIds) }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
   const rows = db.prepare(`
         SELECT e.material_id, m.subject_id, e.chunk_index, e.chunk_text, e.embedding, m.filename
@@ -41,6 +42,7 @@ export function retrieveGroundedEvidence(query: string, subjectId?: number | nul
     const materialParams: number[] = []
     if (subjectId) { materialFilters.push('subject_id = ?'); materialParams.push(subjectId) }
     if (materialId) { materialFilters.push('id = ?'); materialParams.push(materialId) }
+    if (materialIds?.length) { materialFilters.push(`id IN (${materialIds.map(() => '?').join(',')})`); materialParams.push(...materialIds) }
     const materials = db.prepare(`SELECT id, subject_id, filename, content_text FROM materials WHERE ${materialFilters.join(' AND ')}`).all(...materialParams) as Array<{ id: number; subject_id: number; filename: string; content_text: string }>
     const transientCandidates: RetrievalCandidate[] = []
     for (const material of materials) {
@@ -63,6 +65,7 @@ export function retrieveGroundedEvidence(query: string, subjectId?: number | nul
   const materialParams: number[] = []
   if (subjectId) { materialFilters.push('subject_id = ?'); materialParams.push(subjectId) }
   if (materialId) { materialFilters.push('id = ?'); materialParams.push(materialId) }
+  if (materialIds?.length) { materialFilters.push(`id IN (${materialIds.map(() => '?').join(',')})`); materialParams.push(...materialIds) }
   const unindexedMaterials = db.prepare(`SELECT id, subject_id, filename, content_text FROM materials WHERE ${materialFilters.join(' AND ')}`).all(...materialParams) as Array<{ id: number; subject_id: number; filename: string; content_text: string }>
   for (const material of unindexedMaterials) {
     if (indexedMaterialIds.has(material.id)) continue
@@ -73,17 +76,18 @@ export function retrieveGroundedEvidence(query: string, subjectId?: number | nul
   return rankLexicalCandidates(query, candidates, 8)
 }
 
-export async function retrieveGroundedEvidenceAsync(query: string, subjectId?: number | null, materialId?: number | null): Promise<GroundedEvidence[]> {
+export async function retrieveGroundedEvidenceAsync(query: string, subjectId?: number | null, materialId?: number | null, materialIds?: number[]): Promise<GroundedEvidence[]> {
   const filters: string[] = []
   const params: number[] = []
   if (subjectId) { filters.push('m.subject_id = ?'); params.push(subjectId) }
   if (materialId) { filters.push('m.id = ?'); params.push(materialId) }
+  if (materialIds?.length) { filters.push(`m.id IN (${materialIds.map(() => '?').join(',')})`); params.push(...materialIds) }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
   const rows = db.prepare(`
     SELECT e.material_id, m.subject_id, e.chunk_index, e.chunk_text, e.embedding, m.filename
     FROM embeddings e JOIN materials m ON m.id = e.material_id ${where}
   `).all(...params) as Array<{ material_id: number; subject_id: number; chunk_index: number; chunk_text: string; embedding: Buffer | null; filename: string }>
-  if (rows.length === 0) return retrieveGroundedEvidence(query, subjectId, materialId)
+  if (rows.length === 0) return retrieveGroundedEvidence(query, subjectId, materialId, materialIds)
 
   const candidates: RetrievalCandidate[] = rows.map(row => ({
     text: row.chunk_text,
@@ -97,6 +101,7 @@ export async function retrieveGroundedEvidenceAsync(query: string, subjectId?: n
   const materialParams: number[] = []
   if (subjectId) { materialFilters.push('subject_id = ?'); materialParams.push(subjectId) }
   if (materialId) { materialFilters.push('id = ?'); materialParams.push(materialId) }
+  if (materialIds?.length) { materialFilters.push(`id IN (${materialIds.map(() => '?').join(',')})`); materialParams.push(...materialIds) }
   const unindexedMaterials = db.prepare(`SELECT id, subject_id, filename, content_text FROM materials WHERE ${materialFilters.join(' AND ')}`).all(...materialParams) as Array<{ id: number; subject_id: number; filename: string; content_text: string }>
   for (const material of unindexedMaterials) {
     if (indexedMaterialIds.has(material.id)) continue

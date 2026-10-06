@@ -13,6 +13,16 @@ import { adjustTutorTimer, formatTutorTimer, getTutorTimerState } from '../../li
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
 type PageState = 'loading' | 'streaming' | 'awaiting_input' | 'phase_transition' | 'session_complete' | 'error'
 
+function parseJsonIds(value?: string | null): number[] | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((id): id is number => Number.isInteger(id)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export default function TutorSession(): React.JSX.Element {
   const { classId, sessionId: routeSessionId } = useParams<{ classId: string; sessionId?: string }>()
   const subjectId = Number(classId)
@@ -372,6 +382,9 @@ export default function TutorSession(): React.JSX.Element {
             is_quick_review: isQuickReviewSession,
             quick_review_topics: restoredQrTopics,
             material_id: config.material_id,
+            material_ids: config.material_ids || (config.material_id ? [config.material_id] : parseJsonIds(s.source_material_ids)),
+            annotation_ids: config.annotation_ids || parseJsonIds(s.source_annotation_ids),
+            lecture_ids: config.lecture_ids || parseJsonIds(s.source_lecture_ids),
             material_name: config.material_name
           }
           setSessionConfig(restoredConfig)
@@ -544,6 +557,9 @@ export default function TutorSession(): React.JSX.Element {
           gap_target_ids: config.gap_target_ids,
           gap_evidence_by_topic_id: config.gap_evidence_by_topic_id,
           recommended_minutes_by_topic_id: config.recommended_minutes_by_topic_id
+          ,material_ids: config.material_ids || (config.material_id ? [config.material_id] : undefined)
+          ,source_lecture_ids: config.lecture_ids
+          ,source_annotation_ids: config.annotation_ids
         }
       ) as { id: number; phase: string }
 
@@ -632,6 +648,10 @@ ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No tim
 ${config.never_studied ? 'The student has never studied this before. Start from absolute basics.' : ''}`
       }
 
+      initialMsg += `
+
+OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, source-grounded concept before asking anything. End with exactly one active-recall question about that explanation. Do not begin with a question-only response.`
+
       // Save the initial user message
       await window.electronAPI.tutorSaveMessage({
         session_id: session.id,
@@ -711,8 +731,9 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
         difficultyMode: runtime.config.depth_level === 'adaptive' ? 'adaptive' : 'fixed',
         neverStudied: runtime.config.never_studied,
         materialId: sessionConfig?.material_id || runtime.config.material_id,
+        materialIds: sessionConfig?.material_ids || runtime.config.material_ids,
         annotationContext: sessionConfig?.annotation_ids || sessionConfig?.lecture_ids
-          ? { annotationIds: sessionConfig.annotation_ids, lectureIds: sessionConfig.lecture_ids }
+          ? { materialIds: sessionConfig.material_ids, annotationIds: sessionConfig.annotation_ids, lectureIds: sessionConfig.lecture_ids }
           : undefined,
         targetTopic: sessionConfig?.target_topic || runtime.config.target_topic,
         targetTopics: sessionConfig?.target_topics || runtime.config.target_topics,

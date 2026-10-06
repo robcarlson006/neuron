@@ -62,8 +62,8 @@ export default function SessionConfigModal({
   const [selectedTopics, setSelectedTopics] = useState<string[]>(
     initialTopics && initialTopics.length > 0 ? initialTopics : initialTopic ? [initialTopic] : []
   )
-  const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(propMaterialId || null)
-  const [materialAnnotations, setMaterialAnnotations] = useState<DocumentAnnotation[]>([])
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>(propMaterialId ? [propMaterialId] : [])
+  const [materialAnnotationsById, setMaterialAnnotationsById] = useState<Record<number, DocumentAnnotation[]>>({})
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<number[]>([])
   const [lecturesList, setLecturesList] = useState<Lecture[]>([])
   const [selectedLectureIds, setSelectedLectureIds] = useState<number[]>([])
@@ -86,25 +86,25 @@ export default function SessionConfigModal({
 
   useEffect(() => {
     let active = true
-    if (!selectedMaterialId) {
-      setMaterialAnnotations([])
+    if (selectedMaterialIds.length === 0) {
+      setMaterialAnnotationsById({})
       setSelectedAnnotationIds([])
       return () => { active = false }
     }
-    window.electronAPI.listDocumentAnnotations({ materialId: selectedMaterialId }).then((rows) => {
-      if (!active) return
-      setMaterialAnnotations(rows)
-      setSelectedAnnotationIds(rows.map((row) => row.id))
-    }).catch(() => {
-      if (active) {
-        setMaterialAnnotations([])
-        setSelectedAnnotationIds([])
-        setLectureAnnotationsById({})
-        setSelectedLectureAnnotationIds([])
+    Promise.all(selectedMaterialIds.map(async (materialId) => {
+      try {
+        return [materialId, await window.electronAPI.listDocumentAnnotations({ materialId })] as const
+      } catch {
+        return [materialId, [] as DocumentAnnotation[]] as const
       }
+    })).then((entries) => {
+      if (!active) return
+      const annotationMap = Object.fromEntries(entries) as Record<number, DocumentAnnotation[]>
+      setMaterialAnnotationsById(annotationMap)
+      setSelectedAnnotationIds(entries.flatMap(([, rows]) => rows.map((row) => row.id)))
     })
     return () => { active = false }
-  }, [selectedMaterialId])
+  }, [selectedMaterialIds])
 
   // "Never studied" adds foundational scaffolding in the tutor prompt but
   // must not silently rewrite the learner's selected difficulty level.
@@ -221,15 +221,10 @@ export default function SessionConfigModal({
         if (isMounted) {
           setMaterialsList(mats)
           setLecturesList(lectures)
-          setSelectedLectureIds(lectures.map((lecture) => lecture.id))
           const annotationMap = Object.fromEntries(lectureAnnotationEntries) as Record<number, DocumentAnnotation[]>
           setLectureAnnotationsById(annotationMap)
-          setSelectedLectureAnnotationIds(lectureAnnotationEntries.flatMap(([, rows]) => rows.map((row) => row.id)))
-          if (propMaterialId) {
-            setSelectedMaterialId(propMaterialId)
-          } else if (mats.length > 0 && !selectedMaterialId) {
-            setSelectedMaterialId(mats[0].id)
-          }
+          setSelectedLectureAnnotationIds([])
+          if (propMaterialId) setSelectedMaterialIds([propMaterialId])
         }
       } catch (err) {
         console.error('Failed to load syllabus/materials for config modal:', err)
@@ -239,10 +234,9 @@ export default function SessionConfigModal({
     }
 
     async function loadGaps(): Promise<void> {
-      if (!user) return
       setLoadingGaps(true)
       try {
-        const gaps = (await window.electronAPI.tutorGetGapAnalysis(subjectId, user.id)) as GapAnalysisResult
+        const gaps = (await window.electronAPI.tutorGetGapAnalysis(subjectId, user?.id || 0)) as GapAnalysisResult
         if (isMounted) {
           setGapAnalysis(gaps)
           const allGapItems = gaps.items || [...gaps.struggledTopics, ...gaps.uncoveredTopics]
@@ -322,6 +316,7 @@ export default function SessionConfigModal({
     let chosenTopics: string[] = []
     let chosenModuleId: number | undefined
     let chosenModuleName: string | undefined
+    let chosenMaterialIds: number[] = []
     let chosenMaterialId: number | undefined
     let chosenMaterialName: string | undefined
     let isFillGaps = false
@@ -372,9 +367,14 @@ export default function SessionConfigModal({
         chosenTopic = chosenTopics.join(', ') || activeMod?.title || subjectName
       }
     } else if (studyMode === 'material') {
-      const activeMat = materialsList.find(m => m.id === selectedMaterialId)
-      chosenMaterialId = activeMat?.id || propMaterialId
-      chosenMaterialName = activeMat?.filename || propMaterialName
+      const activeMats = materialsList.filter(m => selectedMaterialIds.includes(m.id))
+      chosenMaterialIds = activeMats.map(m => m.id)
+      chosenMaterialId = chosenMaterialIds[0] || propMaterialId
+      chosenMaterialName = activeMats.length === 1
+        ? activeMats[0].filename
+        : activeMats.length > 1
+          ? `${activeMats.length} selected materials`
+          : propMaterialName
       chosenTopic = chosenMaterialName ? `Material: ${chosenMaterialName}` : subjectName
     } else if (studyMode === 'custom') {
       chosenTopic = customTopic.trim() || subjectName
@@ -389,6 +389,7 @@ export default function SessionConfigModal({
       depth_level: finalDepth,
       never_studied: neverStudied || studyMode === 'new_content',
       material_id: chosenMaterialId,
+      material_ids: studyMode === 'material' ? chosenMaterialIds : undefined,
       material_name: chosenMaterialName,
       annotation_ids: studyMode === 'material'
         ? [...selectedAnnotationIds, ...selectedLectureAnnotationIds]
@@ -396,7 +397,7 @@ export default function SessionConfigModal({
       // Annotation IDs are authoritative when present, so lecture_ids is only
       // used for backwards-compatible whole-lecture selection when no sidecar
       // annotations exist yet.
-      lecture_ids: studyMode === 'material' && selectedLectureAnnotationIds.length === 0 && Object.values(lectureAnnotationsById).every((rows) => rows.length === 0)
+      lecture_ids: studyMode === 'material' && selectedLectureIds.length > 0 && selectedLectureAnnotationIds.length === 0
         ? selectedLectureIds
         : undefined,
       module_id: chosenModuleId,
@@ -1033,12 +1034,12 @@ export default function SessionConfigModal({
                     </label>
                     <div className="space-y-1.5 max-h-40 overflow-y-auto">
                       {materialsList.map(mat => {
-                        const isSelected = selectedMaterialId === mat.id
+                        const isSelected = selectedMaterialIds.includes(mat.id)
                         return (
                           <button
                             key={mat.id}
                             type="button"
-                            onClick={() => setSelectedMaterialId(mat.id)}
+                            onClick={() => setSelectedMaterialIds((current) => isSelected ? current.filter((id) => id !== mat.id) : [...current, mat.id])}
                             className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
                               isSelected
                                 ? 'bg-violet-600 text-white shadow-sm'
@@ -1052,25 +1053,33 @@ export default function SessionConfigModal({
                         )
                       })}
                     </div>
-                    <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-600 bg-white/70 dark:bg-slate-800/60 p-2.5">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Attached notes & highlights</span>
-                        <button type="button" onClick={() => setSelectedAnnotationIds(selectedAnnotationIds.length === materialAnnotations.length ? [] : materialAnnotations.map((row) => row.id))} className="text-[10px] text-violet-600 dark:text-violet-400">
-                          {selectedAnnotationIds.length === materialAnnotations.length ? 'Deselect all' : 'Select all'}
-                        </button>
-                      </div>
-                      {materialAnnotations.length === 0 ? (
-                        <p className="text-[10px] text-slate-400">No Cornell annotations saved for this material yet.</p>
-                      ) : (
-                        <div className="space-y-1 max-h-28 overflow-y-auto">
-                          {materialAnnotations.map((annotation) => (
-                            <label key={annotation.id} className="flex items-start gap-2 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer">
-                              <input type="checkbox" checked={selectedAnnotationIds.includes(annotation.id)} onChange={(event) => setSelectedAnnotationIds((current) => event.target.checked ? [...current, annotation.id] : current.filter((id) => id !== annotation.id))} className="mt-0.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
-                              <span><strong className="uppercase text-violet-500">{annotation.kind}</strong>{annotation.selected_text ? ` — “${annotation.selected_text.slice(0, 65)}${annotation.selected_text.length > 65 ? '…' : ''}”` : ` — ${annotation.body.slice(0, 80)}`}</span>
-                            </label>
-                          ))}
-                        </div>
-                      )}
+                    <div className="mt-3 space-y-2">
+                      {selectedMaterialIds.map((materialId) => {
+                        const annotations = materialAnnotationsById[materialId] || []
+                        const material = materialsList.find((item) => item.id === materialId)
+                        return (
+                          <div key={materialId} className="rounded-lg border border-slate-200 dark:border-slate-600 bg-white/70 dark:bg-slate-800/60 p-2.5">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Notes & highlights · {material?.filename || 'Material'}</span>
+                              <button type="button" onClick={() => setSelectedAnnotationIds((current) => current.length >= annotations.length && annotations.every((row) => current.includes(row.id)) ? current.filter((id) => !annotations.some((row) => row.id === id)) : [...new Set([...current, ...annotations.map((row) => row.id)])])} className="text-[10px] text-violet-600 dark:text-violet-400">
+                                {annotations.length > 0 && annotations.every((row) => selectedAnnotationIds.includes(row.id)) ? 'Deselect all' : 'Select all'}
+                              </button>
+                            </div>
+                            {annotations.length === 0 ? (
+                              <p className="text-[10px] text-slate-400">No Cornell annotations saved for this material yet.</p>
+                            ) : (
+                              <div className="space-y-1 max-h-28 overflow-y-auto">
+                                {annotations.map((annotation) => (
+                                  <label key={annotation.id} className="flex items-start gap-2 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer">
+                                    <input type="checkbox" checked={selectedAnnotationIds.includes(annotation.id)} onChange={(event) => setSelectedAnnotationIds((current) => event.target.checked ? [...new Set([...current, annotation.id])] : current.filter((id) => id !== annotation.id))} className="mt-0.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                                    <span><strong className="uppercase text-violet-500">{annotation.kind}</strong>{annotation.selected_text ? ` — “${annotation.selected_text.slice(0, 65)}${annotation.selected_text.length > 65 ? '…' : ''}”` : ` — ${annotation.body.slice(0, 80)}`}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                     {lecturesList.length > 0 && (
                       <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white/70 dark:bg-slate-800/60 p-2.5">
@@ -1335,9 +1344,9 @@ export default function SessionConfigModal({
           <button
             type="button"
             onClick={handleStart}
-            disabled={starting || (studyMode === 'fill_gaps' && selectedGapItems.length === 0)}
+            disabled={starting || (studyMode === 'fill_gaps' && selectedGapItems.length === 0) || (studyMode === 'material' && selectedMaterialIds.length === 0 && selectedLectureIds.length === 0 && selectedLectureAnnotationIds.length === 0)}
             className={`inline-flex shrink-0 items-center justify-center rounded-xl px-5 py-2.5 text-xs font-bold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-neuron-500 focus-visible:ring-offset-2 ${
-              starting || (studyMode === 'fill_gaps' && selectedGapItems.length === 0)
+              starting || (studyMode === 'fill_gaps' && selectedGapItems.length === 0) || (studyMode === 'material' && selectedMaterialIds.length === 0 && selectedLectureIds.length === 0 && selectedLectureAnnotationIds.length === 0)
                 ? 'bg-violet-400 text-white cursor-not-allowed'
                 : 'bg-violet-600 hover:bg-violet-700 text-white shadow-md hover:shadow-lg'
             }`}

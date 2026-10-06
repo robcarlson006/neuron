@@ -1108,6 +1108,9 @@ export interface TutorSession {
   module_id?: number
   summary?: string
   cards_generated: number
+  source_material_ids?: string
+  source_lecture_ids?: string
+  source_annotation_ids?: string
   started_at: string
   ended_at?: string
   duration_minutes?: number
@@ -1218,6 +1221,7 @@ export interface TutorStreamParams {
   topicsMastered?: string[]
   weakTopicsConcerns?: string[]
   materialId?: number
+  materialIds?: number[]
   materialContent?: string
   annotationContext?: {
     materialIds?: number[]
@@ -1249,6 +1253,7 @@ export interface TutorSessionConfig {
   depth_level: 1 | 2 | 3 | 4 | 5 | 'adaptive'
   never_studied: boolean
   material_id?: number
+  material_ids?: number[]
   material_name?: string
   annotation_ids?: number[]
   lecture_ids?: number[]

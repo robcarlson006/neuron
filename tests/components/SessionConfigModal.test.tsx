@@ -219,6 +219,8 @@ describe('SessionConfigModal - New Content & Multi-Module Study', () => {
 
     await waitFor(() => expect(screen.getByText(/Week 1 lecture/)).toBeInTheDocument())
     const annotationCheckbox = screen.getByLabelText(/Why\?/i)
+    expect(annotationCheckbox).not.toBeChecked()
+    fireEvent.click(screen.getByText(/Week 1 lecture/))
     expect(annotationCheckbox).toBeChecked()
     fireEvent.click(annotationCheckbox)
 
@@ -227,7 +229,46 @@ describe('SessionConfigModal - New Content & Multi-Module Study', () => {
     const configParam = new URLSearchParams(targetUrl.split('?')[1]).get('config')
     const parsedConfig = JSON.parse(decodeURIComponent(configParam!))
     expect(parsedConfig.annotation_ids).toEqual([])
+    expect(parsedConfig.lecture_ids).toEqual([9])
+  })
+
+  it('supports selecting multiple materials without selecting lecture notes by default', async () => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      libraryGetFiles: jest.fn().mockResolvedValue([
+        { id: 7, filename: 'Slides.pdf' },
+        { id: 8, filename: 'Textbook.pdf' }
+      ]),
+      listLectures: jest.fn().mockResolvedValue([{ id: 9, subject_id: 101, title: 'Week 1 lecture' }]),
+      listDocumentAnnotations: jest.fn().mockResolvedValue([])
+    } as any
+
+    render(
+      <MemoryRouter>
+        <SessionConfigModal
+          subjectId={101}
+          subjectName="Principles of Microeconomics"
+          initialMode="material"
+          onClose={jest.fn()}
+        />
+      </MemoryRouter>
+    )
+
+    const slides = await screen.findByRole('button', { name: /Slides\.pdf/i })
+    const textbook = await screen.findByRole('button', { name: /Textbook\.pdf/i })
+    expect(slides).not.toHaveClass('bg-violet-600')
+    expect(textbook).not.toHaveClass('bg-violet-600')
+
+    fireEvent.click(slides)
+    fireEvent.click(textbook)
+    fireEvent.click(screen.getByRole('button', { name: /Start session/i }))
+
+    const targetUrl = mockNavigate.mock.calls[0][0]
+    const configParam = new URLSearchParams(targetUrl.split('?')[1]).get('config')
+    const parsedConfig = JSON.parse(decodeURIComponent(configParam!))
+    expect(parsedConfig.material_ids).toEqual([7, 8])
     expect(parsedConfig.lecture_ids).toBeUndefined()
+    expect(parsedConfig.annotation_ids).toEqual([])
   })
 
   it('selects material annotations by default and removes them from tutor context when deselected', async () => {

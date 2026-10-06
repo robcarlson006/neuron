@@ -376,6 +376,7 @@ const electronAPI = {
   // ── Tutor Sessions ──
   tutorCreateSession: (subjectId: number, userId: number, sessionType?: string, moduleId?: number, config?: {
     duration_minutes: number | null; depth_level: number; difficulty_mode?: 'fixed' | 'adaptive'; never_studied: number; title?: string;
+    material_ids?: number[]; source_lecture_ids?: number[]; source_annotation_ids?: number[];
     target_topic_ids?: number[]; target_topics?: string[]; gap_target_ids?: Array<number | null>;
     gap_evidence_by_topic_id?: Record<number, unknown>; recommended_minutes_by_topic_id?: Record<number, number>
   }): Promise<TutorSession> =>
