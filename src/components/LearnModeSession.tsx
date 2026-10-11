@@ -5,6 +5,7 @@ import { evaluateSemantically } from '../lib/semanticEvaluator'
 import { hasMathInput } from '../lib/mathFormatter'
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
+import { useMathSnippetInsertion } from '../lib/mathSnippetInsertion'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -136,31 +137,12 @@ export default function LearnModeSession({
   const [showMathKeyboard, setShowMathKeyboard] = useState(false)
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
-
-  const handleInsertSnippet = (snippet: string) => {
-    if (!inputRef.current) {
-      setWrittenInput((prev) => {
-        const updated = prev + snippet
-        writtenInputRef.current = updated
-        return updated
-      })
-      return
-    }
-
-    const textarea = inputRef.current
-    const start = textarea.selectionStart || 0
-    const end = textarea.selectionEnd || 0
-    const text = textarea.value
-    const updated = text.substring(0, start) + snippet + text.substring(end)
-    setWrittenInput(updated)
-    writtenInputRef.current = updated
-
-    setTimeout(() => {
-      textarea.focus()
-      const nextPos = start + snippet.length
-      textarea.setSelectionRange(nextPos, nextPos)
-    }, 0)
+  const writtenInputRef = useRef(writtenInput)
+  const setWrittenInputWithRef = (value: string) => {
+    writtenInputRef.current = value
+    setWrittenInput(value)
   }
+  const handleInsertSnippet = useMathSnippetInsertion(writtenInput, setWrittenInputWithRef, inputRef)
 
   // ─── Refs for keyboard handlers (avoid stale closures) ────────────────────
 
@@ -171,7 +153,6 @@ export default function LearnModeSession({
   const mcResultRef = useRef<boolean | null>(null)
   const writtenAnsweredRef = useRef(writtenAnswered)
   const writtenResultRef = useRef<'correct' | 'incorrect' | null>(writtenResult)
-  const writtenInputRef = useRef(writtenInput)
 
   useEffect(() => { queueRef.current = queue }, [queue])
   useEffect(() => { currentIdxRef.current = currentIdx }, [currentIdx])
@@ -549,9 +530,10 @@ export default function LearnModeSession({
                 Written Response
               </span>
               {!writtenAnswered && (
-                <button
-                  type="button"
-                  onClick={() => setShowMathKeyboard((prev) => !prev)}
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setShowMathKeyboard((prev) => !prev)}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                     showMathKeyboard
                       ? "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-700 shadow-2xs"

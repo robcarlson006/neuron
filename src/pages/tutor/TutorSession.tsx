@@ -8,7 +8,7 @@ import QuickCardModal, { type QuickCardCandidate } from '../../components/tutor/
 import TutorChatSidebar from './TutorChatSidebar'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation, TutorTeachBackGate, TutorPhaseTransitionResult } from '../../types'
-import { adjustTutorTimer, formatTutorTimer, getTutorTimerState } from '../../lib/tutorTimer'
+import { adjustTutorTimer, formatTutorTimer, formatTutorTimerDisplay, getTutorTimerState, shouldTutorTimerTick } from '../../lib/tutorTimer'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
 type PageState = 'loading' | 'streaming' | 'awaiting_input' | 'phase_transition' | 'session_complete' | 'error'
@@ -27,7 +27,7 @@ export default function TutorSession(): React.JSX.Element {
   const { classId, sessionId: routeSessionId } = useParams<{ classId: string; sessionId?: string }>()
   const subjectId = Number(classId)
   const navigate = useNavigate()
-  const { user, subjects, addToast, focusBlock, endFocusBlock } = useAppStore()
+  const { user, subjects, addToast, focusBlock, endFocusBlock, pauseFocusBlock, resumeFocusBlock } = useAppStore()
   const subject = subjects.find(s => s.id === subjectId)
 
   // ── State ──
@@ -38,6 +38,7 @@ export default function TutorSession(): React.JSX.Element {
   const [messages, setMessages] = useState<Message[]>([])
   const [streamingContent, setStreamingContent] = useState('')
   const [sending, setSending] = useState(false)
+  const [isAiResponding, setIsAiResponding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showEndModal, setShowEndModal] = useState(false)
   const [endingSession, setEndingSession] = useState(false)
@@ -88,6 +89,7 @@ export default function TutorSession(): React.JSX.Element {
   const [showExitConfirmModal, setShowExitConfirmModal] = useState(false)
   const [showTimerMenu, setShowTimerMenu] = useState(false)
   const timerMenuRef = useRef<HTMLDivElement>(null)
+  const focusBlockAutoPausedRef = useRef(false)
 
   // Quick Review state
   const [quickReviewTopicIndex, setQuickReviewTopicIndex] = useState<number>(1)
@@ -272,6 +274,28 @@ export default function TutorSession(): React.JSX.Element {
     return undefined
   }, [showTimerMenu])
 
+  // A response wait should not consume a Focus Block. Only resume blocks that
+  // this component paused, leaving a learner's existing manual pause intact.
+  useEffect(() => {
+    if (isAiResponding && focusBlock?.isRunning && !focusBlock.isPaused && !focusBlockAutoPausedRef.current) {
+      focusBlockAutoPausedRef.current = true
+      pauseFocusBlock()
+      return
+    }
+
+    if (!isAiResponding && focusBlockAutoPausedRef.current) {
+      focusBlockAutoPausedRef.current = false
+      resumeFocusBlock()
+    }
+  }, [isAiResponding, focusBlock?.isRunning, focusBlock?.isPaused, pauseFocusBlock, resumeFocusBlock])
+
+  useEffect(() => () => {
+    if (focusBlockAutoPausedRef.current) {
+      focusBlockAutoPausedRef.current = false
+      resumeFocusBlock()
+    }
+  }, [resumeFocusBlock])
+
   useEffect(() => {
     if (!showTimerMenu) return
     function handleTimerEscape(event: KeyboardEvent): void {
@@ -315,6 +339,7 @@ export default function TutorSession(): React.JSX.Element {
     setError(null)
     setSessionEnded(false)
     setSessionEvaluation(null)
+    setIsAiResponding(false)
 
     const isExplicitNew = searchParams.get('new') === 'true'
     const configParam = searchParams.get('config')
@@ -683,6 +708,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
         setError(`Failed to start tutor session: ${errMsg}`)
       }
       setPageState('error')
+      setIsAiResponding(false)
     }
   }
 
@@ -696,6 +722,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
     studentMessageId?: string
   ): Promise<void> {
     setSending(true)
+    setIsAiResponding(true)
     setPageState('streaming')
     streamingRef.current = ''
     setStreamingContent('')
@@ -703,6 +730,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
 
     const timeoutId = setTimeout(() => {
       setSending(false)
+      setIsAiResponding(false)
       streamingRef.current = ''
       setStreamingContent('')
       addToast({ type: 'error', title: 'Request timed out', message: 'The AI took too long to respond.' })
@@ -752,7 +780,8 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
         weakTopicsConcerns: runtime.weak_topics,
       })
     } catch (err) {
-      if (streamingRef.current) {
+      const hadPartialResponse = Boolean(streamingRef.current)
+      if (hadPartialResponse) {
         // Partial response was received — save it
         clearTimeout(timeoutId)
         const partial = streamingRef.current
@@ -773,9 +802,10 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
           }])
         }
       }
-      if (!streamingRef.current) {
-        setSending(false)
-        setStreamingContent('')
+      setSending(false)
+      setIsAiResponding(false)
+      setStreamingContent('')
+      if (!hadPartialResponse) {
         const errMsg = (err as Error).message || ''
         if (errMsg.includes('401') || errMsg.includes('Unauthorized') || errMsg.includes('API key') || errMsg.includes('Authentication failed')) {
           setError('API Key Invalid or Expired (401). Update your API key in Settings.')
@@ -787,16 +817,26 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
           setError(errMsg || 'Something went wrong while connecting to the AI.')
           setPageState('error')
         }
+      } else {
+        setFocusKey(prev => prev + 1)
+        setPageState('awaiting_input')
       }
     } finally {
       clearTimeout(timeoutId)
+      // The IPC call resolves after its terminal chunk. This remains a
+      // defensive release for aborts or unexpected transport failures.
+      setIsAiResponding(false)
     }
   }
 
   // ── Wall-clock timer ──
   useEffect(() => {
-    if (runtime.config.duration_minutes === null) return
-    if (runtime.is_time_up || isPaused) return
+    if (!shouldTutorTimerTick({
+      durationMinutes: runtime.config.duration_minutes,
+      isTimeUp: runtime.is_time_up,
+      isManualPaused: isPaused,
+      isAiResponding,
+    })) return
 
     let lastTick = Date.now()
     const interval = setInterval(() => {
@@ -805,9 +845,15 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
       lastTick = now
 
       setRuntime(prev => {
-        if (prev.config.duration_minutes === null || prev.is_time_up || isPaused) return prev
+        const durationMinutes = prev.config.duration_minutes
+        if (!shouldTutorTimerTick({
+          durationMinutes,
+          isTimeUp: prev.is_time_up,
+          isManualPaused: isPaused,
+          isAiResponding,
+        }) || durationMinutes === null) return prev
         const newElapsed = prev.time_elapsed_seconds + delta
-        const totalSecs = prev.config.duration_minutes * 60
+        const totalSecs = durationMinutes * 60
         const newRemaining = Math.max(0, totalSecs - newElapsed)
         const isUp = newRemaining <= 0
 
@@ -821,7 +867,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [runtime.config.duration_minutes, runtime.is_time_up, isPaused])
+  }, [runtime.config.duration_minutes, runtime.is_time_up, isPaused, isAiResponding])
 
   // ── Break timer when paused ──
   useEffect(() => {
@@ -978,6 +1024,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
         streamDoneRef.current = true
 
         setSending(false)
+        setIsAiResponding(false)
         const finalContent = streamingRef.current
         streamingRef.current = ''
         setStreamingContent('')
@@ -1066,6 +1113,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
         setPageState('awaiting_input')
       } else if (chunk.type === 'error') {
         setSending(false)
+        setIsAiResponding(false)
         streamingRef.current = ''
         setStreamingContent('')
         addToast({ type: 'error', title: 'AI Response Error', message: chunk.content || 'Something went wrong.' })
@@ -1079,9 +1127,6 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
   // ── Send message ──
   async function handleSend(message: string): Promise<void> {
     if (!sessionId || !message.trim() || sending) return
-    if (isPaused) {
-      setIsPaused(false)
-    }
 
     // Save user message
     const userMsg = await window.electronAPI.tutorSaveMessage({
@@ -1767,6 +1812,8 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
                 className={`flex min-w-[8.75rem] items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium tabular-nums transition-colors ${
                   isPaused
                     ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 font-semibold'
+                    : isAiResponding
+                      ? 'bg-violet-50 hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800 font-semibold'
                     : runtime.config.duration_minutes === null
                       ? 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200/80 dark:border-slate-700/80'
                       : runtime.is_time_up || runtime.time_remaining_seconds === 0
@@ -1780,14 +1827,13 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
               >
                 <span>⏱️</span>
                 <span>
-                  {runtime.config.duration_minutes === null
-                    ? isPaused ? 'Paused' : 'No limit'
-                    : runtime.is_time_up || runtime.time_remaining_seconds === 0
-                      ? '0:00 (Time up)'
-                      : isPaused
-                        ? `Paused (${Math.floor(runtime.time_remaining_seconds / 60)}:${(runtime.time_remaining_seconds % 60).toString().padStart(2, '0')})`
-                    : formatTutorTimer(runtime.time_remaining_seconds)
-                  }
+                  {formatTutorTimerDisplay({
+                    durationMinutes: runtime.config.duration_minutes,
+                    remainingSeconds: runtime.time_remaining_seconds,
+                    isTimeUp: runtime.is_time_up,
+                    isManualPaused: isPaused,
+                    isAiResponding,
+                  })}
                 </span>
                 <svg className="w-3 h-3 text-slate-400 dark:text-slate-500 ml-0.5" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />

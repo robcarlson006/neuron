@@ -3,6 +3,7 @@ import LatexText from '../LatexText'
 import MathKeyboard from '../practice/MathKeyboard'
 import { hasMathInput } from '../../lib/mathFormatter'
 import { Sigma, Calculator as CalcIcon } from '../icons'
+import { useMathSnippetInsertion } from '../../lib/mathSnippetInsertion'
 
 interface ChatInputProps {
   onSend: (message: string) => void | Promise<void>
@@ -63,25 +64,7 @@ export default function ChatInput({
     textareaRef.current?.focus()
   }, [refocusKey])
 
-  const handleInsertSnippet = (snippet: string) => {
-    if (!textareaRef.current) {
-      setInput(input + snippet)
-      return
-    }
-
-    const textarea = textareaRef.current
-    const start = textarea.selectionStart || 0
-    const end = textarea.selectionEnd || 0
-    const text = textarea.value
-    const updated = text.substring(0, start) + snippet + text.substring(end)
-    setInput(updated)
-
-    setTimeout(() => {
-      textarea.focus()
-      const nextPos = start + snippet.length
-      textarea.setSelectionRange(nextPos, nextPos)
-    }, 0)
-  }
+  const handleInsertSnippet = useMathSnippetInsertion(input, setInput, textareaRef)
 
   async function handleSubmit(): Promise<void> {
     const trimmed = input.trim()
@@ -181,6 +164,7 @@ export default function ChatInput({
         {/* Math Palette Toggle */}
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => setShowMathPalette((prev) => !prev)}
           className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${
             showMathPalette

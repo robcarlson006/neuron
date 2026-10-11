@@ -5,6 +5,7 @@ import MarkdownRenderer from '../MarkdownRenderer'
 import MathKeyboard from './MathKeyboard'
 import CalculatorWidget from '../calculator/CalculatorWidget'
 import { hasMathInput } from '../../lib/mathFormatter'
+import { useMathSnippetInsertion } from '../../lib/mathSnippetInsertion'
 import type { CalculatorSkin, PracticeEvaluationResult, PracticeProblem, PracticeProblemAttempt } from '../../types'
 
 interface HintItem { level: number; hint: string; learnerPrompt?: string }
@@ -25,6 +26,7 @@ interface PracticeProblemSolverProps {
   evaluation?: PracticeEvaluationResult | null
   attempt?: PracticeProblemAttempt
   userAnswer?: string
+  onAnswerChange?: (value: string) => void
   isSubmitting?: boolean
   isHinting?: boolean
   isGeneratingVariant?: boolean
@@ -34,25 +36,21 @@ interface PracticeProblemSolverProps {
 export default function PracticeProblemSolver({
   problem, problemIndex, totalProblems, calculatorSkin = 'numworks', onSubmit, onSkip, onNextProblem, onFinishSession,
   onGenerateVariant, onRequestHint, onRevealSolution, onRetry, hints = [], evaluation = null, attempt: _attempt,
-  userAnswer: controlledAnswer, isSubmitting = false, isHinting = false, isGeneratingVariant = false, hasNextProblem = false
+  userAnswer: controlledAnswer, onAnswerChange, isSubmitting = false, isHinting = false, isGeneratingVariant = false, hasNextProblem = false
 }: PracticeProblemSolverProps): React.JSX.Element {
   const [localAnswer, setLocalAnswer] = useState('')
   const [showCalculator, setShowCalculator] = useState(false)
   const [startTime, setStartTime] = useState(Date.now())
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const answer = controlledAnswer ?? localAnswer
-  const setAnswer = (value: string) => setLocalAnswer(value)
+  const setAnswer = (value: string) => {
+    if (controlledAnswer === undefined) setLocalAnswer(value)
+    onAnswerChange?.(value)
+  }
 
   useEffect(() => { setLocalAnswer(''); setStartTime(Date.now()) }, [problem.id])
 
-  const handleInsertSnippet = (snippet: string) => {
-    const textarea = textareaRef.current
-    if (!textarea) return setAnswer(`${answer}${snippet}`)
-    const start = textarea.selectionStart || 0
-    const end = textarea.selectionEnd || 0
-    setAnswer(`${answer.substring(0, start)}${snippet}${answer.substring(end)}`)
-    window.setTimeout(() => { textarea.focus(); textarea.setSelectionRange(start + snippet.length, start + snippet.length) }, 0)
-  }
+  const handleInsertSnippet = useMathSnippetInsertion(answer, setAnswer, textareaRef)
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault()

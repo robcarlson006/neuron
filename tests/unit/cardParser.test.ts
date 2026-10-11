@@ -1,4 +1,4 @@
-import { parseCardsFromText, getCardTypeLabel, cleanCardBrackets } from '../../src/lib/cardParser'
+import { parseCardsFromText, parseTSVFlashcards, getCardTypeLabel, cleanCardBrackets } from '../../src/lib/cardParser'
 
 describe('cleanCardBrackets', () => {
   it('cleans terms wrapped entirely in brackets', () => {
@@ -54,6 +54,41 @@ describe('cleanCardBrackets', () => {
   it('cleans numeric terms and dates in brackets', () => {
     expect(cleanCardBrackets('[4]')).toBe('4')
     expect(cleanCardBrackets('The year was [1945].')).toBe('The year was 1945.')
+  })
+})
+
+describe('legacy Struggle Fix front cleanup', () => {
+  const answer = 'Subscapularis.'
+
+  it.each([
+    ['**[Struggle Fix: Rotator Cuff] Which muscle internally rotates the humerus?** -> ' + answer],
+    ['**[Struggle Fix] Which muscle internally rotates the humerus?** -> ' + answer],
+    ['**Struggle Fix: Rotator Cuff - Which muscle internally rotates the humerus?** -> ' + answer],
+    ['**Struggle Fix: Which muscle internally rotates the humerus?** -> ' + answer]
+  ])('removes a generated prefix from %s', (text) => {
+    const cards = parseCardsFromText(text)
+
+    expect(cards).toHaveLength(1)
+    expect(cards[0].front).toBe('Which muscle internally rotates the humerus?')
+    expect(cards[0].back).toBe(answer)
+  })
+
+  it('preserves normal questions that use the word struggle', () => {
+    const cards = parseCardsFromText(
+      '**Why did the Weimar Republic struggle with hyperinflation?** -> War reparations and monetary expansion.'
+    )
+
+    expect(cards).toHaveLength(1)
+    expect(cards[0].front).toBe('Why did the Weimar Republic struggle with hyperinflation?')
+  })
+
+  it('drops a legacy Struggle Fix tag in TSV cards', () => {
+    const cards = parseTSVFlashcards(
+      'Struggle Fix: Rotator Cuff\tWhich muscle internally rotates the humerus?\tSubscapularis.\tInternal rotator of the humerus.'
+    )
+
+    expect(cards).toHaveLength(1)
+    expect(cards[0].front).toBe('Which muscle internally rotates the humerus?')
   })
 })
 

@@ -127,5 +127,18 @@ describe('LatexText', () => {
       const katexElements = container.querySelectorAll('.katex')
       expect(katexElements.length).toBeGreaterThanOrEqual(2)
     })
+
+    it('renders representative inline and display LaTeX forms', () => {
+      const { container } = render(<LatexText>{String.raw`$\frac{x+1}{x-2}$ $x^{2}+3x+2$ $\frac{\partial U}{\partial x}$ $\int_0^1 x^2\,dx$ $\sum_{i=1}^{n} x_i$ $MRS_{xy}=\frac{MU_x}{MU_y}$ $P^*, Q^*$ \(x^2\) \[x^2\] \begin{pmatrix}1&2\\3&4\end{pmatrix}`}</LatexText>)
+      expect(container.querySelectorAll('.katex').length).toBe(10)
+      expect(container.querySelector('.katex-error')).toBeNull()
+    })
+
+    it('leaves incomplete streamed math literal without a KaTeX error box', () => {
+      const { container } = render(<LatexText>{String.raw`Streaming $x^2 and $$\frac{1}{2} and \frac{`}</LatexText>)
+      expect(container.textContent).toContain('$x^2')
+      expect(container.textContent).toContain('$$\\frac{1}{2}')
+      expect(container.querySelector('.katex-error')).toBeNull()
+    })
   })
 })

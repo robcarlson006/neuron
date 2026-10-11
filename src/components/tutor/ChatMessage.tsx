@@ -103,7 +103,7 @@ export default function ChatMessage({
 
       {/* Message bubble */}
       <div ref={messageRef} className={`relative max-w-[80%] min-w-0 ${isUser ? 'items-end' : 'items-start'}`} onMouseUp={handleMessageMouseUp}>
-        <div className={`rounded-2xl px-4 py-3 ${
+        <div className={`min-w-0 max-w-full rounded-2xl px-4 py-3 ${
           isUser
             ? 'bg-violet-600 text-white rounded-tr-md'
             : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-md shadow-sm'

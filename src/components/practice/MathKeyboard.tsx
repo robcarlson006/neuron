@@ -82,6 +82,7 @@ export default function MathKeyboard({ onInsert }: MathKeyboardProps): React.JSX
             <button
               key={cat.name}
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 setActiveTab(cat.name)
                 setIsExpanded(true)
@@ -99,6 +100,7 @@ export default function MathKeyboard({ onInsert }: MathKeyboardProps): React.JSX
 
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => setIsExpanded(!isExpanded)}
           className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
           title={isExpanded ? "Collapse palette" : "Expand palette"}
@@ -114,6 +116,7 @@ export default function MathKeyboard({ onInsert }: MathKeyboardProps): React.JSX
             <button
               key={idx}
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               title={sym.tooltip || sym.snippet}
               onClick={() => onInsert(sym.snippet)}
               className="px-2 py-1.5 rounded-lg bg-white dark:bg-slate-800 hover:bg-violet-50 dark:hover:bg-violet-950/40 hover:border-violet-300 dark:hover:border-violet-700 border border-slate-200 dark:border-slate-700/80 text-slate-800 dark:text-slate-200 font-mono text-center transition-all shadow-2xs active:scale-95"

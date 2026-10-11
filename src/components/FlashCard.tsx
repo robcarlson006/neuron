@@ -7,6 +7,7 @@ import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEval
 import { hasMathInput } from '../lib/mathFormatter'
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
+import { useMathSnippetInsertion } from '../lib/mathSnippetInsertion'
 
 import { useAppStore } from '../store/appStore'
 
@@ -36,25 +37,7 @@ export default function FlashCard({
   const [showMathKeyboard, setShowMathKeyboard] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const handleInsertSnippet = (snippet: string) => {
-    if (!textareaRef.current) {
-      setAnswer((prev) => prev + snippet)
-      return
-    }
-
-    const textarea = textareaRef.current
-    const start = textarea.selectionStart || 0
-    const end = textarea.selectionEnd || 0
-    const text = textarea.value
-    const updated = text.substring(0, start) + snippet + text.substring(end)
-    setAnswer(updated)
-
-    setTimeout(() => {
-      textarea.focus()
-      const nextPos = start + snippet.length
-      textarea.setSelectionRange(nextPos, nextPos)
-    }, 0)
-  }
+  const handleInsertSnippet = useMathSnippetInsertion(answer, setAnswer, textareaRef)
 
   // Reset when card changes
   useEffect(() => {
@@ -206,9 +189,10 @@ export default function FlashCard({
             <span className="text-xs font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
               Your Answer (optional)
             </span>
-            <button
-              type="button"
-              onClick={() => setShowMathKeyboard((prev) => !prev)}
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setShowMathKeyboard((prev) => !prev)}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                 showMathKeyboard
                   ? "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-700 shadow-2xs"

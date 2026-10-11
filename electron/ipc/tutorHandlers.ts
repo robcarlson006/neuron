@@ -21,6 +21,13 @@ import { buildExactFocusPlan, hasExactFocusDuration, selectFocusSubjects, valida
 import { decideAdaptiveDifficulty } from '../../src/lib/adaptiveTutorEngine'
 import { buildTutorAssessmentPrompt, parseTutorAssessment } from '../../src/lib/tutorAssessment'
 import {
+  buildCoveragePlan,
+  parseConceptTag,
+  stripConceptTags,
+  computeRubricScore,
+  computeConceptMastery
+} from '../../src/lib/coverage/conceptCoverage'
+import {
   buildCKRFMemoryBlock,
   recordTopicAssessment,
   recordMisconception,
@@ -730,12 +737,47 @@ export function computeGapAnalysis(
   const uncoveredItems: GapAnalysisItem[] = []
   const memoryTopicsLower = new Set(memories.map(m => m.topic.toLowerCase()))
 
-  // Check module topics
+  // Check module topics with concept-level accuracy
   for (const t of topics) {
     const mod = modules.find(m => m.id === t.module_id)
     const isStudied = studiedTopicIds.has(t.id) || memoryTopicsLower.has(t.title.toLowerCase())
     const hasEvidence = struggledItems.some(item => item.topicId === t.id || item.topic.toLowerCase() === t.title.toLowerCase())
-    if (!isStudied && !hasEvidence) {
+
+    // Check if topic has granular concepts defined
+    let conceptStats: { total: number; assessed: number } | null = null
+    try {
+      const cRows = database.prepare(`
+        SELECT COUNT(*) as total,
+          SUM(CASE WHEN p.state = 'assessed' THEN 1 ELSE 0 END) as assessed
+        FROM topic_concepts c
+        LEFT JOIN concept_progress p ON p.concept_id = c.id AND p.user_id = ?
+        WHERE c.topic_id = ? AND c.status = 'active'
+      `).get(userId || 1, t.id) as { total: number; assessed: number | null } | undefined
+      if (cRows && cRows.total > 0) {
+        conceptStats = { total: cRows.total, assessed: cRows.assessed || 0 }
+      }
+    } catch { /* ignore */ }
+
+    if (conceptStats) {
+      if (conceptStats.assessed < conceptStats.total && !hasEvidence) {
+        const remaining = conceptStats.total - conceptStats.assessed
+        uncoveredItems.push({
+          type: 'uncovered',
+          topic: t.title,
+          moduleId: t.module_id,
+          moduleTitle: mod?.title,
+          details: conceptStats.assessed > 0
+            ? `${remaining} of ${conceptStats.total} concepts remaining to cover`
+            : mod ? `From module: ${mod.title}` : undefined,
+          priority: conceptStats.assessed > 0 ? 1 : 2,
+          estimatedMinutes: Math.min(30, Math.max(15, remaining * 5)),
+          recommendedMinutes: Math.min(30, Math.max(15, remaining * 5)),
+          topicId: t.id,
+          gapKinds: ['unseen'],
+          evidence: [{ kind: 'unseen', detail: `${conceptStats.assessed}/${conceptStats.total} concepts covered` }]
+        })
+      }
+    } else if (!isStudied && !hasEvidence) {
       uncoveredItems.push({
         type: 'uncovered',
         topic: t.title,
@@ -1846,13 +1888,9 @@ Create a balanced MIX of atomic flashcards (term -> concise definition) and acti
 
 Generate 6-10 cards total. Format each card on its own line using this exact format:
 
-**[Category: Topic] Question or Term** -> Concise Answer or Definition
+**Question or Term** -> Concise Answer or Definition
 
-Category tags should clearly specify the purpose:
-- **[Struggle Fix: Topic] Question** -> Answer (for cards addressing student mistakes/confusions)
-- **[Distinction: Topic] Question** -> Answer (for contrast between confusable terms/concepts like internal vs outward rotation)
-- **[Vocabulary: Topic] Term** -> Definition (for high-yield terminology introduced in dialogue)
-- **[Mechanism: Topic] Question** -> Answer (for causal steps or reasoning)
+For cards addressing student mistakes or misconceptions, target the exact confusion with a clean, natural question or prompt. Do not add category labels, headings, prefixes, or metadata to the card front. In particular, never include "Struggle Fix" anywhere in a card's question or front.
 
 ## STRICT PSYCHOMETRIC DESIGN RULES (CRITICAL):
 1. **MINIMUM INFORMATION PRINCIPLE (ATOMICITY)**: Each card must test exactly ONE indivisible idea, mechanism, or fact. Never create compound cards or multi-item lists.
@@ -2032,15 +2070,81 @@ Category tags should clearly specify the purpose:
         const aiConfig = getAIConfig()
         const apiKey = getApiKey()
         if (previousTutorMessage && apiKey) {
+          // Check if previous tutor question had a [CONCEPT:id] tag
+          const taggedConceptId = parseConceptTag(previousTutorMessage.content)
+          let rubricKeyPoints: string[] | undefined
+          let taggedConceptRow: { id: number; label: string; key_points_json: string } | undefined
+          if (taggedConceptId) {
+            taggedConceptRow = db.prepare('SELECT id, label, key_points_json FROM topic_concepts WHERE id = ?').get(taggedConceptId) as any
+            if (taggedConceptRow) {
+              try {
+                rubricKeyPoints = JSON.parse(taggedConceptRow.key_points_json || '[]')
+              } catch { /* ignore */ }
+            }
+          }
+
           const assessmentRaw = await callAIMessages([
             { role: 'system', content: 'You are a conservative educational assessment service. Return only valid JSON.' },
-            { role: 'user', content: buildTutorAssessmentPrompt(previousTutorMessage.content, params.message, activeTeachBackGate?.concept || targetConcept, { isTeachBack: Boolean(activeTeachBackGate) }) }
+            { role: 'user', content: buildTutorAssessmentPrompt(
+                previousTutorMessage.content,
+                params.message,
+                taggedConceptRow?.label || activeTeachBackGate?.concept || targetConcept,
+                { isTeachBack: Boolean(activeTeachBackGate), rubricKeyPoints }
+              )
+            }
           ], { ...aiConfig, apiKey }, { type: 'json_object' })
-          const assessment = parseTutorAssessment(assessmentRaw, params.sessionId, activeTeachBackGate?.concept || targetConcept, studentMessageKey, params.studentMessageId)
+          const assessment = parseTutorAssessment(
+            assessmentRaw,
+            params.sessionId,
+            taggedConceptRow?.label || activeTeachBackGate?.concept || targetConcept,
+            studentMessageKey,
+            params.studentMessageId,
+            taggedConceptId || undefined
+          )
           if (activeTeachBackGate) assessment.taskType = 'teach_back'
           const recorded = new LearnerMemoryService(db).recordTutorAssessment(assessment)
           assessmentId = recorded.id
           adaptiveState = recorded.state
+
+          // If a specific concept was tagged and assessed, record background rubric score and update concept_progress
+          if (taggedConceptId && rubricKeyPoints && rubricKeyPoints.length > 0 && assessment.outcome !== 'unassessed') {
+            try {
+              const score10 = computeRubricScore({
+                keyPointsTotal: rubricKeyPoints.length,
+                keyPointsHit: assessment.keyPointsHit || [],
+                hasMaterialMisconception: Boolean(assessment.misconception),
+                assistanceLevel: assessment.assistanceLevel
+              })
+
+              db.prepare(`
+                INSERT INTO concept_assessments (
+                  concept_id, user_id, session_id, assessment_id,
+                  key_points_hit_json, misconception, assistance_level, score_10
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(
+                taggedConceptId,
+                userId,
+                params.sessionId,
+                assessmentId || null,
+                JSON.stringify(assessment.keyPointsHit || []),
+                assessment.misconception || null,
+                assessment.assistanceLevel || 'none',
+                score10
+              )
+
+              // Mark concept as 'assessed' in concept_progress
+              db.prepare(`
+                INSERT INTO concept_progress (concept_id, user_id, state, last_assessed_at)
+                VALUES (?, ?, 'assessed', datetime('now'))
+                ON CONFLICT(concept_id, user_id) DO UPDATE SET
+                  state = 'assessed',
+                  last_assessed_at = datetime('now')
+              `).run(taggedConceptId, userId)
+            } catch (cpErr) {
+              console.warn('Failed to record concept assessment progress:', cpErr)
+            }
+          }
+
           if (activeTeachBackGate && !recorded.duplicate) {
             const passed = assessment.teachBackStatus === 'passed' && assessment.outcome === 'correct' && assessment.ownWords === true
             const feedback = passed ? null : (assessment.missingElements?.join('; ') || assessment.misconception || 'Explain the central mechanism in your own words and include one correct example or implication.')
@@ -2298,8 +2402,102 @@ Category tags should clearly specify the purpose:
       console.warn('Failed to build SRS warmup block:', srsErr)
     }
 
+    // ── Concept Coverage & Teaching Sequence Plan ──
+    let conceptCoverageBlock = ''
+    try {
+      const resolvedUserId = userId || 1
+      let targetTopicRow: { id: number; title: string } | undefined
+      if (params.targetTopic) {
+        targetTopicRow = db.prepare('SELECT id, title FROM module_topics WHERE LOWER(title) = LOWER(?) LIMIT 1').get(params.targetTopic) as any
+      } else if (params.targetTopics?.length) {
+        targetTopicRow = db.prepare('SELECT id, title FROM module_topics WHERE LOWER(title) = LOWER(?) LIMIT 1').get(params.targetTopics[0]) as any
+      } else if (params.moduleContext?.currentTopic) {
+        targetTopicRow = db.prepare('SELECT id, title FROM module_topics WHERE LOWER(title) = LOWER(?) LIMIT 1').get(params.moduleContext.currentTopic) as any
+      }
+
+      if (targetTopicRow) {
+        const rows = db.prepare(`
+          SELECT
+            c.id, c.topic_id, c.subject_id, c.label, c.summary,
+            c.key_points_json, c.source_chunk_ids_json, c.sort_order,
+            c.teach_order, c.prerequisite_ids_json, c.content_hash,
+            c.status, c.created_at,
+            COALESCE(p.state, 'unseen') AS progress_state,
+            p.introduced_at, p.last_assessed_at
+          FROM topic_concepts c
+          LEFT JOIN concept_progress p ON p.concept_id = c.id AND p.user_id = ?
+          WHERE c.topic_id = ? AND c.status = 'active'
+          ORDER BY c.teach_order ASC, c.id ASC
+        `).all(resolvedUserId, targetTopicRow.id) as any[]
+
+        if (rows.length > 0) {
+          const concepts = rows.map((r) => {
+            const assessments = db.prepare(`
+              SELECT score_10 FROM concept_assessments
+              WHERE concept_id = ? AND user_id = ?
+              ORDER BY created_at DESC
+            `).all(r.id, resolvedUserId) as Array<{ score_10: number }>
+
+            const mastery = computeConceptMastery(assessments.map((a) => a.score_10))
+            return {
+              id: r.id,
+              topic_id: r.topic_id,
+              subject_id: r.subject_id,
+              label: r.label,
+              summary: r.summary || undefined,
+              key_points: JSON.parse(r.key_points_json || '[]'),
+              source_chunk_ids: JSON.parse(r.source_chunk_ids_json || '[]'),
+              sort_order: r.sort_order,
+              teach_order: r.teach_order,
+              prerequisite_ids: JSON.parse(r.prerequisite_ids_json || '[]'),
+              content_hash: r.content_hash,
+              status: r.status,
+              created_at: r.created_at,
+              progress_state: r.progress_state,
+              mastery_score_10: mastery.masteryScore10,
+              assessment_count: mastery.count
+            } as import('../../src/types').TopicConcept
+          })
+
+          const plan = buildCoveragePlan(concepts)
+          const planLines: string[] = [
+            '',
+            `🎯 SYSTEMATIC CONCEPT COVERAGE & TEACHING ORDER DIRECTIVE (Topic: "${targetTopicRow.title}"):`,
+            `Total atomic concepts for this topic: ${concepts.length}. Fully assessed: ${concepts.filter(c => c.progress_state === 'assessed').length}/${concepts.length}.`
+          ]
+
+          if (plan.review.length > 0) {
+            planLines.push(
+              `PHASE 1 - RAPID WARM-UP ON PREVIOUSLY COVERED MATERIAL (${plan.review.length} concepts):`,
+              `Do a rapid active recall check on these concepts from prior sessions before introducing new material (weakest first):`,
+              ...plan.review.map(c => `  - [CONCEPT:${c.id}] "${c.label}" (Previous mastery: ${c.mastery_score_10 !== null ? `${c.mastery_score_10}/10` : 'unassessed'}, key points: ${c.key_points.slice(0, 2).join('; ')})`),
+              `RULE: Ask 1 crisp active recall question per review concept. Once the student demonstrates competence, praise briefly and move to the next concept. Do NOT stay trapped in previous lessons!`
+            )
+          }
+
+          if (plan.newConcepts.length > 0) {
+            planLines.push(
+              `PHASE 2 - NEW UNCOVERED CONCEPTS IN OPTIMAL PEDAGOGICAL ORDER (${plan.newConcepts.length} remaining):`,
+              `Advance systematically through these unseen concepts in the specified order:`,
+              ...plan.newConcepts.slice(0, 8).map((c, idx) => `  ${idx + 1}. [CONCEPT:${c.id}] "${c.label}" (Key mechanisms: ${c.key_points.join('; ')})`),
+              `CRITICAL PROTOCOL:`,
+              `1. Whenever asking an active recall question targeting a concept, include the tag [CONCEPT:id] in your question so the system accurately records student mastery.`,
+              `2. The tag will be cleanly hidden from the student.`,
+              `3. Teach foundational concepts first to set the stage for complex ones.`
+            )
+          } else {
+            planLines.push(`All concepts for this topic have been introduced and assessed! Run comprehensive synthesis and cross-concept transfer problems.`)
+          }
+
+          conceptCoverageBlock = planLines.join('\n') + '\n'
+        }
+      }
+    } catch (covErr) {
+      console.warn('Failed to build concept coverage block:', covErr)
+    }
+
     // Append all context blocks to syllabusContext
-    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + adaptiveDecisionBlock + '\n' + teachBackBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + srsWarmupBlock + '\n' + materialContextBlock
+    syllabusContext += '\n' + timeContext + '\n' + depthBlock + '\n' + adaptiveDecisionBlock + '\n' + teachBackBlock + '\n' + topicFocusBlock + '\n' + historicalMemoryBlock + '\n' + memoryBlock + '\n' + conceptCoverageBlock + '\n' + srsWarmupBlock + '\n' + materialContextBlock
 
     // Use the same bounded evidence seam as the grounded helper. This keeps
     // tutor answers aligned with the selected class/material instead of relying
@@ -2522,6 +2720,23 @@ PEDAGOGICAL METHOD — Session Summary Phase:
         // Finalize response: prefer valid repair, then draft, or append guaranteed active-recall question
         fullResponse = chooseFinalTutorResponse(fullResponse, repairedText, targetConcept) || fullResponse
       }
+
+      // Inspect if tutor introduced / targeted a concept in this turn
+      const responseConceptId = parseConceptTag(fullResponse)
+      if (responseConceptId && userId) {
+        try {
+          db.prepare(`
+            INSERT INTO concept_progress (concept_id, user_id, state, introduced_at)
+            VALUES (?, ?, 'introduced', datetime('now'))
+            ON CONFLICT(concept_id, user_id) DO UPDATE SET
+              state = CASE WHEN state = 'assessed' THEN 'assessed' ELSE 'introduced' END,
+              introduced_at = COALESCE(introduced_at, datetime('now'))
+          `).run(responseConceptId, userId)
+        } catch { /* ignore */ }
+      }
+
+      // Strip internal [CONCEPT:id] tag so learner does not see system metadata
+      fullResponse = stripConceptTags(fullResponse)
 
       // Keep the draft hidden until the response contract is satisfied, then
       // emit one canonical response instead of a draft plus a repaired copy.

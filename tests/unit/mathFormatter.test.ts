@@ -59,6 +59,14 @@ describe('mathFormatter', () => {
       expect(convertAsciiMathToLatex('dy/dx')).toBe('\\frac{dy}{dx}')
     })
 
+    it('does not turn ordinary slash-separated words or units into fractions', () => {
+      expect(convertAsciiMathToLatex('and/or')).toBe('and/or')
+      expect(convertAsciiMathToLatex('input/output')).toBe('input/output')
+      expect(convertAsciiMathToLatex('true/false')).toBe('true/false')
+      expect(convertAsciiMathToLatex('km/h')).toBe('km/h')
+      expect(convertAsciiMathToLatex('(input)/(output)')).toBe('(input)/(output)')
+    })
+
     it('converts sqrt into \\sqrt', () => {
       expect(convertAsciiMathToLatex('sqrt(2x + 1)')).toBe('\\sqrt{2x + 1}')
     })
@@ -163,6 +171,10 @@ describe('mathFormatter', () => {
       const input = 'income doubles to $60 while $p_2$ doubles to $12 and $p_1$ stays at $5'
       const result = preprocessLatexText(input)
       expect(result).toBe('income doubles to $60 while $p_2$ doubles to $12 and $p_1$ stays at $5')
+    })
+
+    it('preserves dollar currency and ranges', () => {
+      expect(preprocessLatexText('Costs are $100, $5.50, and $10 - $20.')).toBe('Costs are $100, $5.50, and $10 - $20.')
     })
   })
 

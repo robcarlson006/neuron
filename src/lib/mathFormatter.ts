@@ -35,6 +35,52 @@ const GREEK_MAP: Record<string, string> = {
   Psi: '\\Psi', Omega: '\\Omega'
 }
 
+/** Only mathematical operands may be promoted from a slash to a fraction.
+ * This deliberately leaves prose such as and/or, input/output, and km/h alone. */
+export function isAlgebraicFractionTerm(term: string): boolean {
+  const value = term.trim()
+  return /^(?:[+-]?\d+(?:\.\d+)?|[A-Za-z](?:_[A-Za-z0-9]+)?|d[A-Za-z]|[A-Z]{2,}_[A-Za-z0-9]+)$/.test(value)
+}
+
+function isAlgebraicExpression(expression: string): boolean {
+  const value = expression.trim()
+  if (!/^[A-Za-z0-9_+\-*/.\s]+$/.test(value)) return false
+  const identifiers = value.match(/[A-Za-z]+(?:_[A-Za-z0-9]+)?/g) || []
+  return identifiers.every(isAlgebraicFractionTerm)
+}
+
+export interface MathTextPart {
+  type: 'text' | 'math'
+  content: string
+  display: boolean
+}
+
+const MATH_DELIMITER_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\3\}|\\\(([\s\S]*?)\\\)|(?<!\\|\$)\$([^\s$](?:[^$\n]*?[^\s$])?)\$(?!\d)/g
+
+/** Shared delimiter parser. Incomplete streamed delimiters stay literal until closed. */
+export function splitMathText(text: string): MathTextPart[] {
+  const parts: MathTextPart[] = []
+  MATH_DELIMITER_REGEX.lastIndex = 0
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = MATH_DELIMITER_REGEX.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push({ type: 'text', content: text.slice(lastIndex, match.index), display: false })
+    if (match[1] !== undefined) parts.push({ type: 'math', content: match[1].trim(), display: true })
+    else if (match[2] !== undefined) parts.push({ type: 'math', content: match[2].trim(), display: true })
+    else if (match[3] !== undefined) parts.push({ type: 'math', content: match[0].trim(), display: true })
+    else if (match[5] !== undefined) parts.push({ type: 'math', content: match[5].trim(), display: false })
+    else if (match[6] !== undefined) {
+      const content = match[6].trim()
+      parts.push(isValidMathString(content)
+        ? { type: 'math', content, display: false }
+        : { type: 'text', content: match[0], display: false })
+    }
+    lastIndex = MATH_DELIMITER_REGEX.lastIndex
+  }
+  if (lastIndex < text.length) parts.push({ type: 'text', content: text.slice(lastIndex), display: false })
+  return parts.length ? parts : [{ type: 'text', content: text, display: false }]
+}
+
 /**
  * Normalizes Unicode math characters and symbols into standard LaTeX equivalents.
  */
@@ -96,13 +142,16 @@ export function convertAsciiMathToLatex(expr: string): string {
 
   // 2. Convert fractions: (a+b)/(c+d) or single_token/single_token
   // e.g. (x + 1)/(y - 2) -> \frac{x + 1}{y - 2}
-  s = s.replace(/\(([^()]+)\)\s*\/\s*\(([^()]+)\)/g, '\\frac{$1}{$2}')
-  s = s.replace(/\(([^()]+)\)\s*\/\s*([a-zA-Z0-9_\.\-]+)/g, '\\frac{$1}{$2}')
-  s = s.replace(/([a-zA-Z0-9_\.\-]+)\s*\/\s*\(([^()]+)\)/g, '\\frac{$1}{$2}')
+  s = s.replace(/\(([^()]+)\)\s*\/\s*\(([^()]+)\)/g, (match, num, den) =>
+    isAlgebraicExpression(num) && isAlgebraicExpression(den) ? `\\frac{${num}}{${den}}` : match)
+  s = s.replace(/\(([^()]+)\)\s*\/\s*([a-zA-Z0-9_\.\-]+)/g, (match, num, den) =>
+    isAlgebraicExpression(num) && isAlgebraicFractionTerm(den) ? `\\frac{${num}}{${den}}` : match)
+  s = s.replace(/([a-zA-Z0-9_\.\-]+)\s*\/\s*\(([^()]+)\)/g, (match, num, den) =>
+    isAlgebraicFractionTerm(num) && isAlgebraicExpression(den) ? `\\frac{${num}}{${den}}` : match)
   s = s.replace(/\b([a-zA-Z0-9_\.\-]+)\s*\/\s*([a-zA-Z0-9_\.\-]+)\b/g, (match, num, den) => {
     // Avoid dates like 12/2026 or path slashes
     if (/^\d{1,2}$/.test(num) && /^\d{2,4}$/.test(den)) return match
-    return `\\frac{${num}}{${den}}`
+    return isAlgebraicFractionTerm(num) && isAlgebraicFractionTerm(den) ? `\\frac{${num}}{${den}}` : match
   })
 
   // 3. Convert exponents and subscripts: x^2 -> x^{2}, x^(2n+1) -> x^{2n+1}, x_1 -> x_{1}, x_(i+1) -> x_{i+1}
@@ -454,7 +503,7 @@ export function autoFormatMathLocal(text: string): string {
       // Convert simple numerical/algebraic fractions e.g. (x+1)/(y-1) -> \frac{x+1}{y-1}
       p = p.replace(/\b\(?([a-zA-Z0-9_\+\-]+)\)?\s*\/\s*\(?([a-zA-Z0-9_\+\-]+)\)?\b/g, (match, num, den) => {
         if (/^\d{1,2}$/.test(num) && /^\d{2,4}$/.test(den)) return match
-        return `\\frac{${num}}{${den}}`
+        return isAlgebraicFractionTerm(num) && isAlgebraicFractionTerm(den) ? `\\frac{${num}}{${den}}` : match
       })
 
       // Convert AsciiMath elements if applicable

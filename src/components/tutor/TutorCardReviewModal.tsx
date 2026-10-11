@@ -243,11 +243,7 @@ export default function TutorCardReviewModal({
                           {card.type === 'flashcard' ? 'FC' : 'AR'}
                         </span>
                         {/* Pedagogical Category Badges */}
-                        {/\[Struggle Fix/i.test(card.front) || /misconception|struggle/i.test(card.front) ? (
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                            🎯 Struggle Fix
-                          </span>
-                        ) : /\[Distinction/i.test(card.front) || /\bvs\.?\b|difference between/i.test(card.front) ? (
+                        {/\[Distinction/i.test(card.front) || /\bvs\.?\b|difference between/i.test(card.front) ? (
                           <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
                             ⚖️ Key Distinction
                           </span>

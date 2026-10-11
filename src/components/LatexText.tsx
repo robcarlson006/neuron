@@ -1,7 +1,7 @@
 import React from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { preprocessLatexText, isValidMathString, convertAsciiMathToLatex, repairMathSyntax } from '../lib/mathFormatter'
+import { preprocessLatexText, splitMathText, convertAsciiMathToLatex, repairMathSyntax, type MathTextPart } from '../lib/mathFormatter'
 
 interface Props {
   children: string
@@ -104,60 +104,5 @@ function KatexSpan({ latex, displayMode }: { latex: string; displayMode: boolean
   )
 }
 
-export interface TextPart {
-  type: 'text' | 'math'
-  content: string
-  display: boolean
-}
-
-// Priority order matters — $$ and \[ must come before $ to avoid partial matches.
-// Group 1: $$...$$ → display math
-// Group 2: \[...\] → display math
-// Group 3: \begin{env}...\end{env} → display math
-// Group 4: \(...\) → inline math
-// Group 5: $...$ → inline math (guarded against currency & greedy pairing across lines/spaces)
-const LATEX_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\3\}|\\\(([\s\S]*?)\\\)|(?<!\\|\$)\$([^\s$](?:[^$\n]*?[^\s$])?)\$(?!\d)/g
-
-export function splitLatex(text: string): TextPart[] {
-  const parts: TextPart[] = []
-  LATEX_REGEX.lastIndex = 0
-
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-
-  while ((match = LATEX_REGEX.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: text.slice(lastIndex, match.index), display: false })
-    }
-
-    if (match[1] !== undefined) {
-      // $$...$$ → display math
-      parts.push({ type: 'math', content: match[1].trim(), display: true })
-    } else if (match[2] !== undefined) {
-      // \[...\] → display math
-      parts.push({ type: 'math', content: match[2].trim(), display: true })
-    } else if (match[3] !== undefined) {
-      // \begin{env}...\end{env} → display math
-      parts.push({ type: 'math', content: match[0].trim(), display: true })
-    } else if (match[5] !== undefined) {
-      // \(...\) → inline math
-      parts.push({ type: 'math', content: match[5].trim(), display: false })
-    } else if (match[6] !== undefined) {
-      // $...$ → inline math (if valid)
-      const mathContent = match[6].trim()
-      if (isValidMathString(mathContent)) {
-        parts.push({ type: 'math', content: mathContent, display: false })
-      } else {
-        parts.push({ type: 'text', content: match[0], display: false })
-      }
-    }
-
-    lastIndex = LATEX_REGEX.lastIndex
-  }
-
-  if (lastIndex < text.length) {
-    parts.push({ type: 'text', content: text.slice(lastIndex), display: false })
-  }
-
-  return parts.length > 0 ? parts : [{ type: 'text', content: text, display: false }]
-}
+export type TextPart = MathTextPart
+export const splitLatex = splitMathText

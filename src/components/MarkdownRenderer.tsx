@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import LatexText from './LatexText'
 import GraphContainer from './graphs/GraphContainer'
-import { isValidMathString } from '../lib/mathFormatter'
+import { isValidMathString, splitMathText } from '../lib/mathFormatter'
 import {
   parseUniversalTable,
   parseMarkdownPipeTable,
@@ -52,8 +52,8 @@ export function sanitizeMarkdownDelimiters(text: string): string {
   // Mask code blocks and inline code
   s = s.replace(/```[\s\S]*?```|`[^`\n]+`/g, mask)
 
-  // Mask display math $$...$$ and \[...\]
-  s = s.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]/g, mask)
+  // Mask all complete display math before markdown asterisk repair.
+  s = s.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\1\}/g, mask)
 
   // Mask existing inline math $...$ or \(...\)
   s = s.replace(/\\\([\s\S]*?\\\)/g, mask)
@@ -134,7 +134,7 @@ export function renderInlineFormatting(text: string): React.ReactNode {
   // Split tokens prioritizing code, display math, links, ***bold italic***, **bold**, and *italic*
   // *italic* is restricted to text phrases without dollar signs, backslashes, or newlines so it cannot consume LaTeX math
   const tokens = cleanText.split(
-    /(`[^`\n]+`|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\[[^\]]+\]\([^)]+\)|\*\*\*(?:[^*]|\*(?!\*\*))+\*\*\*|\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?!\s|\$)[^*$\\\n]+(?<!\s|\$)\*)/g
+    /(`[^`\n]+`|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\2\}|\[[^\]]+\]\([^)]+\)|\*\*\*(?:[^*]|\*(?!\*\*))+\*\*\*|\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?!\s|\$)[^*$\\\n]+(?<!\s|\$)\*)/g
   )
 
   return (
@@ -519,11 +519,13 @@ function renderListLines(lines: string[]): React.ReactNode {
 export function splitMarkdownBlocks(content: string): string[] {
   if (!content) return []
   const blocks: string[] = []
-  const fenceRegex = /```[\s\S]*?```/g
+  // Display math is a block just like fenced code. Protecting it here means
+  // blank rows inside matrices, cases, or aligned derivations cannot split it.
+  const protectedBlockRegex = /```[\s\S]*?```|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\1\}/g
   let lastIndex = 0
   let match: RegExpExecArray | null
 
-  while ((match = fenceRegex.exec(content)) !== null) {
+  while ((match = protectedBlockRegex.exec(content)) !== null) {
     const textBefore = content.slice(lastIndex, match.index)
     if (textBefore.trim()) {
       const subParagraphs = textBefore.split(/\n\n+/).map(s => s.trim()).filter(Boolean)
@@ -609,12 +611,9 @@ export default function MarkdownRenderer({
           return <CodeBlock key={pi} language={codeBlockMatch[1]} code={code} />
         }
 
-        // 2. Standalone display math block $$...$$ or \[...\] or \begin{matrix}...\end{matrix}
-        if (
-          (trimmed.startsWith('$$') && trimmed.endsWith('$$')) ||
-          (trimmed.startsWith('\\[') && trimmed.endsWith('\\]')) ||
-          (/^\\begin\{(?:matrix|pmatrix|bmatrix|vmatrix|align|equation|gather)\*?\}[\s\S]*\\end\{(?:matrix|pmatrix|bmatrix|vmatrix|align|equation|gather)\*?\}$/.test(trimmed))
-        ) {
+        // 2. Any complete standalone display delimiter/environment.
+        const mathParts = splitMathText(trimmed)
+        if (mathParts.length === 1 && mathParts[0].type === 'math' && mathParts[0].display) {
           return <LatexText key={pi} className="my-2 block">{trimmed}</LatexText>
         }
 

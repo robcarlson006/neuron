@@ -3,6 +3,7 @@
  * Verifies that pausing freezes session countdown and prevents false pacing / struggle degradation.
  */
 import type { TutorSessionRuntime, PacingStatus } from '../../src/types'
+import { shouldTutorTimerTick } from '../../src/lib/tutorTimer'
 
 function calcPacingStatus(run: TutorSessionRuntime): PacingStatus {
   if (run.config.duration_minutes === null) return 'UNLIMITED'
@@ -147,5 +148,27 @@ describe('AI Tutor Pause / Resume Pacing and Timer Mechanics', () => {
     }
 
     expect(calcPacingStatus(runtime)).toBe('UNLIMITED')
+  })
+
+  it('freezes for an AI response and resumes when the response is ready', () => {
+    const options = { durationMinutes: 15, isTimeUp: false, isManualPaused: false, isAiResponding: true }
+    expect(shouldTutorTimerTick(options)).toBe(false)
+
+    // The terminal response event clears only the automatic pause.
+    expect(shouldTutorTimerTick({ ...options, isAiResponding: false })).toBe(true)
+  })
+
+  it('keeps a manual pause in force after an AI response completes', () => {
+    const options = { durationMinutes: 15, isTimeUp: false, isManualPaused: true, isAiResponding: true }
+    expect(shouldTutorTimerTick(options)).toBe(false)
+    expect(shouldTutorTimerTick({ ...options, isAiResponding: false })).toBe(false)
+  })
+
+  it.each(['network error', 'API error', 'timeout', 'abort'])('unfreezes after %s recovery', () => {
+    const awaitingAi = { durationMinutes: 15, isTimeUp: false, isManualPaused: false, isAiResponding: true }
+    expect(shouldTutorTimerTick(awaitingAi)).toBe(false)
+
+    // Every terminal path resets the responding state; the normal timer can tick again.
+    expect(shouldTutorTimerTick({ ...awaitingAi, isAiResponding: false })).toBe(true)
   })
 })

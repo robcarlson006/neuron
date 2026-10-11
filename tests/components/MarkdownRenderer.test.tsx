@@ -1,6 +1,6 @@
 import React from 'react'
 import { render, screen } from '@testing-library/react'
-import MarkdownRenderer, { parseMarkdownTable } from '../../src/components/MarkdownRenderer'
+import MarkdownRenderer, { parseMarkdownTable, splitMarkdownBlocks } from '../../src/components/MarkdownRenderer'
 
 describe('MarkdownRenderer Component', () => {
   describe('parseMarkdownTable', () => {
@@ -25,6 +25,38 @@ describe('MarkdownRenderer Component', () => {
   })
 
   describe('Component Rendering', () => {
+    it('keeps multiline display math intact and renders all supported display delimiters', () => {
+      const content = String.raw`Before
+
+$$
+\begin{cases}
+x & x > 0 \\
+0 & x \le 0
+\end{cases}
+
+\sum_{i=1}^{n} x_i
+$$
+
+\[
+\begin{pmatrix}1&2\\3&4\end{pmatrix}
+\]`
+      expect(splitMarkdownBlocks(content)).toHaveLength(3)
+      const { container } = render(<MarkdownRenderer content={content} />)
+      expect(container.querySelectorAll('.katex').length).toBe(2)
+      expect(container.querySelector('.katex-error')).toBeNull()
+    })
+
+    it('renders matrices in table cells and keeps incomplete streamed math harmless', () => {
+      const content = String.raw`| Formula |
+| --- |
+| $\begin{pmatrix}1&2\\3&4\end{pmatrix}$ |
+
+Still streaming: $$\frac{1}{2}`
+      const { container } = render(<MarkdownRenderer content={content} />)
+      expect(container.querySelector('.katex')).not.toBeNull()
+      expect(container.textContent).toContain('$$\\frac{1}{2}')
+      expect(container.querySelector('.katex-error')).toBeNull()
+    })
     it('renders tables with proper alignment classes and LaTeX math inside cells', () => {
       const content = `| Variable | Description | Value |
 | :--- | :---: | ---: |
@@ -140,4 +172,3 @@ End of explanation.`
     })
   })
 })
-

@@ -99,8 +99,9 @@ describe('Card Coverage Matrix & Gap Capture', () => {
     const parsed = parseCardsFromText(rawAIText)
     expect(parsed).toHaveLength(3)
 
-    // First card: Struggle Fix
-    expect(parsed[0].front).toContain('Struggle Fix')
+    // First card: its legacy targeting label is removed while its question remains.
+    expect(parsed[0].front).not.toContain('Struggle Fix')
+    expect(parsed[0].front).toBe('Which muscle internally rotates the humerus?')
     expect(parsed[0].back).toBe('Subscapularis.')
 
     // Second card: Distinction

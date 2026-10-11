@@ -87,6 +87,10 @@ export function extractContextTag(text: string): { tag?: string; textWithoutTag:
   return { textWithoutTag: text }
 }
 
+function isLegacyStruggleFixTag(tag: string): boolean {
+  return /^\s*struggle\s+fix(?:\s*:\s*.*)?\s*$/i.test(tag)
+}
+
 /**
  * Parse raw unadorned Tab-Separated Values (TSV) flashcards
  * Expected 4-field schema: ContextTag \t Question \t Answer \t Explanation
@@ -107,7 +111,9 @@ export function parseTSVFlashcards(tsvText: string): ParsedCard[] {
       const question = fields[1]
       const answer = fields[2]
       const explanation = fields[3]
-      const front = tag ? `[${tag}] ${cleanCardFront(question)}` : cleanCardFront(question)
+      const front = tag && !isLegacyStruggleFixTag(tag)
+        ? `[${tag}] ${cleanCardFront(question)}`
+        : cleanCardFront(question)
       const back = explanation ? `${cleanCardBack(answer)}\n\n_Note: ${explanation}_` : cleanCardBack(answer)
       const isRecall = /^(What|How|Why|Explain|Describe|Define|Compare|Contrast|List|Which)/i.test(question) || question.endsWith('?')
       cards.push({
@@ -152,6 +158,12 @@ function cleanCardFront(rawFront: string): string {
   cleaned = cleaned.replace(/^(?:(?:Card\s*\d+|Q\d+|\d+)[.:)]\s*|[-*•]\s*)/i, '').trim()
   // In case outer bold was after the number: "1. **Term**" -> "**Term**" -> "Term"
   cleaned = cleaned.replace(/^\*{1,3}(.+?)\*{1,3}$/s, '$1').trim()
+  // Remove only legacy/model-generated leading Struggle Fix labels. Keep ordinary
+  // educational uses of "struggle" intact (for example, "Why did ... struggle?").
+  cleaned = cleaned
+    .replace(/^\[\s*struggle\s+fix(?:\s*:\s*[^\]]*)?\]\s*/i, '')
+    .replace(/^struggle\s+fix\s*:\s*(?:[^\n?]+?\s*[-–—]\s*)?/i, '')
+    .trim()
   // Clean unnecessary brackets
   cleaned = cleanCardBrackets(cleaned)
   return cleaned

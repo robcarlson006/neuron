@@ -7,6 +7,7 @@ import { evaluateStudentAnswer, type AutoGradeResult } from '../lib/semanticEval
 import { hasMathInput } from '../lib/mathFormatter'
 import { Sigma } from './icons'
 import MathKeyboard from './practice/MathKeyboard'
+import { useMathSnippetInsertion } from '../lib/mathSnippetInsertion'
 
 import { useAppStore } from '../store/appStore'
 
@@ -35,25 +36,7 @@ export default function ActiveRecallCard({
   const [showMathKeyboard, setShowMathKeyboard] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const handleInsertSnippet = (snippet: string) => {
-    if (!textareaRef.current) {
-      setAnswer((prev) => prev + snippet)
-      return
-    }
-
-    const textarea = textareaRef.current
-    const start = textarea.selectionStart || 0
-    const end = textarea.selectionEnd || 0
-    const text = textarea.value
-    const updated = text.substring(0, start) + snippet + text.substring(end)
-    setAnswer(updated)
-
-    setTimeout(() => {
-      textarea.focus()
-      const nextPos = start + snippet.length
-      textarea.setSelectionRange(nextPos, nextPos)
-    }, 0)
-  }
+  const handleInsertSnippet = useMathSnippetInsertion(answer, setAnswer, textareaRef)
 
   // Reset state when card changes
   useEffect(() => {
@@ -164,6 +147,7 @@ export default function ActiveRecallCard({
               </label>
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setShowMathKeyboard((prev) => !prev)}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                   showMathKeyboard
