@@ -7,6 +7,7 @@ import http from 'http'
 import type { LocalModelInfo, DownloadProgress, LocalEngineStatus, LocalAIHealth } from '../../src/types'
 import { getHardwareProfile } from './localHardware'
 import { saveAIConfig } from './aiConfigStore'
+import { getSystemArch } from './updaterHandlers'
 
 export const MODEL_CATALOG: Omit<LocalModelInfo, 'status' | 'isRecommended' | 'localPath'>[] = [
   {
@@ -416,7 +417,7 @@ export async function ensureLocalEngineBinary(
   let isTarGz = true
 
   if (process.platform === 'darwin') {
-    if (process.arch === 'arm64') {
+    if (getSystemArch() === 'arm64') {
       archiveUrl = 'https://github.com/ggml-org/llama.cpp/releases/download/b10864/llama-b10864-bin-macos-arm64.tar.gz'
     } else {
       archiveUrl = 'https://github.com/ggml-org/llama.cpp/releases/download/b10864/llama-b10864-bin-macos-x64.tar.gz'

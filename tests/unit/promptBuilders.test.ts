@@ -3,7 +3,8 @@ import {
   parseEvaluationResponse,
   buildCardGenerationPrompt,
   buildEvaluationPrompt,
-  buildFormatMathEquationsPrompt
+  buildFormatMathEquationsPrompt,
+  buildOrganizeNotesPrompt
 } from '../../src/lib/promptBuilders'
 
 describe('Prompt Builders', () => {
@@ -203,6 +204,22 @@ describe('Prompt Builders', () => {
       const prompt = buildFormatMathEquationsPrompt('x^3')
       expect(prompt).toContain('LaTeX')
       expect(prompt).toContain('$')
+    })
+  })
+
+  describe('buildOrganizeNotesPrompt', () => {
+    it('contains the raw notes verbatim', () => {
+      const notes = '10/6/26 Lecture 7: Demand functions for well behaved preferences\n- x1*(p1,p2,m)'
+      const prompt = buildOrganizeNotesPrompt(notes)
+      expect(prompt).toContain(notes)
+    })
+
+    it('instructs strict non-hallucination and preserving all student content', () => {
+      const prompt = buildOrganizeNotesPrompt('Test notes')
+      expect(prompt).toContain('DO NOT add any new concepts')
+      expect(prompt).toContain('DO NOT remove, omit, or summarize away')
+      expect(prompt).toContain('PRESERVE SPECIAL TOKENS')
+      expect(prompt).toContain('[[material:')
     })
   })
 })

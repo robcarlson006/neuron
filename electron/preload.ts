@@ -13,6 +13,7 @@ import type {
   FolderSyncResult, FolderSyncEvent, Lecture,
   DocumentAnnotation, SaveDocumentAnnotationInput,
   SubjectNote, SaveSubjectNoteInput,
+  NotebookPage, SaveNotebookPageInput,
   HighlightCardExtractionOptions, HighlightCardExtractionResult,
   PracticeProblem, PracticeSession, PracticeProblemAttempt, PracticeSessionConfig, GuidedPracticeSessionConfig, PracticeEvaluationResult,
   AutonomousPracticeGenOptions, AutonomousPracticeGenResult,
@@ -90,6 +91,14 @@ const electronAPI = {
     ipcRenderer.invoke('db:getSubjectNote', subjectId),
   saveSubjectNote: (input: SaveSubjectNoteInput): Promise<SubjectNote> =>
     ipcRenderer.invoke('db:saveSubjectNote', input),
+  getNotebookPages: (subjectId: number): Promise<NotebookPage[]> =>
+    ipcRenderer.invoke('db:getNotebookPages', subjectId),
+  saveNotebookPage: (input: SaveNotebookPageInput): Promise<NotebookPage> =>
+    ipcRenderer.invoke('db:saveNotebookPage', input),
+  createNotebookPage: (subjectId: number, afterPageNumber?: number): Promise<NotebookPage> =>
+    ipcRenderer.invoke('db:createNotebookPage', subjectId, afterPageNumber),
+  deleteNotebookPage: (pageId: number, subjectId: number): Promise<{ success: boolean; pages: NotebookPage[] }> =>
+    ipcRenderer.invoke('db:deleteNotebookPage', pageId, subjectId),
 
   // File operations
   openFileDialog: (): Promise<string | null> => ipcRenderer.invoke('file:openDialog'),
@@ -105,6 +114,17 @@ const electronAPI = {
     ipcRenderer.invoke('ai:evaluateAnswer', question, modelAnswer, studentAnswer),
   formatMathEquations: (text: string): Promise<{ success: boolean; text?: string; error?: string }> =>
     ipcRenderer.invoke('ai:formatMathEquations', text),
+  organizeNotes: (text: string): Promise<{ success: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('ai:organizeNotes', text),
+  noteHelperChat: (params: {
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>
+    context?: {
+      subjectName?: string
+      lectureTitle?: string
+      currentNotes?: string
+    }
+  }): Promise<{ success: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('ai:noteHelperChat', params),
   getAIConfig: (): Promise<{ provider: string; baseUrl: string; model: string; apiKey: string; hasApiKey?: boolean }> =>
     ipcRenderer.invoke('ai:getConfig'),
   saveAIConfig: (config: { provider: string; baseUrl: string; model: string; apiKey?: string }): Promise<{ success: boolean }> =>
@@ -209,6 +229,7 @@ const electronAPI = {
 
   // Manual update checker
   getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
+  getSystemArch: (): Promise<string> => ipcRenderer.invoke('updater:getSystemArch'),
   getUpdateState: (): Promise<{
     status: 'idle' | 'downloading' | 'downloaded' | 'error'
     version: string
@@ -429,6 +450,15 @@ const electronAPI = {
     ipcRenderer.invoke('tutor:getSubjectModuleStats', subjectId, userId),
   tutorGetSubjectCurriculumTopics: (subjectId: number): Promise<QuickReviewTopic[]> =>
     ipcRenderer.invoke('tutor:getSubjectCurriculumTopics', subjectId),
+
+  // ── Concept Coverage & Rubric Mastery ──
+  conceptsGetForTopic: (topicId: number, userId?: number): Promise<import('../src/types').TopicConcept[]> =>
+    ipcRenderer.invoke('concepts:getForTopic', topicId, userId),
+  conceptsGetTopicRollups: (subjectId: number, userId?: number): Promise<Record<number, import('../src/types').TopicCoverageRollup>> =>
+    ipcRenderer.invoke('concepts:getTopicRollups', subjectId, userId),
+  conceptsExtractForTopic: (topicId: number, options?: { forceReextract?: boolean }): Promise<import('../src/types').TopicConcept[]> =>
+    ipcRenderer.invoke('concepts:extractForTopic', topicId, options),
+
   onTutorChunk: (cb: (chunk: { conversationId: number; content: string; type: string; metadata?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, data: { conversationId: number; content: string; type: string; metadata?: string }): void => cb(data)
     ipcRenderer.on('tutor:chunk', handler)

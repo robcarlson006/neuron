@@ -29,10 +29,14 @@ import SubjectAppearancePicker, { DEFAULT_SUBJECT_COLOR, DEFAULT_SUBJECT_ICON, S
 type Tab = 'cards' | 'curriculum' | 'manual' | 'graph' | 'practice' | 'materials' | 'lectures' | 'notes' | 'deadlines'
 
 function getSyllabusErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error || '')
+  let message = error instanceof Error ? error.message : String(error || '')
+  message = message.replace(/^Error invoking remote method '[^']+': Error:\s*/, '')
+  message = message.replace(/^Error:\s*/, '')
   if (!message) return 'Syllabus generation failed. Please try again.'
   if (/api key|credential/i.test(message)) return 'Configure an AI provider and API key in Settings, then try again.'
   if (/timed out|timeout/i.test(message)) return 'The AI provider timed out. Check your connection or try again.'
+  if (/token limit|finish_reason: length|output token budget/i.test(message)) return 'The AI response reached its output token limit. Please try again.'
+  if (/empty syllabus response|empty response|empty content response/i.test(message)) return 'The AI returned an empty response. Please retry syllabus generation.'
   if (/invalid syllabus|missing source evidence|invalid model output|json/i.test(message)) return `The AI returned an unusable syllabus: ${message}`
   if (/api error|provider|connect/i.test(message)) return `The AI provider could not generate the syllabus: ${message}`
   return message
@@ -298,11 +302,33 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
         try {
           const mods = (await window.electronAPI.syllabusListModules(subjectId)) as (SyllabusModule & { topic_count?: number })[]
           const modsWithTopics: (SyllabusModule & { topics?: ModuleTopic[] })[] = []
+          // Load topic concept rollups (coverage bar + 0-10 mastery)
+          let rollups: Record<number, import('../types').TopicCoverageRollup> = {}
+          if (window.electronAPI.conceptsGetTopicRollups) {
+            try {
+              rollups = (await window.electronAPI.conceptsGetTopicRollups(subjectId, user?.id)) || {}
+            } catch { /* ignore */ }
+          }
+
           for (const mod of (mods || [])) {
             const topList = window.electronAPI.syllabusListTopics
               ? ((await window.electronAPI.syllabusListTopics(mod.id, user?.id)) as ModuleTopic[])
               : []
-            modsWithTopics.push({ ...mod, topics: topList || [] })
+            const enrichedTopics = (topList || []).map(t => {
+              const r = rollups[t.id]
+              if (r && r.has_concept_data) {
+                return {
+                  ...t,
+                  concept_count: r.total_concepts,
+                  concepts_assessed: r.assessed_concepts,
+                  coverage_percentage: r.coverage_percentage,
+                  mastery_score_10: r.mastery_score_10,
+                  has_concept_data: true
+                }
+              }
+              return t
+            })
+            modsWithTopics.push({ ...mod, topics: enrichedTopics })
           }
           setModules(modsWithTopics)
 
@@ -1225,7 +1251,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       </div>
 
       {/* ═══ CARDS TAB ═══ */}
-      {activeTab === 'notes' && <SubjectNotesPage subjectId={subjectId} materials={materials} />}
+      {activeTab === 'notes' && <SubjectNotesPage subjectId={subjectId} subjectName={subject?.name} materials={materials} />}
 
       {activeTab === 'cards' && (
         <div>

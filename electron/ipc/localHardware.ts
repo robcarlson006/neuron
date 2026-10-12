@@ -77,6 +77,11 @@ function getAccurateSystemSpecs(): {
       const isTranslated = execSync('sysctl -n sysctl.proc_translated 2>/dev/null', { timeout: 1000 }).toString().trim()
       if (isTranslated === '1') {
         arch = 'arm64'
+      } else {
+        const hasArm64 = execSync('sysctl -in hw.optional.arm64 2>/dev/null', { timeout: 1000 }).toString().trim()
+        if (hasArm64 === '1') {
+          arch = 'arm64'
+        }
       }
     } catch {}
 

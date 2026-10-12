@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../../store/appStore'
+import { resolveTutorActiveTopic } from '../../lib/tutorSessionGuards'
 import { Activity, BookOpen, CheckCircle2, FileText, Lightbulb, Sparkles, Target, X, Zap } from '../icons'
 import {
   TutorSessionConfig,
@@ -342,7 +343,7 @@ export default function SessionConfigModal({
     } else if (studyMode === 'new_content') {
       if (selectedTopics.length > 0) {
         chosenTopics = selectedTopics
-        chosenTopic = selectedTopics.join(', ')
+        chosenTopic = resolveTutorActiveTopic(selectedTopics, undefined, subjectName)
       } else {
         const allNew = modules.flatMap(mod =>
           (mod.topics || [])
@@ -350,7 +351,7 @@ export default function SessionConfigModal({
             .map(t => t.title)
         )
         chosenTopics = allNew.length > 0 ? allNew : [subjectName]
-        chosenTopic = chosenTopics.join(', ')
+        chosenTopic = resolveTutorActiveTopic(chosenTopics, undefined, subjectName)
       }
     } else if (studyMode === 'fill_gaps') {
       isFillGaps = true
@@ -367,12 +368,12 @@ export default function SessionConfigModal({
       chosenModuleName = activeMod?.title
       if (selectedTopics.length > 0) {
         chosenTopics = selectedTopics
-        chosenTopic = selectedTopics.join(', ')
+        chosenTopic = resolveTutorActiveTopic(selectedTopics, activeMod?.title, subjectName)
       } else {
         chosenTopics = activeMod?.topics && activeMod.topics.length > 0
           ? activeMod.topics.map(t => t.title)
           : (activeMod?.title ? [activeMod.title] : [])
-        chosenTopic = chosenTopics.join(', ') || activeMod?.title || subjectName
+        chosenTopic = resolveTutorActiveTopic(chosenTopics, activeMod?.title, subjectName)
       }
     } else if (studyMode === 'material') {
       const activeMats = materialsList.filter(m => selectedMaterialIds.includes(m.id))
@@ -383,7 +384,9 @@ export default function SessionConfigModal({
         : activeMats.length > 1
           ? `${activeMats.length} selected materials`
           : propMaterialName
-      chosenTopic = chosenMaterialName ? `Material: ${chosenMaterialName}` : subjectName
+      const activeModule = modules.find(module => module.id === selectedModuleId)
+      const selectedLearningTopic = selectedTopics[0] || selectedTopic || activeModule?.topics?.[0]?.title
+      chosenTopic = selectedLearningTopic || activeModule?.title || subjectName
     } else if (studyMode === 'custom') {
       chosenTopic = customTopic.trim() || subjectName
     }

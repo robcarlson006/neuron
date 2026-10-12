@@ -3,6 +3,7 @@ import {
   buildCardGenerationPrompt,
   buildEvaluationPrompt,
   buildFormatMathEquationsPrompt,
+  buildOrganizeNotesPrompt,
   parseCardGenerationResponse,
   parseEvaluationResponse
 } from '../../src/lib/promptBuilders'
@@ -219,6 +220,119 @@ export function registerAIHandlers(): void {
     }
   })
 
+  // ── Organize / Format Notes (Strict structure without altering content) ────
+
+  ipcMain.handle('ai:organizeNotes', async (_event, text: string) => {
+    if (!text || !text.trim()) {
+      return { success: true, text: '' }
+    }
+    const config = getAIConfig()
+    const apiKey = getApiKey()
+    const isLocal = isLocalEndpoint(config.baseUrl)
+    if (!apiKey && !isLocal) {
+      return { success: false, error: 'AI API key not configured. Go to Settings to configure your AI provider.' }
+    }
+
+    try {
+      const prompt = buildOrganizeNotesPrompt(text)
+      let formattedText: string
+      if (config.provider === 'gemini') {
+        formattedText = await callAI(prompt, { ...config, apiKey })
+      } else {
+        formattedText = await callAIMessages(
+          [{ role: 'user', content: prompt }],
+          { ...config, apiKey }
+        )
+      }
+
+      // Strip accidental wrapping markdown code fences
+      let cleaned = (formattedText || '').trim()
+      if (cleaned.startsWith('```markdown') && cleaned.endsWith('```')) {
+        const lines = cleaned.split('\n')
+        if (lines.length >= 2) {
+          cleaned = lines.slice(1, -1).join('\n').trim()
+        }
+      } else if (cleaned.startsWith('```') && cleaned.endsWith('```')) {
+        const lines = cleaned.split('\n')
+        if (lines.length >= 2) {
+          cleaned = lines.slice(1, -1).join('\n').trim()
+        }
+      }
+
+      return { success: true, text: cleaned }
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to organize notes'
+      }
+    }
+  })
+
+  // ── Note AI Helper Chatbot ─────────────────────────────────────────────────
+
+  ipcMain.handle('ai:noteHelperChat', async (_event, params: {
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>
+    context?: {
+      subjectName?: string
+      lectureTitle?: string
+      currentNotes?: string
+    }
+  }) => {
+    const config = getAIConfig()
+    const apiKey = getApiKey()
+    const isLocal = isLocalEndpoint(config.baseUrl)
+    if (!apiKey && !isLocal) {
+      return { success: false, error: 'AI API key not configured. Go to Settings to configure your AI provider.' }
+    }
+
+    const { messages = [], context = {} } = params || {}
+    if (messages.length === 0) {
+      return { success: false, error: 'No messages provided.' }
+    }
+
+    const contextParts: string[] = []
+    if (context.subjectName) contextParts.push(`Subject/Course: ${context.subjectName}`)
+    if (context.lectureTitle) contextParts.push(`Lecture/Material: ${context.lectureTitle}`)
+    if (context.currentNotes && context.currentNotes.trim()) {
+      contextParts.push(`Current Notes Draft:\n"""\n${context.currentNotes.trim().slice(0, 4000)}\n"""`)
+    }
+
+    const systemPrompt = `You are an intelligent, friendly, and pedagogically sound academic study assistant embedded directly in the student's notebook and lecture notetaker.
+The student is taking notes and has asked you a question to clarify concepts, provide intuition, provide mathematical formulas, or give helpful examples.
+
+CONTEXT OF CURRENT STUDY SESSION:
+${contextParts.length > 0 ? contextParts.join('\n\n') : 'General academic note taking.'}
+
+INSTRUCTIONS:
+1. Be concise, clear, and direct. The student is in the middle of taking notes, so keep explanations tight, engaging, and easy to read.
+2. If mathematical or scientific equations are involved, format them properly in LaTeX using standard single dollar signs ($...$) for inline math or double dollar signs ($$...$$) for standalone display equations.
+3. Structure your responses with clean Markdown (bullet points, bold keywords, headings if relevant).
+4. Do not talk in excessive formalities. Answer their specific question accurately based on the subject context.
+5. If the student asks you to summarize, explain, or draft something for their notes, format it so it can be cleanly read or copied into their notebook.`
+
+    try {
+      const formattedMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+        { role: 'system', content: systemPrompt },
+        ...messages
+      ]
+
+      let reply: string
+      if (config.provider === 'gemini') {
+        const fullPrompt = `${systemPrompt}\n\n` + messages.map(m => `${m.role === 'user' ? 'Student' : 'Assistant'}: ${m.content}`).join('\n\n')
+        reply = await callAI(fullPrompt, { ...config, apiKey })
+      } else {
+        reply = await callAIMessages(formattedMessages, { ...config, apiKey })
+      }
+
+      return { success: true, text: reply }
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to query Note AI Helper'
+      }
+    }
+  })
+
   // ── Get AI config ───────────────────────────────────────────────────────────
 
   ipcMain.handle('ai:getConfig', () => {
@@ -400,9 +514,6 @@ export async function* streamAI(
   // OpenAI-compatible format
   const baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com')
   let model = config.model || DEFAULT_MODEL
-  if (baseUrl.includes('deepseek.com') && (model === 'deepseek-flash' || !model)) {
-    model = 'deepseek-chat'
-  }
   const url = `${baseUrl}/v1/chat/completions`
   const isLocal = isLocalEndpoint(baseUrl)
   const authKey = config.apiKey || (isLocal ? 'ollama' : '')
@@ -435,7 +546,7 @@ export async function* streamAI(
         model,
         messages,
         stream: true,
-        max_tokens: 4096,
+        max_tokens: 8192,
         temperature: 0.7
       }),
       signal: connectController.signal
@@ -508,15 +619,26 @@ export async function* streamAI(
  * Supports both OpenAI-compatible providers (DeepSeek, OpenAI, Ollama) and Google Gemini.
  * Optionally accepts a response_format parameter (e.g. { type: 'json_object' }).
  */
+export interface AIMessageConfig {
+  provider: string
+  baseUrl: string
+  model: string
+  apiKey: string
+  maxTokens?: number
+  temperature?: number
+  timeoutMs?: number
+}
+
 export async function callAIMessages(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  config: { provider: string; baseUrl: string; model: string; apiKey: string },
+  config: AIMessageConfig,
   responseFormat?: { type: 'json_object' | 'text' },
   retryAttempt = 0,
   allowResponseFormatFallback = true
 ): Promise<string> {
+  const timeoutMs = config.timeoutMs || DEFAULT_TIMEOUT_MS
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     if (config.provider === 'gemini') {
@@ -554,8 +676,8 @@ export async function callAIMessages(
       const body: Record<string, unknown> = {
         contents,
         generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 8192
+          temperature: config.temperature ?? 0.7,
+          maxOutputTokens: config.maxTokens || 8192
         }
       }
 
@@ -614,8 +736,8 @@ export async function callAIMessages(
     const body: Record<string, unknown> = {
       model,
       messages,
-      max_tokens: 8192,
-      temperature: 0.7
+      max_tokens: config.maxTokens || 16384,
+      temperature: config.temperature ?? 0.7
     }
     if (responseFormat) {
       body.response_format = responseFormat
@@ -646,7 +768,42 @@ export async function callAIMessages(
     }
 
     const data = await response.json()
-    return data.choices?.[0]?.message?.content || ''
+    const choice = data.choices?.[0]
+    if (!choice) {
+      throw new Error(`AI API returned no choices in response (provider: ${config.provider}, model: ${model})`)
+    }
+
+    const message = choice.message
+    const content = message?.content
+    const finishReason = choice.finish_reason
+    const reasoningContent = message?.reasoning_content
+
+    if (typeof content === 'string' && content.trim().length > 0) {
+      return content
+    }
+
+    if (finishReason === 'length') {
+      const usageInfo = data.usage ? ` (used ${data.usage.completion_tokens || 0} completion tokens / ${data.usage.prompt_tokens || 0} prompt tokens)` : ''
+      throw new Error(
+        `AI output token limit reached before generation completed (finish_reason: length)${usageInfo}. The model exhausted its output token budget${reasoningContent ? ' during reasoning' : ''}.`
+      )
+    }
+
+    if (reasoningContent && (!content || content.trim().length === 0)) {
+      throw new Error(
+        `AI spent its output token budget on internal reasoning without producing response content (finish_reason: ${finishReason || 'unknown'}).`
+      )
+    }
+
+    if (finishReason && finishReason !== 'stop') {
+      throw new Error(`AI generation ended prematurely with status: ${finishReason}`)
+    }
+
+    if (typeof content === 'string' && content.trim().length === 0) {
+      throw new Error(`AI returned an empty response (finish_reason: ${finishReason || 'stop'})`)
+    }
+
+    return typeof content === 'string' ? content : ''
   } catch (err) {
     if (isLocalEndpoint(config.baseUrl) && retryAttempt < 2 && !controller.signal.aborted) {
       await new Promise(resolve => setTimeout(resolve, 350 * (retryAttempt + 1)))

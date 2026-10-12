@@ -39,4 +39,15 @@ describe('teach-back assessment parsing', () => {
     expect(prompt).toContain('example or implication')
     expect(prompt).toContain('teach_back_status')
   })
+
+  it('requires numerical and conceptual accuracy and rejects deflections as correct', () => {
+    const prompt = buildTutorAssessmentPrompt('What is the cost?', '£24, because that is the wage I gave up.', 'Opportunity cost')
+    expect(prompt).toContain('incorrect number or uses values from a previous prompt')
+    expect(prompt).toContain('both the conceptual logic and numerical value match')
+    expect(prompt).toContain('opportunity cost (the single highest value of the next-best forgone alternative)')
+    expect(prompt).toContain('sunk costs (unrecoverable past costs)')
+    expect(prompt).toContain('the sum of unchosen alternatives')
+    expect(prompt).toContain('true fact that does not answer the specific question asked (deflection)')
+    expect(prompt).toContain("'partial' or 'unassessed', not 'correct'")
+  })
 })

@@ -14,7 +14,7 @@ import { hasSufficientEvidence } from '../../src/lib/groundedRetrieval'
 import { retrieveGroundedEvidenceAsync } from './groundedHandlers'
 import { buildTutorContext } from '../../src/lib/tutorContextBuilder'
 import { verifyTutorAnswer } from '../../src/lib/tutorAnswerVerifier'
-import { chooseFinalTutorResponse, hasFinalActiveRecallQuestion } from '../../src/lib/tutorResponse'
+import { buildTutorRepairPrompt, chooseFinalTutorResponse, validateTutorResponse } from '../../src/lib/tutorResponse'
 import { LearnerMemoryService } from '../../src/lib/memory/learnerMemoryService'
 import { buildTutorPolicyBlock } from '../../src/lib/tutorLearningPolicy'
 import { buildExactFocusPlan, hasExactFocusDuration, selectFocusSubjects, validateFocusItems, type FocusCandidate } from '../../src/lib/focusBlockPlanner'
@@ -48,6 +48,7 @@ import type {
   TutorTopicMemory,
   TutorSessionEvaluation,
   TutorTeachBackGate,
+  TutorTurnAssessment,
   TutorPhaseTransitionResult,
   GapAnalysisResult,
   GapAnalysisItem,
@@ -58,6 +59,41 @@ import type {
 import type { SyllabusModule, ModuleTopic } from '../../src/types'
 
 let db: Database.Database
+
+function isDocumentIdentifier(value: string | null | undefined): boolean {
+  const text = (value || '').trim()
+  return /^(?:material|document|file)\s*:/i.test(text) ||
+    /\.(?:pdf|docx?|pptx?|xlsx?|rtf|txt|md)(?:\s|$)/i.test(text)
+}
+
+function cleanMaterialTitle(value: string): string {
+  return value.trim().replace(/^(?:material|document|file)\s*:\s*/i, '')
+    .replace(/\.(?:pdf|docx?|pptx?|xlsx?|rtf|txt|md)$/i, '').trim()
+}
+
+function validLearningConcept(value: string | null | undefined): value is string {
+  return Boolean(value?.trim() && !isDocumentIdentifier(value))
+}
+
+export function resolveTutorTargetConcept(input: {
+  taggedConceptLabel?: string | null
+  priorAssessmentConcept?: string | null
+  requestedTopic?: string | null
+  moduleTopic?: string | null
+  subjectName?: string | null
+}): string {
+  const valid = (value?: string | null): string | undefined =>
+    validLearningConcept(value) ? value.trim() : undefined
+  const requested = input.requestedTopic?.trim()
+  const cleanedMaterial = requested && isDocumentIdentifier(requested) ? cleanMaterialTitle(requested) : undefined
+  return valid(input.taggedConceptLabel)
+    || valid(input.priorAssessmentConcept)
+    || valid(requested)
+    || valid(input.moduleTopic)
+    || valid(cleanedMaterial)
+    || valid(input.subjectName)
+    || 'this subject'
+}
 
 export function setTutorDatabase(database: Database.Database): void {
   db = database
@@ -215,6 +251,7 @@ function buildTimeContext(params: {
     `- Time elapsed: ~${elapsed} minutes`,
     `- Time remaining: ~${remaining} minutes (${Math.max(0, Math.round(remainingSecs))} seconds)`,
     `- Pacing status: ${status}`,
+    '- Maintain rapid, concise micro-dialogue (35–80 words per turn). Continue active questioning and adaptive retrieval until the scheduled time expires.',
     ''
   ]
 
@@ -2055,12 +2092,39 @@ For cards addressing student mistakes or misconceptions, target the exact confus
     } catch { /* ignore */ }
 
     const isAdaptive = params.difficultyMode === 'adaptive' || params.depthLevel === 'adaptive' || !params.depthLevel
-    const targetConcept = params.targetTopic || params.targetTopics?.[0] || params.moduleContext?.currentTopic || 'General'
+    const history = params.conversationHistory || []
+    const previousTutorMessage = [...history].reverse().find(message => message.role === 'assistant')
+    const taggedConceptId = previousTutorMessage ? parseConceptTag(previousTutorMessage.content) : null
+    let taggedConceptLabel: string | undefined
+    if (taggedConceptId) {
+      try {
+        const row = db.prepare('SELECT label FROM topic_concepts WHERE id = ?').get(taggedConceptId) as { label: string } | undefined
+        if (validLearningConcept(row?.label)) taggedConceptLabel = row.label
+      } catch { /* a missing concept table should not interrupt tutoring */ }
+    }
+    let priorAssessmentConcept: string | undefined
+    try {
+      const row = db.prepare(`SELECT concept FROM tutor_turn_assessments WHERE session_id = ?
+        ORDER BY created_at DESC, id DESC LIMIT 1`).get(params.sessionId) as { concept: string } | undefined
+      if (validLearningConcept(row?.concept)) priorAssessmentConcept = row.concept.trim()
+    } catch { /* older databases may not have tutor assessment history */ }
+    const requestedTopic = params.targetTopic || params.targetTopics?.[0]
+    const cleanMaterialTopic = requestedTopic && isDocumentIdentifier(requestedTopic) ? cleanMaterialTitle(requestedTopic) : undefined
+    // A tagged concept tracks progression through concepts within a source. Assessment
+    // history is next best, while module and cleaned material titles provide fallback.
+    const targetConcept = resolveTutorTargetConcept({
+      taggedConceptLabel,
+      priorAssessmentConcept,
+      requestedTopic,
+      moduleTopic: params.moduleContext?.currentTopic,
+      subjectName: className,
+    })
 
     // Assess the previous tutor question before generating the next response.
     // A failed or ambiguous assessment is deliberately harmless: it is stored
     // as unassessed and cannot move the learner model.
     let assessmentId: number | undefined
+    let turnAssessment: TutorTurnAssessment | null = null
     let activeTeachBackGate = params.sessionType === 'tutor' ? getActiveTeachBackGate(params.sessionId) : null
     let adaptiveState: import('../../src/types').AdaptiveConceptState | null = null
     if (userId && !isFirstTurn) {
@@ -2101,6 +2165,7 @@ For cards addressing student mistakes or misconceptions, target the exact confus
             params.studentMessageId,
             taggedConceptId || undefined
           )
+          turnAssessment = assessment
           if (activeTeachBackGate) assessment.taskType = 'teach_back'
           const recorded = new LearnerMemoryService(db).recordTutorAssessment(assessment)
           assessmentId = recorded.id
@@ -2407,12 +2472,18 @@ For cards addressing student mistakes or misconceptions, target the exact confus
     try {
       const resolvedUserId = userId || 1
       let targetTopicRow: { id: number; title: string } | undefined
-      if (params.targetTopic) {
-        targetTopicRow = db.prepare('SELECT id, title FROM module_topics WHERE LOWER(title) = LOWER(?) LIMIT 1').get(params.targetTopic) as any
-      } else if (params.targetTopics?.length) {
-        targetTopicRow = db.prepare('SELECT id, title FROM module_topics WHERE LOWER(title) = LOWER(?) LIMIT 1').get(params.targetTopics[0]) as any
-      } else if (params.moduleContext?.currentTopic) {
-        targetTopicRow = db.prepare('SELECT id, title FROM module_topics WHERE LOWER(title) = LOWER(?) LIMIT 1').get(params.moduleContext.currentTopic) as any
+      if (taggedConceptId) {
+        targetTopicRow = db.prepare(`SELECT t.id, t.title FROM module_topics t
+          JOIN topic_concepts c ON c.topic_id = t.id WHERE c.id = ? LIMIT 1`).get(taggedConceptId) as any
+      }
+      const topicCandidates = [
+        validLearningConcept(requestedTopic) ? requestedTopic : undefined,
+        validLearningConcept(params.moduleContext?.currentTopic) ? params.moduleContext?.currentTopic : undefined,
+        cleanMaterialTopic
+      ].filter((value): value is string => Boolean(value))
+      for (const candidate of topicCandidates) {
+        if (targetTopicRow) break
+        targetTopicRow = db.prepare('SELECT id, title FROM module_topics WHERE LOWER(title) = LOWER(?) LIMIT 1').get(candidate) as any
       }
 
       if (targetTopicRow) {
@@ -2522,7 +2593,11 @@ For cards addressing student mistakes or misconceptions, target the exact confus
       } else {
         syllabusContext += '\n\nNO SUFFICIENT RETRIEVED EVIDENCE: Do not invent course-specific facts. Ask for clarification or explain that the material does not establish the answer.'
       }
-      syllabusContext += buildTutorPolicyBlock(params.message, recentImpasses)
+      syllabusContext += buildTutorPolicyBlock(params.message, turnAssessment, {
+        recentImpasses,
+        isFirstTurn,
+        isTeachBack: Boolean(activeTeachBackGate)
+      })
       if (userId) {
         learnerMemoryRefs = new LearnerMemoryService(db).retrieveForTurn(userId, params.subjectId, params.message, 8)
       }
@@ -2558,18 +2633,21 @@ For cards addressing student mistakes or misconceptions, target the exact confus
 
     const continuousLearningLoopBlock = params.sessionType === 'tutor' ? `
 
-MANDATORY CONTINUOUS LEARNING LOOP:
-${isFirstTurn
-  ? '- This is the opening turn: begin with a concise explanation or orientation, then end with exactly one active-recall question about that explanation.'
-  : '- Begin by evaluating the learner\'s answer to the previous active-recall question. State what was correct, what was missing or mistaken, and why.'}
-- After assessing the previous answer, ask the learner for a Feynman-style teach-back of that same concept: explain it in plain language, include the mechanism or relationship, and give one accurate example or implication. Treat this as self-explanation, not a request to repeat your wording.
-- Then explain or correct the concept as needed and teach exactly one next source-grounded concept, relationship, or application. Do not dump a long lecture.
-- End with exactly ONE clearly labeled ACTIVE RECALL question about the newly explained material. The learner must answer it on the next turn.
-- Prefer open-ended free recall or short-answer prompts. Use one target, one task, and enough context to make the question answerable without revealing the answer.
-- Select the most useful question type for the source: mechanism (why/how), comparison, prediction, application, diagnosis of a misconception, or transfer to a changed scenario. Avoid yes/no, trivia, compound prompts, answer-revealing wording, and verbatim repeats.
-- After a correct answer, increase depth or vary the context. After an incomplete or incorrect answer, give precise corrective feedback, use the smallest useful hint, then ask a parallel or slightly easier retrieval question.
-- Revisit prior weak or due concepts after a delay and interleave closely related concepts that are easy to confuse. Keep every explanation and question grounded in the selected source evidence.
-- Do not end an active turn with a statement, summary, offer of help, or Feynman prompt alone. The final visible content must be the single new active-recall question.
+    RESEARCH-BASED TUTORING PHILOSOPHY:
+MICRO-TEACH -> RETRIEVE -> EVALUATE -> ADAPT -> REPEAT
+
+STRICT BREVITY & PACING RULES:
+- ANTI-REPETITION MANDATE: Never repeat the same question across consecutive turns. If the student struggles or deflects twice, pivot strategy immediately: model a concrete mini-example or test a simpler prerequisite.
+- Target response length: 35–80 words total (including feedback, micro-explanation, and question).
+- Soft maximum: 100 words. Absolutely never write multi-paragraph textbook lectures.
+- Exactly ONE student-facing question or retrieval task at the end.
+- Do NOT ask multiple questions or compound questions.
+- Do NOT reveal the answer within the question.
+- When evaluating a previous answer: give 1 concise sentence of precise feedback (acknowledging what was right, or identifying the specific slip/misconception).
+- Then explain ONE small, manageable idea (1–2 sentences).
+- End with ONE active recall question testing that idea.
+- On the opening turn, give a concise orientation and end with one active-recall question.
+- Keep content grounded in selected source evidence. Adapt difficulty to the learner's demonstrated understanding.
 ` : ''
 
     // Build phase-specific system prompt
@@ -2596,7 +2674,7 @@ PEDAGOGICAL RULES & 5-LAYER INSTRUCTIONAL FADING:
    - Never mark an answer as "completely wrong" when it is conceptually right or logically entails the correct answer.
    - Distinguish true misconceptions from alternative phrasings, informal explanations, or implied deductions.
 5. Give crisp, specific corrective feedback (affirming what was right, highlighting what was missed) grounded in the source materials.
-6. TEACH-BACK PROTOCOL: Use the continuous learning loop above. Whenever you explain or correct a concept, ask for a plain-language teach-back and include the mechanism plus one example or implication. Append exactly one hidden control marker on its own final line: [TEACH_BACK: canonical concept name]. The marker is never learner-facing.
+6. TEACH-BACK PROTOCOL: Only when a concept is fully understood across micro-turns and ready for milestone verification, request a synthesis teach-back and include [TEACH_BACK: canonical concept name]. Do NOT append this marker on regular micro-turns.
 7. CONTINUOUS ADVANCEMENT: A concept is not mastered until the learner passes the teach-back gate. Only then elevate to harder multi-step scenarios, subtle counterfactuals, edge cases, or the next syllabus subtopic. Never end early.
 8. FORMATTING:
    - Use LaTeX for mathematical formulas, variables, and equations ($...$ inline, $$...$$ standalone, e.g. $P$, $Q$, $E = mc^2$, $(1, 2)$). Do NOT wrap currency amounts like $5 or $3 in LaTeX math — write currency as standard plain text ($5, $3).
@@ -2620,7 +2698,7 @@ PEDAGOGICAL METHOD — Socratic Deep Dive & Diagnostic Probes:
 6. Ask them to connect concepts across different sections of the uploaded material.
 7. Present plausible but subtly flawed claims based on the material and ask them to audit and correct the error.
 8. Use the 5-Layer Fading Protocol when they struggle: scaffold the thinking rather than delivering the solution.
-9. Whenever you explain or correct a concept, use the continuous learning loop: request a plain-language teach-back, teach one next concept, and finish with exactly one new active-recall question. Append [TEACH_BACK: canonical concept name] on its own final line. The marker is never learner-facing.
+9. Only when a concept is fully understood across micro-turns and ready for milestone verification, request a synthesis teach-back and include [TEACH_BACK: canonical concept name]. Do NOT append this marker on regular micro-turns.
 10. STRICT SESSION DURATION RULE: Do NOT end the session or output [SESSION_END] unless explicitly informed that session time has expired (0 min remaining). Always end with a challenging Socratic question.
 11. FORMATTING:
    - When explaining formulas or equations, wrap inline math in $...$ (e.g. $E = mc^2$, coordinates $(1, 2)$) and standalone equations in $$...$$. Never use ^ for exponents — use proper LaTeX notation like $x^2$ or $x^{n+1}$. Do not wrap plain currency ($5, $10) in LaTeX.
@@ -2693,32 +2771,34 @@ PEDAGOGICAL METHOD — Session Summary Phase:
       // The marker is an authoring protocol, never learner-facing. It opens a
       // durable gate only for structured Tutor sessions after an explanation.
       const teachBackMarker = /\[TEACH_BACK:\s*([^\]]+)\]/i.exec(fullResponse)
-      if (params.sessionType === 'tutor' && teachBackMarker?.[1] && !activeTeachBackGate) {
-        activeTeachBackGate = createTeachBackGate(params.sessionId, teachBackMarker[1])
+      // The model emits this marker only at a milestone; adaptive policy may
+      // also independently designate a teach-back turn.
+      if (params.sessionType === 'tutor' && !activeTeachBackGate && (teachBackMarker?.[1] || adaptiveDecision.action === 'teach_back')) {
+        activeTeachBackGate = createTeachBackGate(params.sessionId, teachBackMarker?.[1] || targetConcept)
       }
       fullResponse = fullResponse.replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
+      fullResponse = stripConceptTags(fullResponse).trim()
 
-      // The active-recall question is the learner's handoff into the next
-      // turn. For structured tutor sessions (non-summary), verify and ensure
-      // the response concludes with an active-recall question.
+      // Keep tutor turns concise and end them with one retrieval task.
       if (params.sessionType === 'tutor' && params.phase !== 'summary') {
         let repairedText: string | null = null
-        if (!hasFinalActiveRecallQuestion(fullResponse)) {
+        const validation = validateTutorResponse(fullResponse, { maxWords: 110, targetRange: { min: 35, max: 80 } })
+        if (!validation.isValid) {
           try {
             const repaired = await callAIMessages([
               ...messages,
               {
                 role: 'user',
-                content: `REPAIR THIS TUTOR RESPONSE. Keep its useful explanation, then append exactly one final section titled "Active recall" containing one source-grounded, open-ended question about the newly explained concept. Use one target only; do not ask yes/no or compound questions; do not include the answer. Return only the repaired response.\n\nDRAFT:\n${fullResponse}`
+                content: buildTutorRepairPrompt(fullResponse, validation, targetConcept)
               }
             ], { ...getAIConfig(), apiKey: getApiKey() }, { type: 'text' })
-            repairedText = cleanupAIResponse(repaired).replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim()
+            repairedText = stripConceptTags(cleanupAIResponse(repaired).replace(/\[TEACH_BACK:\s*[^\]]+\]/gi, '').trim())
           } catch (repairError) {
-            console.warn('Tutor response contract repair unavailable:', repairError)
+            console.warn('Tutor response validation repair unavailable:', repairError)
           }
         }
-        // Finalize response: prefer valid repair, then draft, or append guaranteed active-recall question
-        fullResponse = chooseFinalTutorResponse(fullResponse, repairedText, targetConcept) || fullResponse
+        const finalResponse = chooseFinalTutorResponse(fullResponse, repairedText, targetConcept, { maxWords: 110 })
+        if (finalResponse) fullResponse = finalResponse
       }
 
       // Inspect if tutor introduced / targeted a concept in this turn

@@ -22,6 +22,7 @@ import { listLocalModels, registerLocalEngineHandlers, setLocalEngineWindowGette
 import { registerFolderHandlers, setFolderDatabase } from './ipc/folderHandlers'
 import { registerLectureHandlers, setLectureDatabase, setOnRecordingFinalized } from './ipc/lectureHandlers'
 import { registerPracticeHandlers, setPracticeDatabase } from './ipc/practiceHandlers'
+import { registerConceptCoverageHandlers, setConceptCoverageDatabase } from './ipc/conceptCoverageHandlers'
 import { registerAnnotationHandlers, setAnnotationDatabase } from './ipc/annotationHandlers'
 import { LectureNotesService } from './ipc/lectureNotesService'
 import { LocalWhisperService } from './ipc/localWhisperService'
@@ -337,6 +338,8 @@ app.whenReady().then(async () => {
   registerFolderHandlers()
   setPracticeDatabase(db)
   registerPracticeHandlers()
+  setConceptCoverageDatabase(db)
+  registerConceptCoverageHandlers()
   setAnnotationDatabase(db)
   registerAnnotationHandlers()
   setLectureDatabase(db)

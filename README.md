@@ -1,208 +1,152 @@
 # Neuron
 
-An AI-powered spaced repetition desktop application for smarter studying. Neuron uses the DeepSeek API (via an OpenAI-compatible provider layer) to automatically generate flashcards and active recall questions from your study materials, then schedules reviews using the FSRS-5 spaced repetition algorithm.
+<p align="center">
+  <strong>Learn deeply. Remember longer.</strong><br>
+  A private, AI-powered desktop workspace for active learning and spaced repetition.
+</p>
 
-## Features
+<p align="center">
+  <a href="https://github.com/robcarlson006/neuron/releases/tag/v5.4.0"><img alt="Release 5.4.0" src="https://img.shields.io/badge/release-v5.4.0-5b5bd6"></a>
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white">
+  <img alt="Electron" src="https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white">
+  <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-local-003B57?logo=sqlite&logoColor=white">
+  <img alt="FSRS-5" src="https://img.shields.io/badge/scheduling-FSRS--5-7C3AED">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
+</p>
 
-- **AI Card Generation**: Upload PDF, DOCX, or PPTX files and the AI automatically creates flashcards and active recall questions
-- **Spaced Repetition (FSRS-5)**: Intelligent scheduling — cards you struggle with appear more often, mastered cards are spaced further apart
-- **Active Recall with AI Grading**: Type open-ended answers and the AI evaluates them with detailed feedback
-- **Flashcard Mode**: Classic flip-card interface with confidence rating
-- **Diagnostics Test**: Run a rapid assessment to identify strong, moderate, and weak areas
-- **Calendar View**: See scheduled reviews and exam deadlines at a glance
-- **Analytics Dashboard**: Track mastery %, review history, streaks, and weakest cards
-- **Ongoing/Maintenance Mode**: Long-term retention mode for completed subjects
-- **Dark/Light Mode**: System-friendly theme toggle
-- **Local Data**: All study data stored in SQLite — no account required
-- **Seed Data**: Ships with 25+ World History cards for immediate exploration
+Neuron turns your course materials into a guided learning system. Study with a Socratic AI tutor, organize a syllabus into a trackable curriculum, and revisit concepts when they are due—all in a desktop app with local SQLite storage.
 
-## 📥 Download Neuron
+> [!TIP]
+> New to Neuron? Download the installer for your platform below, then add a subject and start a tutor session. Your study data stays on your device.
 
-You can download the latest pre-built installers for macOS, Windows, and Linux directly from [GitHub Releases](https://github.com/robcarlson006/neuron/releases/latest):
+## What you can do with Neuron
 
-| Platform | Architecture | Download |
-| :--- | :--- | :--- |
-| 🍏 **macOS** | **Apple Silicon (M1 / M2 / M3 / M4)** | [**Neuron-3.1.0-arm64.dmg**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron-3.1.0-arm64.dmg) |
-| 🍏 **macOS** | **Intel (x64)** | [**Neuron-3.1.0.dmg**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron-3.1.0.dmg) |
-| 🪟 **Windows** | **64-bit** | [**Neuron.Setup.3.1.0.exe**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron.Setup.3.1.0.exe) |
-| 🐧 **Linux** | **x64** | [**Neuron-3.1.0.AppImage**](https://github.com/robcarlson006/neuron/releases/download/v3.1.0/Neuron-3.1.0.AppImage) |
+| Study workflow | How it helps |
+| --- | --- |
+| **Socratic active-recall tutor** | Learn in fast-paced teaching units of roughly 35–80 words. Each turn asks you to retrieve and apply an idea, detects misconceptions, adapts its scaffolding, and uses teach-back to check mastery. |
+| **Smart syllabus and curriculum** | Import documents, PDFs, or syllabus material. Neuron extracts a concept tree, then tracks concepts across multi-turn study sessions so progress reflects understanding rather than page count. |
+| **FSRS-5 spaced repetition** | Schedule reviews around predicted memory, with confidence tracking and open-ended active-recall prompts. AI semantic grading evaluates the meaning of your answer and returns useful feedback. |
+| **Audio lecture notes** | Capture lecture audio and work with subject notes using AI assistance to organize and revisit key ideas. |
+| **Bring your own AI** | Connect a supported provider such as DeepSeek or OpenAI, or use an Ollama/local model. Choose the provider and key that fit your workflow. |
 
----
+## How Neuron works
 
-### 🍎 macOS Installation Note (Gatekeeper / "Damaged" message)
+```mermaid
+flowchart LR
+    A[Add syllabus, documents, or lecture notes] --> B[Extract topics and build concept tree]
+    B --> C[Study with Socratic tutor]
+    C --> D[Recall, explain, and teach back]
+    D --> E[AI checks answer and misconception]
+    E --> F[Update confidence and mastery]
+    F --> G[FSRS-5 schedules next review]
+    G --> C
+    B -. local study records .-> H[(SQLite on your device)]
+    E -. selected AI request .-> I[Your chosen provider]
+```
 
-Because Neuron is open-source and not yet signed with a paid Apple Developer certificate, macOS Gatekeeper may show a message like *"Neuron is damaged and can't be opened"* or *"Apple cannot check it for malicious software"*.
+Your subject material and learning history are managed locally. When you configure a hosted AI provider, the relevant prompt or content is sent to that provider to generate assistance; provider privacy and retention policies apply. With a local Ollama model, inference can stay on your machine.
 
-**To open Neuron on macOS:**
-1. Open the downloaded `.dmg` and drag **Neuron** to your `/Applications` folder.
-2. Open **Terminal** and run this single command to remove the quarantine flag:
-   ```bash
-   xattr -cr /Applications/Neuron.app
-   ```
-3. Launch **Neuron** from Applications or Spotlight!
+### A learning loop built around understanding
 
-*(Alternatively: Right-click `Neuron.app` in `/Applications` → click **Open** → click **Open**, or go to **System Settings → Privacy & Security** and click **Open Anyway**).*
+1. **Map the material.** Import a syllabus or study document and turn it into a structured set of concepts.
+2. **Work one idea at a time.** The tutor explains briefly, then prompts active recall on every turn.
+3. **Respond in your own words.** Semantic grading checks the reasoning, surfaces misconceptions, and adjusts support to your level.
+4. **Show mastery.** Explain the concept back; Neuron tracks confidence and understanding across the session.
+5. **Return at the right time.** FSRS-5 schedules open-ended review to support durable recall.
 
----
+## Downloads
 
-### 🪟 Windows Installation Note
+Get the latest release from [GitHub Releases](https://github.com/robcarlson006/neuron/releases/latest). Version **5.4.0** installers:
 
-If Microsoft Defender SmartScreen displays *"Windows protected your PC"*:
-1. Click **More info**.
-2. Click **Run anyway**.
+| Platform | Installer | Notes |
+| --- | --- | --- |
+| macOS Apple Silicon | [Neuron-5.4.0-arm64.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron-5.4.0-arm64.dmg) | M-series Macs |
+| macOS Intel | [Neuron-5.4.0.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron-5.4.0.dmg) | Intel Macs |
+| Windows | [Neuron Setup 5.4.0.exe](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron.Setup.5.4.0.exe) | 64-bit installer |
+| Linux | [Neuron-5.4.0.AppImage](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron-5.4.0.AppImage) | x64 AppImage |
 
----
+> [!NOTE]
+> If an asset link is not available yet, open the [v5.4.0 release page](https://github.com/robcarlson006/neuron/releases/tag/v5.4.0) to see the published downloads.
 
-## 🛠️ Development & Building from Source
+### macOS: Gatekeeper
 
-### Prerequisites
-
-- **Node.js 20+** — [Download](https://nodejs.org)
-- **npm 9+** (included with Node.js)
-
-### Setup
+Neuron is distributed without Apple notarization. If Gatekeeper blocks the downloaded app, move it to Applications, then remove the quarantine attribute:
 
 ```bash
-# Clone the repository
+xattr -cr /Applications/Neuron.app
+```
+
+Launch Neuron from Applications. You can also Control-click the app, choose **Open**, and confirm the prompt.
+
+### Windows: SmartScreen
+
+Windows SmartScreen may show **Windows protected your PC** for an unsigned installer. Select **More info**, then **Run anyway** if you downloaded Neuron from the official release page.
+
+### Linux: AppImage
+
+Make the file executable, then launch it:
+
+```bash
+chmod +x Neuron-5.4.0.AppImage
+./Neuron-5.4.0.AppImage
+```
+
+## Quick start
+
+### For learners
+
+1. Download and install Neuron for your operating system.
+2. Launch the app and create or open a subject.
+3. Add a syllabus, PDF, or other study material to build your curriculum.
+4. Start a tutor session or review concepts due today.
+5. Add an AI provider key in settings for AI-assisted tutoring, grading, and notes. Provider keys are yours to supply.
+
+### For developers
+
+**Requirements:** Node.js 20 or newer and npm.
+
+```bash
 git clone https://github.com/robcarlson006/neuron.git
 cd neuron
-
-# Install dependencies
 npm install
-
-# Run the app in development mode
 npm run dev
 ```
 
-This starts Electron with hot-reload for the renderer process.
-
-### Build for production
+Build the app and install the macOS Apple Silicon build into `/Applications`:
 
 ```bash
 npm run build
+npm run install-app
 ```
 
-This runs `electron-vite build` then `electron-builder` to produce a distributable installer in the `dist/` directory.
+`npm run install-app` is a convenience script for macOS Apple Silicon. Create platform installers with `npm run build:mac`, `npm run build:win`, or `npm run build:linux`; output is written to `dist/`.
 
-### Run unit & component tests
+## Privacy and AI providers
 
-```bash
-npm test
-```
+- **Local by default:** Subjects, notes, and study progress are stored in a local SQLite database. No Neuron account is required.
+- **Bring your own key:** Configure your own provider credentials; Neuron does not bundle a shared API key.
+- **Provider choice:** Use supported hosted providers such as DeepSeek and OpenAI, or connect a local model through Ollama.
+- **You control hosted requests:** AI features send the content needed for the request to the provider you select. Review that provider's terms and privacy policy before use.
 
-Tests cover:
-- SM-2 and FSRS-5 scheduling algorithms (all branches, edge cases)
-- AI response parsing (valid JSON, malformed, empty)
-- Database schema verification
-- FlashCard component (flip interaction, confidence buttons)
-- ActiveRecallCard component (answer submission, feedback display)
-- Dashboard component (card counts, subject display)
+Database locations:
 
-### Run E2E tests
-
-First build the app, then run:
-
-```bash
-npm run test:e2e
-```
-
-E2E tests use Playwright and simulate:
-- Completing onboarding
-- Creating a subject
-- Verifying dashboard renders
-
-### Lint
-
-```bash
-npm run lint
-```
-
-## Database Location
-
-Neuron stores your study data in a local SQLite database:
-
-| OS      | Path |
-|---------|------|
-| macOS   | `~/Library/Application Support/studyhelper/studyhelper.db` |
-| Linux   | `~/.config/studyhelper/studyhelper.db` |
+| OS | Location |
+| --- | --- |
+| macOS | `~/Library/Application Support/studyhelper/studyhelper.db` |
+| Linux | `~/.config/studyhelper/studyhelper.db` |
 | Windows | `%APPDATA%\studyhelper\studyhelper.db` |
 
-## How It Works
+## Built with
 
-### Spaced Repetition (SM-2 / FSRS-5)
+| Layer | Technology |
+| --- | --- |
+| Desktop | Electron, React, TypeScript |
+| Build | Vite, electron-vite |
+| Styling | Tailwind CSS |
+| Local persistence | SQLite via `better-sqlite3` |
+| Review scheduling | FSRS-5 |
+| AI integration | Provider-based, bring-your-own-key setup |
 
-After each card review, you rate your confidence:
-- **Got it perfectly** → quality 5
-- **Got it with hesitation** → quality 4
-- **Almost** → quality 3
-- **Forgot / got it wrong** → quality 1
-
-The spaced repetition algorithm adjusts the next review interval based on your rating. Cards you know well are scheduled further out (weeks/months); cards you struggle with come back sooner.
-
-**Mastery threshold**: A card is considered "mastered" when its interval reaches 21+ days.
-
-### Ongoing Subjects
-
-Mark a subject as "Ongoing" for long-term retention. When a card's interval reaches 30+ days and its ease factor is ≥ 2.5, it enters maintenance mode — reviewed every 30–90 days to prevent forgetting without excessive repetition.
-
-### Exam Boost
-
-Add exam deadlines to a subject. If an exam is within 7 days, the scheduler caps review intervals to ensure you see each card before the exam.
-
-## Project Structure
-
-```
-neuron/
-├── electron/           # Main process (Node.js/Electron)
-│   ├── main.ts         # App entry, window creation, DB init
-│   ├── preload.ts      # contextBridge API exposure
-│   └── ipc/
-│       ├── dbHandlers.ts      # SQLite operations
-│       ├── fileHandlers.ts    # PDF/DOCX/PPTX parsing
-│       └── geminiHandlers.ts  # Gemini AI integration
-├── src/                # Renderer process (React/TypeScript)
-│   ├── components/     # Reusable UI components
-│   ├── pages/          # Page-level components
-│   ├── hooks/          # Custom React hooks
-│   ├── lib/            # Core logic (SM-2, Gemini, DB schema)
-│   ├── store/          # Zustand global state
-│   └── types/          # TypeScript type definitions
-├── tests/
-│   ├── unit/           # Logic unit tests (Jest)
-│   ├── components/     # React component tests
-│   └── e2e/            # End-to-end tests (Playwright)
-└── seed/               # World History seed data
-```
-
-## Troubleshooting
-
-### "Failed to process file"
-- Ensure the file is not password-protected
-- PDF must be text-based (not a scanned image)
-- Try a different file format
-
-### App won't start
-- Ensure Node.js 18+ is installed: `node --version`
-- Delete `node_modules` and re-run `npm install`
-- Check for port conflicts if the dev server fails
-
-### Cards not appearing
-- Ensure you've uploaded a material file to the subject
-- Check the subject's card count in the Subject Detail view
-- Run Diagnostics to seed your SM-2 schedule
-
-### SQLite errors
-The database is created automatically on first launch. If you get SQLite errors, try deleting the `.db` file at the path above and restarting the app.
-
-## Tech Stack
-
-- **Electron 41** with contextBridge/preload security model
-- **React 18** + **TypeScript 5**
-- **Tailwind CSS 3** (light/dark mode)
-- **SQLite** via `better-sqlite3`
-- **DeepSeek** via the OpenAI-compatible chat completions API
-- **Zustand** for state management
-- **Recharts** for analytics charts
-- **Vite** + **electron-vite** for building
-- **Jest** + **@testing-library/react** for testing
-- **Playwright** for E2E tests
+Neuron is released under the [MIT License](LICENSE).

@@ -36,6 +36,8 @@ import type {
   SM2Result,
   SaveSubjectNoteInput,
   SubjectNote,
+  NotebookPage,
+  SaveNotebookPageInput,
   AnalyticsSnapshot,
   AnalyticsDailyPoint,
   AnalyticsModeStats,
@@ -156,6 +158,118 @@ export function registerDbHandlers(): void {
     }
     const result = db.prepare('INSERT INTO subject_notes (subject_id, body, links_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(input.subject_id, body, JSON.stringify(links), now, now)
     return db.prepare('SELECT * FROM subject_notes WHERE id = ?').get(result.lastInsertRowid) as SubjectNote
+  })
+
+  // ── Multi-page Notebook handlers ──────────────────────────────────────────
+
+  ipcMain.handle('db:getNotebookPages', (_event, subjectId: number): NotebookPage[] => {
+    if (!Number.isInteger(subjectId)) return []
+    // Ensure table exists safely if running without pending migrations
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS subject_notebook_pages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject_id INTEGER NOT NULL,
+        page_number INTEGER NOT NULL DEFAULT 1,
+        title TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        links_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+      )
+    `).run()
+
+    let pages = db.prepare('SELECT * FROM subject_notebook_pages WHERE subject_id = ? ORDER BY page_number ASC').all(subjectId) as NotebookPage[]
+    if (pages.length === 0) {
+      // Migrate legacy note if present, or create Page 1
+      const legacy = db.prepare('SELECT * FROM subject_notes WHERE subject_id = ?').get(subjectId) as SubjectNote | undefined
+      const now = new Date().toISOString()
+      const initialBody = legacy?.body || ''
+      const initialLinks = legacy?.links_json || '[]'
+      const insert = db.prepare(`
+        INSERT INTO subject_notebook_pages (subject_id, page_number, title, body, links_json, created_at, updated_at)
+        VALUES (?, 1, 'Page 1', ?, ?, ?, ?)
+      `).run(subjectId, initialBody, initialLinks, now, now)
+      pages = [db.prepare('SELECT * FROM subject_notebook_pages WHERE id = ?').get(insert.lastInsertRowid) as NotebookPage]
+    }
+    return pages
+  })
+
+  ipcMain.handle('db:saveNotebookPage', (_event, input: SaveNotebookPageInput): NotebookPage => {
+    if (!Number.isInteger(input.subject_id)) throw new Error('Subject not found')
+    const body = typeof input.body === 'string' ? normalizeMathText(input.body) : ''
+    const links = Array.isArray(input.links) ? input.links : []
+    const title = typeof input.title === 'string' ? input.title.trim() : ''
+    const now = new Date().toISOString()
+
+    if (input.id) {
+      db.prepare(`
+        UPDATE subject_notebook_pages
+        SET body = ?, links_json = ?, title = ?, updated_at = ?
+        WHERE id = ? AND subject_id = ?
+      `).run(body, JSON.stringify(links), title, now, input.id, input.subject_id)
+      return db.prepare('SELECT * FROM subject_notebook_pages WHERE id = ?').get(input.id) as NotebookPage
+    }
+
+    // Check by page_number
+    const existing = db.prepare('SELECT id FROM subject_notebook_pages WHERE subject_id = ? AND page_number = ?').get(input.subject_id, input.page_number) as { id: number } | undefined
+    if (existing) {
+      db.prepare(`
+        UPDATE subject_notebook_pages
+        SET body = ?, links_json = ?, title = ?, updated_at = ?
+        WHERE id = ?
+      `).run(body, JSON.stringify(links), title, now, existing.id)
+      return db.prepare('SELECT * FROM subject_notebook_pages WHERE id = ?').get(existing.id) as NotebookPage
+    }
+
+    const insert = db.prepare(`
+      INSERT INTO subject_notebook_pages (subject_id, page_number, title, body, links_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(input.subject_id, input.page_number, title || `Page ${input.page_number}`, body, JSON.stringify(links), now, now)
+    return db.prepare('SELECT * FROM subject_notebook_pages WHERE id = ?').get(insert.lastInsertRowid) as NotebookPage
+  })
+
+  ipcMain.handle('db:createNotebookPage', (_event, subjectId: number, afterPageNumber?: number): NotebookPage => {
+    if (!Number.isInteger(subjectId)) throw new Error('Subject not found')
+    const countRow = db.prepare('SELECT COUNT(*) as total, MAX(page_number) as max_page FROM subject_notebook_pages WHERE subject_id = ?').get(subjectId) as { total: number; max_page: number | null }
+    const now = new Date().toISOString()
+    const targetPageNum = (afterPageNumber && Number.isInteger(afterPageNumber)) ? afterPageNumber + 1 : ((countRow?.max_page || 0) + 1)
+
+    // Shift any pages >= targetPageNum up by 1 if inserting mid-book
+    db.prepare('UPDATE subject_notebook_pages SET page_number = page_number + 1 WHERE subject_id = ? AND page_number >= ?').run(subjectId, targetPageNum)
+
+    const insert = db.prepare(`
+      INSERT INTO subject_notebook_pages (subject_id, page_number, title, body, links_json, created_at, updated_at)
+      VALUES (?, ?, ?, '', '[]', ?, ?)
+    `).run(subjectId, targetPageNum, `Page ${targetPageNum}`, now, now)
+
+    return db.prepare('SELECT * FROM subject_notebook_pages WHERE id = ?').get(insert.lastInsertRowid) as NotebookPage
+  })
+
+  ipcMain.handle('db:deleteNotebookPage', (_event, pageId: number, subjectId: number): { success: boolean; pages: NotebookPage[] } => {
+    if (!Number.isInteger(pageId) || !Number.isInteger(subjectId)) throw new Error('Invalid arguments')
+    const page = db.prepare('SELECT * FROM subject_notebook_pages WHERE id = ? AND subject_id = ?').get(pageId, subjectId) as NotebookPage | undefined
+    if (!page) throw new Error('Page not found')
+
+    const totalCount = (db.prepare('SELECT COUNT(*) as cnt FROM subject_notebook_pages WHERE subject_id = ?').get(subjectId) as { cnt: number }).cnt
+    if (totalCount <= 1) {
+      // Don't delete the only page; clear it instead
+      const now = new Date().toISOString()
+      db.prepare('UPDATE subject_notebook_pages SET body = "", links_json = "[]", title = "Page 1", updated_at = ? WHERE id = ?').run(now, pageId)
+      const remaining = db.prepare('SELECT * FROM subject_notebook_pages WHERE subject_id = ? ORDER BY page_number ASC').all(subjectId) as NotebookPage[]
+      return { success: true, pages: remaining }
+    }
+
+    db.prepare('DELETE FROM subject_notebook_pages WHERE id = ?').run(pageId)
+    // Renumber remaining pages sequentially: 1, 2, 3...
+    const remaining = db.prepare('SELECT id FROM subject_notebook_pages WHERE subject_id = ? ORDER BY page_number ASC, id ASC').all(subjectId) as { id: number }[]
+    const updateStmt = db.prepare('UPDATE subject_notebook_pages SET page_number = ? WHERE id = ?')
+    for (let i = 0; i < remaining.length; i++) {
+      updateStmt.run(i + 1, remaining[i].id)
+    }
+
+    const refreshed = db.prepare('SELECT * FROM subject_notebook_pages WHERE subject_id = ? ORDER BY page_number ASC').all(subjectId) as NotebookPage[]
+    return { success: true, pages: refreshed }
   })
 
   ipcMain.handle('db:deleteSubject', (_event, subjectId: number) => {

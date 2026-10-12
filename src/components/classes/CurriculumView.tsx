@@ -98,6 +98,32 @@ export default function CurriculumView({
   const [modalInitialTopicId, setModalInitialTopicId] = useState<number | undefined>(undefined)
   const [selectedTopicsByModule, setSelectedTopicsByModule] = useState<Record<number, Set<number>>>({})
   const [draggedModuleId, setDraggedModuleId] = useState<number | null>(null)
+  const [expandedTopicId, setExpandedTopicId] = useState<number | null>(null)
+  const [topicConcepts, setTopicConcepts] = useState<Record<number, import('../../types').TopicConcept[]>>({})
+  const [loadingConcepts, setLoadingConcepts] = useState<Record<number, boolean>>({})
+
+  async function toggleTopicConcepts(topicId: number): Promise<void> {
+    if (expandedTopicId === topicId) {
+      setExpandedTopicId(null)
+      return
+    }
+    setExpandedTopicId(topicId)
+    if (!topicConcepts[topicId] && window.electronAPI.conceptsGetForTopic) {
+      setLoadingConcepts(prev => ({ ...prev, [topicId]: true }))
+      try {
+        let list = await window.electronAPI.conceptsGetForTopic(topicId)
+        if ((!list || list.length === 0) && window.electronAPI.conceptsExtractForTopic) {
+          // Lazy extraction if not yet extracted
+          list = await window.electronAPI.conceptsExtractForTopic(topicId)
+        }
+        setTopicConcepts(prev => ({ ...prev, [topicId]: list || [] }))
+      } catch (err) {
+        console.warn('Failed to load topic concepts:', err)
+      } finally {
+        setLoadingConcepts(prev => ({ ...prev, [topicId]: false }))
+      }
+    }
+  }
 
   function moveModule(moduleId: number, direction: -1 | 1): void {
     if (!onReorderModules) return
@@ -529,9 +555,9 @@ export default function CurriculumView({
                         const evidenceCount = Array.isArray(topicMetadata.source_evidence) ? topicMetadata.source_evidence.length : 0
 
                         return (
-                          <div
-                            key={topic.id}
-                            data-curriculum-topic={topic.id}
+                          <React.Fragment key={topic.id}>
+                            <div
+                              data-curriculum-topic={topic.id}
                             draggable={Boolean(onReorderTopics)}
                             onDragStart={() => {
                               if (onReorderTopics) {
@@ -719,6 +745,49 @@ export default function CurriculumView({
                                   </button>
                                 </div>
                               )}
+                              {/* Concept Coverage & 0-10 Rubric Mastery Badges */}
+                              {topic.concept_count !== undefined && topic.concept_count > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    toggleTopicConcepts(topic.id)
+                                  }}
+                                  title="Click to view granular concept breakdown and 0-10 rubric mastery"
+                                  className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
+                                >
+                                  <div className="w-10 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden flex-shrink-0">
+                                    <div
+                                      className="h-full bg-violet-600 dark:bg-violet-500 rounded-full"
+                                      style={{ width: `${topic.coverage_percentage || 0}%` }}
+                                    />
+                                  </div>
+                                  <span>{topic.concepts_assessed || 0}/{topic.concept_count}</span>
+                                  {topic.mastery_score_10 !== null && topic.mastery_score_10 !== undefined ? (
+                                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                      · {topic.mastery_score_10}/10
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 dark:text-slate-500">· –</span>
+                                  )}
+                                  <span className="text-[9px] opacity-60">{expandedTopicId === topic.id ? '▲' : '▼'}</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    toggleTopicConcepts(topic.id)
+                                  }}
+                                  title="Break down this lecture into granular concepts with rubrics"
+                                  className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800/50 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>🎯 Concepts</span>
+                                </button>
+                              )}
+
                               {!topicCompleted && Boolean(topic.has_new_material || topic.is_gap) && (
                                 <span
                                   title={`Estimated onboarding time: ${topic.estimated_minutes || 15} minutes`}
@@ -729,8 +798,107 @@ export default function CurriculumView({
                               )}
                             </div>
                           </div>
-                        )
-                      })}
+
+                          {/* Expandable Granular Concept Checklist Accordion */}
+                          {expandedTopicId === topic.id && (
+                            <div className="ml-7 mr-2 mb-2 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-200/80 dark:border-slate-700/60 space-y-2">
+                              <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300 pb-1.5 border-b border-slate-200 dark:border-slate-700">
+                                <span className="flex items-center gap-1.5">
+                                  <span>🎯 Lecture Concepts & Active Recall Rubrics</span>
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => onStartTutor(mod.id, [topic.title], 'syllabus')}
+                                    className="text-[11px] font-medium px-2.5 py-0.5 rounded bg-violet-600 hover:bg-violet-700 text-white transition-colors"
+                                  >
+                                    Study with Tutor
+                                  </button>
+                                </div>
+                              </div>
+
+                              {loadingConcepts[topic.id] ? (
+                                <div className="text-xs text-slate-500 py-3 text-center flex items-center justify-center gap-2">
+                                  <span className="w-3.5 h-3.5 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                                  <span>Extracting and ordering key concepts from course material...</span>
+                                </div>
+                              ) : (topicConcepts[topic.id] || []).length === 0 ? (
+                                <div className="text-xs text-slate-500 py-2 text-center">
+                                  No concepts found. Click "Study with Tutor" to analyze source materials.
+                                </div>
+                              ) : (
+                                <div className="space-y-1.5 pt-1">
+                                  {(topicConcepts[topic.id] || []).map((concept, cIdx) => (
+                                    <div
+                                      key={concept.id}
+                                      className="flex items-start justify-between gap-3 p-2 bg-white dark:bg-slate-900/60 rounded border border-slate-200/60 dark:border-slate-700/40 text-xs"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[10px] font-mono text-slate-400">
+                                            #{concept.teach_order || cIdx + 1}
+                                          </span>
+                                          <span className="font-medium text-slate-800 dark:text-slate-200">
+                                            {concept.label}
+                                          </span>
+                                          {concept.progress_state === 'assessed' ? (
+                                            <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
+                                              Covered & Assessed
+                                            </span>
+                                          ) : concept.progress_state === 'introduced' ? (
+                                            <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300">
+                                              Introduced (Taught)
+                                            </span>
+                                          ) : (
+                                            <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                              Unseen
+                                            </span>
+                                          )}
+                                        </div>
+                                        {concept.summary && (
+                                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                            {concept.summary}
+                                          </p>
+                                        )}
+                                        {concept.key_points && concept.key_points.length > 0 && (
+                                          <div className="mt-1 flex flex-wrap gap-1">
+                                            {concept.key_points.map((kp, kpIdx) => (
+                                              <span
+                                                key={kpIdx}
+                                                className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                                                title={`Rubric point: ${kp}`}
+                                              >
+                                                • {kp}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-col items-end flex-shrink-0">
+                                        <div className="text-[11px] font-semibold">
+                                          {concept.mastery_score_10 !== null && concept.mastery_score_10 !== undefined ? (
+                                            <span className={concept.mastery_score_10 >= 8 ? 'text-emerald-600 dark:text-emerald-400' : concept.mastery_score_10 >= 5 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}>
+                                              {concept.mastery_score_10}/10
+                                            </span>
+                                          ) : (
+                                            <span className="text-slate-400" title="Not yet assessed with an active recall question">
+                                              –
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="text-[9px] text-slate-400 mt-0.5">
+                                          {concept.assessment_count || 0} answer{(concept.assessment_count || 0) === 1 ? '' : 's'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
                     </div>
                   </div>
                 )}

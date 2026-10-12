@@ -19,3 +19,4 @@ seed/**/*.d.ts
 mempalace/
 *.traineddata
 *.traineddata.gz
+.bridge/

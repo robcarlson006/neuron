@@ -86,6 +86,29 @@ describe('Updater - pickAsset selection', () => {
     const url = pickAsset(assetsWithApiUrl, 'darwin', 'arm64')
     expect(url).toBe('https://api.github.com/repositories/1205182997/releases/assets/586871478')
   })
+
+  test('picks arm64 DMG from standard electron-builder release assets where x64 is unsuffixed', () => {
+    const assets = [
+      { name: 'Neuron-5.3.3.dmg', browser_download_url: 'https://github.com/robmcarlson006/neuron/releases/download/v5.3.3/Neuron-5.3.3.dmg' },
+      { name: 'Neuron-5.3.3-arm64.dmg', browser_download_url: 'https://github.com/robmcarlson006/neuron/releases/download/v5.3.3/Neuron-5.3.3-arm64.dmg' },
+      { name: 'Neuron-5.3.3-mac.zip', browser_download_url: 'https://github.com/robmcarlson006/neuron/releases/download/v5.3.3/Neuron-5.3.3-mac.zip' },
+      { name: 'Neuron-5.3.3-arm64-mac.zip', browser_download_url: 'https://github.com/robmcarlson006/neuron/releases/download/v5.3.3/Neuron-5.3.3-arm64-mac.zip' }
+    ]
+    const armUrl = pickAsset(assets, 'darwin', 'arm64')
+    expect(armUrl).toBe('https://github.com/robmcarlson006/neuron/releases/download/v5.3.3/Neuron-5.3.3-arm64.dmg')
+
+    const x64Url = pickAsset(assets, 'darwin', 'x64')
+    expect(x64Url).toBe('https://github.com/robmcarlson006/neuron/releases/download/v5.3.3/Neuron-5.3.3.dmg')
+  })
+})
+
+describe('Updater - getSystemArch detection', () => {
+  test('returns arm64 or x64 string', async () => {
+    const { getSystemArch } = await import('../../electron/ipc/updaterHandlers')
+    const arch = getSystemArch()
+    expect(typeof arch).toBe('string')
+    expect(['arm64', 'x64']).toContain(arch)
+  })
 })
 
 describe('Updater - buildMacInstallScript', () => {

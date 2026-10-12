@@ -1,7 +1,7 @@
 import { ipcMain, app, shell, BrowserWindow } from 'electron'
 import { createWriteStream, writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
-import { spawn } from 'child_process'
+import { spawn, execSync } from 'child_process'
 import os from 'os'
 import https from 'https'
 import http from 'http'
@@ -195,11 +195,31 @@ export function downloadFile(
   })
 }
 
+/**
+ * Detect real system architecture even if running translated under Rosetta 2 on macOS.
+ */
+export function getSystemArch(): string {
+  if (process.platform === 'darwin') {
+    if (process.arch === 'arm64') return 'arm64'
+    try {
+      // Check if running under Rosetta 2 translation
+      const isTranslated = execSync('sysctl -n sysctl.proc_translated 2>/dev/null', { timeout: 1000 }).toString().trim()
+      if (isTranslated === '1') return 'arm64'
+      // Check if machine hardware supports arm64
+      const hasArm64 = execSync('sysctl -in hw.optional.arm64 2>/dev/null', { timeout: 1000 }).toString().trim()
+      if (hasArm64 === '1') return 'arm64'
+    } catch {
+      // Fallback to process.arch
+    }
+  }
+  return process.arch
+}
+
 /** Pick the right asset URL for the current platform/arch. */
 export function pickAsset(
   assets: { name: string; browser_download_url: string; url?: string }[],
   targetPlatform: string = process.platform,
-  targetArch: string = process.arch,
+  targetArch: string = getSystemArch(),
   preferredArch?: string
 ): string | null {
   if (!assets || assets.length === 0) return null
@@ -216,18 +236,17 @@ export function pickAsset(
     // 1. Prefer DMG matching the target architecture
     const target = resolvedArch === 'arm64'
       ? assets.find(a => /arm64.*\.dmg$/i.test(a.name) || /aarch64.*\.dmg$/i.test(a.name))
-      : assets.find(a => /x64.*\.dmg$/i.test(a.name) || /x86_64.*\.dmg$/i.test(a.name))
+      : assets.find(a => /x64.*\.dmg$/i.test(a.name) || /x86_64.*\.dmg$/i.test(a.name) || (a.name.toLowerCase().endsWith('.dmg') && !a.name.includes('arm64') && !a.name.includes('aarch64')))
 
     // 2. Fallback: any DMG that mentions the arch
     const fallback = resolvedArch === 'arm64'
       ? assets.find(a => a.name.toLowerCase().endsWith('.dmg') && (a.name.includes('arm64') || a.name.includes('aarch64')))
       : assets.find(a => a.name.toLowerCase().endsWith('.dmg') && !a.name.includes('arm64') && !a.name.includes('aarch64'))
 
-    // 3. Final fallback: any DMG
+    // 3. Final fallback: never fallback to x64 DMG when arm64 is requested
     return getUrl(target)
       ?? getUrl(fallback)
-      ?? getUrl(assets.find(a => a.name.toLowerCase().endsWith('.dmg')))
-      ?? null
+      ?? (resolvedArch === 'arm64' ? null : getUrl(assets.find(a => a.name.toLowerCase().endsWith('.dmg'))))
   }
 
   if (targetPlatform === 'win32') {
@@ -267,48 +286,59 @@ export function getPreferredArchFromDB(): string | undefined {
 export function buildMacInstallScript(dmgPath: string): string {
   return `#!/bin/bash
 set -e
-sleep 2
-
-# Mount DMG with robust mount point extraction
-MOUNT_OUTPUT=$(hdiutil attach "${dmgPath}" -nobrowse -noautoopen 2>&1)
-VOLUME=$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/.*' | head -n 1)
-
-if [ -z "$VOLUME" ] || [ ! -d "$VOLUME" ]; then
-  echo "Failed to mount DMG: $MOUNT_OUTPUT" >&2
-  exit 1
-fi
-
-APP_SRC=$(find "$VOLUME" -maxdepth 2 -name "*.app" | head -n 1)
-if [ -z "$APP_SRC" ]; then
-  echo "No .app bundle found in DMG" >&2
-  hdiutil detach "$VOLUME" -force -quiet || true
-  exit 1
-fi
 
 DEST="/Applications/Neuron.app"
 
-# Replace app bundle cleanly
-if rm -rf "$DEST" 2>/dev/null && cp -R "$APP_SRC" "$DEST" 2>/dev/null; then
+# 1. Wait for old Neuron instance to exit (up to 10 seconds), then force terminate if still alive
+for i in {1..20}; do
+  if ! pgrep -x "Neuron" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+
+# If still running, force kill to avoid file lock conflicts
+pkill -9 -x "Neuron" 2>/dev/null || true
+sleep 0.5
+
+# 2. Mount DMG with robust mount point extraction
+MOUNT_OUTPUT=$(hdiutil attach "${dmgPath}" -nobrowse -noautoopen 2>&1)
+VOLUME=$(echo "\$MOUNT_OUTPUT" | grep -o '/Volumes/.*' | head -n 1)
+
+if [ -z "\$VOLUME" ] || [ ! -d "\$VOLUME" ]; then
+  echo "Failed to mount DMG: \$MOUNT_OUTPUT" >&2
+  exit 1
+fi
+
+APP_SRC=$(find "\$VOLUME" -maxdepth 2 -name "*.app" | head -n 1)
+if [ -z "\$APP_SRC" ]; then
+  echo "No .app bundle found in DMG" >&2
+  hdiutil detach "\$VOLUME" -force -quiet || true
+  exit 1
+fi
+
+# 3. Replace app bundle cleanly
+if rm -rf "\$DEST" 2>/dev/null && cp -R "\$APP_SRC" "\$DEST" 2>/dev/null; then
   echo "Updated successfully without admin"
-elif cp -R "$APP_SRC" "$DEST" 2>/dev/null; then
+elif cp -R "\$APP_SRC" "\$DEST" 2>/dev/null; then
   echo "Copied successfully"
 else
   # Fallback: prompt for admin privileges via AppleScript
-  osascript -e "do shell script \\"rm -rf '$DEST' && cp -R '$APP_SRC' '$DEST'\\" with administrator privileges"
+  osascript -e "do shell script \\"rm -rf '\$DEST' && cp -R '\$APP_SRC' '\$DEST'\\" with administrator privileges"
 fi
 
-# Remove quarantine flags so macOS doesn't block unsigned update
-xattr -cr "$DEST" 2>/dev/null || true
+# 4. Remove quarantine flags so macOS doesn't block unsigned update
+xattr -cr "\$DEST" 2>/dev/null || true
 
-# Unmount DMG
-hdiutil detach "$VOLUME" -force -quiet || true
+# 5. Unmount DMG
+hdiutil detach "\$VOLUME" -force -quiet || true
 
-# Clean up downloaded DMG file
+# 6. Clean up downloaded DMG file
 rm -f "${dmgPath}"
 
-# Wait and relaunch
+# 7. Wait and relaunch freshly updated app bundle
 sleep 1
-open "$DEST" || open -a Neuron
+open -n "\$DEST" || open "\$DEST" || open -a Neuron
 `
 }
 
@@ -335,7 +365,7 @@ export async function checkGitHubUpdates(): Promise<UpdateInfo> {
   const currentVersion = app.getVersion()
   const updateAvailable = isNewer(currentVersion, latestVersion)
   const preferredArch  = getPreferredArchFromDB()
-  const downloadUrl    = pickAsset(data.assets, process.platform, process.arch, preferredArch)
+  const downloadUrl    = pickAsset(data.assets, process.platform, getSystemArch(), preferredArch)
 
   return {
     currentVersion,
@@ -390,6 +420,9 @@ export function registerUpdaterHandlers(windowGetter: () => BrowserWindow | null
 
   // ── Get current version ──
   ipcMain.handle('updater:getVersion', () => app.getVersion())
+
+  // ── Get hardware / system architecture ──
+  ipcMain.handle('updater:getSystemArch', () => getSystemArch())
 
   // ── Get the process-owned download state so renderer navigation cannot lose it ──
   ipcMain.handle('updater:getState', () => getUpdateDownloadState())

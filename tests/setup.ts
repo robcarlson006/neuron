@@ -62,6 +62,32 @@ const mockElectronAPI = {
   saveMaterial: jest.fn().mockResolvedValue({ id: 1 }),
   getSubjectNote: jest.fn().mockResolvedValue(null),
   saveSubjectNote: jest.fn().mockResolvedValue({ id: 1, subject_id: 1, body: '', links_json: '[]', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+  getNotebookPages: jest.fn().mockResolvedValue([
+    { id: 1, subject_id: 1, page_number: 1, title: 'Page 1', body: '', links_json: '[]', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+  ]),
+  saveNotebookPage: jest.fn().mockImplementation((input) => Promise.resolve({
+    id: input.id || 1,
+    subject_id: input.subject_id,
+    page_number: input.page_number || 1,
+    title: input.title || `Page ${input.page_number || 1}`,
+    body: input.body,
+    links_json: JSON.stringify(input.links || []),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  })),
+  createNotebookPage: jest.fn().mockImplementation((subjectId, afterPage) => Promise.resolve({
+    id: Date.now(),
+    subject_id: subjectId,
+    page_number: (afterPage || 1) + 1,
+    title: `Page ${(afterPage || 1) + 1}`,
+    body: '',
+    links_json: '[]',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  })),
+  deleteNotebookPage: jest.fn().mockResolvedValue({ success: true, pages: [] }),
+  organizeNotes: jest.fn().mockResolvedValue({ success: true, text: '' }),
+  noteHelperChat: jest.fn().mockResolvedValue({ success: true, text: 'This is a helpful answer.' }),
   listDocumentAnnotations: jest.fn().mockResolvedValue([]),
   reconcileMaterialAnnotations: jest.fn().mockResolvedValue([]),
   saveDocumentAnnotation: jest.fn().mockResolvedValue({ id: 1 }),
@@ -169,6 +195,7 @@ const mockElectronAPI = {
   startLocalEngine: jest.fn().mockResolvedValue({ success: true, port: 8080 }),
   stopLocalEngine: jest.fn().mockResolvedValue({ success: true }),
   onLocalDownloadProgress: jest.fn().mockReturnValue(() => {}),
+  getSystemArch: jest.fn().mockResolvedValue('arm64'),
 
   // Linked Class Folder Operations
   selectFolderDialog: jest.fn().mockResolvedValue(null),

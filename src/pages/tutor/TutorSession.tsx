@@ -9,6 +9,8 @@ import TutorChatSidebar from './TutorChatSidebar'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import type { Message, SyllabusModule, TutorSessionConfig, TutorSessionRuntime, PacingStatus, TutorSessionEvaluation, TutorTeachBackGate, TutorPhaseTransitionResult } from '../../types'
 import { adjustTutorTimer, formatTutorTimer, formatTutorTimerDisplay, getTutorTimerState, shouldTutorTimerTick } from '../../lib/tutorTimer'
+import { isDocumentIdentifier } from '../../lib/tutorResponse'
+import { shouldAcceptTutorChunk, tryBeginTutorSessionInitialization } from '../../lib/tutorSessionGuards'
 
 type SessionPhase = 'structured_qa' | 'socratic' | 'summary' | 'complete'
 type PageState = 'loading' | 'streaming' | 'awaiting_input' | 'phase_transition' | 'session_complete' | 'error'
@@ -213,6 +215,9 @@ export default function TutorSession(): React.JSX.Element {
   const sessionIdRef = useRef<number | null>(null)
   const sessionPhaseRef = useRef<SessionPhase>('structured_qa')
   const createdSessionIdRef = useRef<number | null>(null)
+  const initializingSessionIdRef = useRef<number | null>(null)
+  const initInFlightRef = useRef(false)
+  const initTokenRef = useRef(0)
 
   sessionIdRef.current = sessionId
   sessionPhaseRef.current = sessionPhase
@@ -322,18 +327,42 @@ export default function TutorSession(): React.JSX.Element {
 
   // ── Load / init session ──
   useEffect(() => {
+    let isCancelled = false
     if (user && subjectId) {
-      initSession()
+      if (routeSessionId && Number(routeSessionId) === createdSessionIdRef.current) {
+        return () => {}
+      }
+      const token = ++initTokenRef.current
+      void initSession(() => isCancelled || token !== initTokenRef.current)
+    }
+    return () => {
+      const isUrlSync = initializingSessionIdRef.current != null &&
+        initializingSessionIdRef.current === createdSessionIdRef.current
+      if (isUrlSync) return
+
+      isCancelled = true
+      initTokenRef.current += 1
+      initInFlightRef.current = false
+      sessionIdRef.current = null
     }
   }, [user, subjectId, routeSessionId])
 
-  async function initSession(): Promise<void> {
-    if (!user) return
+  useEffect(() => {
+    if (pageState !== 'loading') return
+    const timeout = window.setTimeout(() => {
+      // Invalidate a stalled attempt so Retry can claim a fresh initialization.
+      initTokenRef.current += 1
+      initInFlightRef.current = false
+      initializingSessionIdRef.current = null
+      setError('Tutor initialization is taking longer than expected. Check your connection and try again.')
+      setPageState('error')
+    }, 20000)
+    return () => window.clearTimeout(timeout)
+  }, [pageState])
 
-    // Guard against re-initializing if we just navigated to the newly created session
-    if (routeSessionId && Number(routeSessionId) === createdSessionIdRef.current) {
-      return
-    }
+  async function initSession(isCancelled: () => boolean = () => false): Promise<void> {
+    if (!user || !tryBeginTutorSessionInitialization(initInFlightRef)) return
+    const initAttempt = initTokenRef.current
 
     setPageState('loading')
     setError(null)
@@ -358,6 +387,7 @@ export default function TutorSession(): React.JSX.Element {
     try {
       // Load syllabus modules
       const mods = await window.electronAPI.syllabusListModules(subjectId) as SyllabusModule[]
+      if (isCancelled()) return
 
       // Load mastery data
       try {
@@ -370,6 +400,7 @@ export default function TutorSession(): React.JSX.Element {
       if (routeSessionId && !isExplicitNew) {
         const targetId = Number(routeSessionId)
         const sessionData = await window.electronAPI.tutorGetSession(targetId)
+        if (isCancelled()) return
         if (sessionData && sessionData.session) {
           const s = sessionData.session
           setSessionId(s.id)
@@ -527,8 +558,16 @@ export default function TutorSession(): React.JSX.Element {
               if (evalData) setSessionEvaluation(evalData)
             } catch { /* ignore */ }
           }
-
-          setPageState('awaiting_input')
+          const hasAssistantResponse = hydrated.some(message => message.role === 'assistant')
+          const lastUserMessage = [...hydrated].reverse().find(message => message.role === 'user')
+          if (!hasAssistantResponse && lastUserMessage && s.phase !== 'complete') {
+            setPageState('streaming')
+            // A saved opening prompt with no assistant response is an interrupted
+            // launch. Resume that first response instead of presenting an idle chat.
+            await streamMessage(s.id, lastUserMessage.content, s.phase as SessionPhase, [], undefined, undefined, isCancelled)
+          } else {
+            setPageState('awaiting_input')
+          }
           return
         }
       }
@@ -536,6 +575,7 @@ export default function TutorSession(): React.JSX.Element {
       // ── CASE 2: No specific session requested — check if there is an existing session to resume ──
       if (!isExplicitNew && !configParam) {
         const existingList = await window.electronAPI.tutorListSessions(subjectId, 25)
+        if (isCancelled()) return
         const resumable = existingList?.find((candidate) => candidate.phase !== 'complete' && !candidate.ended_at)
         if (resumable) {
           navigate(`/tutor/${subjectId}/session/${resumable.id}`, { replace: true })
@@ -587,8 +627,10 @@ export default function TutorSession(): React.JSX.Element {
           ,source_annotation_ids: config.annotation_ids
         }
       ) as { id: number; phase: string }
+      if (isCancelled()) return
 
       createdSessionIdRef.current = session.id
+      initializingSessionIdRef.current = session.id
       setSessionId(session.id)
       sessionIdRef.current = session.id
       setSessionPhase(session.phase as SessionPhase)
@@ -607,7 +649,10 @@ export default function TutorSession(): React.JSX.Element {
       // Send a "ready to learn" system message to start the session
       const difficultyMap = ['', 'Beginner', 'Intermediate', 'Proficient', 'Expert', 'Professor']
       const difficultyLabel = config.depth_level === 'adaptive' ? 'Adaptive (AI-Calibrated)' : (difficultyMap[config.depth_level as number] || 'Proficient')
-      const topic = config.target_topic || (config.material_name ? `${config.material_name} (Material)` : (inProgressMod?.title || subject?.name || 'this subject'))
+      const fallbackTopic = inProgressMod?.title || subject?.name || 'this subject'
+      const topic = config.target_topic && !isDocumentIdentifier(config.target_topic)
+        ? config.target_topic
+        : fallbackTopic
 
       let initialMsg = ''
       if (config.is_quick_review) {
@@ -645,11 +690,10 @@ Difficulty: ${difficultyLabel}
 ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
 ${config.never_studied ? 'The student has never studied this material before. Start from absolute basics.' : ''}`
       } else if (config.material_name) {
-        initialMsg = `Greet me and ask your first question in this exact format:
-"Welcome! Let's dive into ${config.material_name}. [Specific question about this material]?"
+        initialMsg = `Greet me and launch a lesson on ${topic}, using the selected study material as the source. Identify a concrete learning concept in the material, briefly explain it, then ask one sharp active-recall question about that concept. Never ask what the document is about or use its filename as a concept.
 
-Topic: ${config.material_name}
-Specific Material Focus: "${config.material_name}"
+Learning topic: ${topic}
+Source material: ${config.material_name}
 Difficulty: ${difficultyLabel}
 ${config.duration_minutes ? `Duration: ${config.duration_minutes} min` : 'No time limit — go at your own pace'}
 ${config.never_studied ? 'The student has never studied this material before. Start from absolute basics.' : ''}`
@@ -678,12 +722,14 @@ ${config.never_studied ? 'The student has never studied this before. Start from 
 OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, source-grounded concept before asking anything. End with exactly one active-recall question about that explanation. Do not begin with a question-only response.`
 
       // Save the initial user message
+      if (isCancelled()) return
       await window.electronAPI.tutorSaveMessage({
         session_id: session.id,
         role: 'user',
         content: initialMsg,
         content_type: 'text'
       })
+      if (isCancelled()) return
 
       setMessages([{
         id: 'init',
@@ -696,8 +742,9 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
 
       // Start streaming the AI's first response
       setPageState('streaming')
-      await streamMessage(session.id, initialMsg, 'structured_qa', [])
+      await streamMessage(session.id, initialMsg, 'structured_qa', [], undefined, undefined, isCancelled)
     } catch (err) {
+      if (isCancelled()) return
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error('Session init error:', errMsg)
       if (errMsg.includes('API key') || errMsg.includes('not configured') || errMsg.includes('401') || errMsg.includes('Unauthorized') || errMsg.includes('Authentication failed')) {
@@ -709,6 +756,11 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
       }
       setPageState('error')
       setIsAiResponding(false)
+    } finally {
+      if (initAttempt === initTokenRef.current) {
+        initInFlightRef.current = false
+        initializingSessionIdRef.current = null
+      }
     }
   }
 
@@ -719,8 +771,10 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
     phase: SessionPhase,
     history: { role: 'user' | 'assistant'; content: string }[],
     attached?: { name: string; content: string },
-    studentMessageId?: string
+    studentMessageId?: string,
+    isCancelled: () => boolean = () => false
   ): Promise<void> {
+    if (isCancelled()) return
     setSending(true)
     setIsAiResponding(true)
     setPageState('streaming')
@@ -729,6 +783,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
     streamDoneRef.current = false
 
     const timeoutId = setTimeout(() => {
+      if (isCancelled()) return
       setSending(false)
       setIsAiResponding(false)
       streamingRef.current = ''
@@ -779,7 +834,9 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
         topicsMastered: runtime.topics_mastered,
         weakTopicsConcerns: runtime.weak_topics,
       })
+      if (isCancelled()) return
     } catch (err) {
+      if (isCancelled()) return
       const hadPartialResponse = Boolean(streamingRef.current)
       if (hadPartialResponse) {
         // Partial response was received — save it
@@ -825,7 +882,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
       clearTimeout(timeoutId)
       // The IPC call resolves after its terminal chunk. This remains a
       // defensive release for aborts or unexpected transport failures.
-      setIsAiResponding(false)
+      if (!isCancelled()) setIsAiResponding(false)
     }
   }
 
@@ -1015,6 +1072,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
   // ── Chunk listener (stable, bound once on mount) ──
   useEffect(() => {
     const cleanup = window.electronAPI.onTutorChunk((chunk) => {
+      if (!shouldAcceptTutorChunk(sessionIdRef.current, chunk.conversationId)) return
       if (chunk.type === 'text') {
         streamingRef.current += chunk.content
         setStreamingContent(streamingRef.current)
@@ -1037,7 +1095,7 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
           } catch { /* diagnostic metadata is optional */ }
         }
 
-        const activeSessionId = chunk.conversationId || sessionIdRef.current
+        const activeSessionId = chunk.conversationId
         if (finalContent && activeSessionId) {
           // If session is timed and still has time remaining, strip premature [SESSION_END] tag
           const hasTimeRemaining = runtime.config.duration_minutes !== null && runtime.time_remaining_seconds > 30 && !runtime.is_time_up
@@ -1445,13 +1503,13 @@ OPENING-TURN LEARNING CONTRACT: Explain or orient the learner with one concise, 
             )}
 
             <div className="flex gap-3 justify-center flex-wrap">
-              <button onClick={() => navigate('/tutor')} className="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors">
-                Back to Tutor
+              <button onClick={() => navigate(`/subject/${subjectId}`)} className="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors">
+                Back to Class
               </button>
               <button onClick={() => navigate('/settings')} className="px-4 py-2 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 text-slate-700 dark:text-slate-200 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5">
                 <span>⚙️</span> Open Settings
               </button>
-              <button onClick={initSession} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors">
+              <button onClick={() => { void initSession() }} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-colors">
                 Retry
               </button>
             </div>

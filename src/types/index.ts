@@ -72,6 +72,26 @@ export interface SaveSubjectNoteInput {
   links?: SubjectNoteLink[]
 }
 
+export interface NotebookPage {
+  id: number
+  subject_id: number
+  page_number: number
+  title: string
+  body: string
+  links_json?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SaveNotebookPageInput {
+  id?: number
+  subject_id: number
+  page_number: number
+  title?: string
+  body: string
+  links?: SubjectNoteLink[]
+}
+
 export type DocumentAnnotationKind = 'highlight' | 'comment' | 'cue' | 'question' | 'summary'
 
 export interface DocumentLocator {
@@ -737,6 +757,10 @@ export interface TutorTurnAssessment {
   sourceEvidence?: EvidenceRef[]
   idempotencyKey?: string
   createdAt?: string
+  // Concept Rubric Evaluation
+  conceptId?: number
+  keyPointsHit?: number[]
+  rubricScore10?: number
 }
 
 export interface AdaptiveDecision {
@@ -938,6 +962,69 @@ export interface ModuleTopic {
   /** Stable graph node identifier, present for graph-backed curricula. */
   outcome_id?: number | null
   curriculum_revision?: number
+  // Concept-level coverage & rubric mastery
+  concept_count?: number
+  concepts_assessed?: number
+  coverage_percentage?: number
+  mastery_score_10?: number | null
+  has_concept_data?: boolean
+}
+
+export type ConceptProgressState = 'unseen' | 'introduced' | 'assessed'
+
+export interface TopicConcept {
+  id: number
+  topic_id: number
+  subject_id: number
+  label: string
+  summary?: string
+  key_points: string[]
+  source_chunk_ids: string[]
+  sort_order: number
+  teach_order: number
+  prerequisite_ids: number[]
+  content_hash: string
+  status: 'active' | 'superseded'
+  created_at: string
+  // Progress when joined with user progress
+  progress_state?: ConceptProgressState
+  introduced_at?: string
+  last_assessed_at?: string
+  mastery_score_10?: number | null
+  assessment_count?: number
+  is_due_for_review?: boolean
+  retrievability?: number
+}
+
+export interface ConceptAssessmentRecord {
+  id?: number
+  concept_id: number
+  user_id: number
+  session_id?: number | null
+  assessment_id?: number | null
+  key_points_hit: number[]
+  misconception?: string
+  assistance_level?: string
+  score_10: number
+  created_at?: string
+}
+
+export interface ConceptCoveragePlan {
+  review: TopicConcept[]
+  newConcepts: TopicConcept[]
+  done: TopicConcept[]
+  refresherPrerequisites: TopicConcept[]
+}
+
+export interface TopicCoverageRollup {
+  topic_id: number
+  total_concepts: number
+  assessed_concepts: number
+  introduced_concepts: number
+  unseen_concepts: number
+  coverage_percentage: number
+  mastery_score_10: number | null
+  has_concept_data: boolean
 }
 
 /** A bounded, source-grounded statement the learner should be able to demonstrate. */

@@ -93,4 +93,63 @@ describe('AI provider routing for document learning', () => {
       global.fetch = nativeFetch
     }
   })
+
+  it('throws descriptive error when output token limit is reached with finish_reason length', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: { content: '', reasoning_content: 'A lot of thinking...' },
+          finish_reason: 'length'
+        }],
+        usage: { prompt_tokens: 1000, completion_tokens: 8192 }
+      })
+    })
+
+    await expect(
+      callAIMessages(
+        [{ role: 'user', content: 'Generate large curriculum' }],
+        { provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: 'test-key' }
+      )
+    ).rejects.toThrow(/AI output token limit reached before generation completed \(finish_reason: length\)/)
+  })
+
+  it('throws descriptive error when reasoning exhausted budget without producing content', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: { content: '', reasoning_content: 'Only internal thinking' },
+          finish_reason: 'stop'
+        }]
+      })
+    })
+
+    await expect(
+      callAIMessages(
+        [{ role: 'user', content: 'Generate syllabus' }],
+        { provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: 'test-key' }
+      )
+    ).rejects.toThrow(/AI spent its output token budget on internal reasoning without producing response content/)
+  })
+
+  it('passes custom maxTokens and temperature to OpenAI-compatible provider', async () => {
+    await callAIMessages(
+      [{ role: 'user', content: 'Custom tokens test' }],
+      {
+        provider: 'openai-compatible',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-flash',
+        apiKey: 'test-key',
+        maxTokens: 32768,
+        temperature: 0.2
+      }
+    )
+
+    const [, request] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(String(request.body))
+    expect(body.max_tokens).toBe(32768)
+    expect(body.temperature).toBe(0.2)
+  })
 })
+

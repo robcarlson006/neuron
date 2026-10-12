@@ -55,6 +55,19 @@ export const DB_SCHEMA = `
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS subject_notebook_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    page_number INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    links_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_notebook_pages_subject ON subject_notebook_pages(subject_id, page_number);
+
   CREATE TABLE IF NOT EXISTS document_annotations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_id INTEGER NOT NULL,
@@ -601,6 +614,54 @@ export const DB_SCHEMA = `
     FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS topic_concepts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    summary TEXT,
+    key_points_json TEXT NOT NULL DEFAULT '[]',
+    source_chunk_ids_json TEXT NOT NULL DEFAULT '[]',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    teach_order INTEGER NOT NULL DEFAULT 0,
+    prerequisite_ids_json TEXT NOT NULL DEFAULT '[]',
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','superseded')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_topic_concepts_topic ON topic_concepts(topic_id, teach_order);
+  CREATE INDEX IF NOT EXISTS idx_topic_concepts_subject ON topic_concepts(subject_id);
+
+  CREATE TABLE IF NOT EXISTS concept_progress (
+    concept_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'unseen' CHECK(state IN ('unseen','introduced','assessed')),
+    introduced_at TEXT,
+    last_assessed_at TEXT,
+    PRIMARY KEY (concept_id, user_id),
+    FOREIGN KEY (concept_id) REFERENCES topic_concepts(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS concept_assessments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    session_id INTEGER,
+    assessment_id INTEGER,
+    key_points_hit_json TEXT NOT NULL DEFAULT '[]',
+    misconception TEXT,
+    assistance_level TEXT,
+    score_10 REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (concept_id) REFERENCES topic_concepts(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_concept_assessments_concept ON concept_assessments(concept_id, user_id, created_at DESC);
 
   CREATE TABLE IF NOT EXISTS tutor_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1426,7 +1487,66 @@ export const MIGRATIONS_SQL = [
   "CREATE TABLE IF NOT EXISTS curriculum_mastery (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, revision_id INTEGER NOT NULL, outcome_id INTEGER, criterion TEXT NOT NULL, evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('assessment','teach_back','practice','tutor','manual')), target_score REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(revision_id) REFERENCES curriculum_revisions(id) ON DELETE CASCADE, FOREIGN KEY(outcome_id) REFERENCES curriculum_outcomes(id) ON DELETE CASCADE)",
   "CREATE INDEX IF NOT EXISTS idx_curriculum_mastery_outcome ON curriculum_mastery(outcome_id)",
   "CREATE TABLE IF NOT EXISTS curriculum_generation_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, requested_revision INTEGER NOT NULL, resulting_revision INTEGER, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_version TEXT NOT NULL, source_hashes_json TEXT NOT NULL DEFAULT '[]', output_hash TEXT, status TEXT NOT NULL DEFAULT 'started' CHECK(status IN ('started','applied','rejected','failed','stale')), validation_score REAL, repair_attempt INTEGER NOT NULL DEFAULT 0, error_details_json TEXT NOT NULL DEFAULT '[]', change_summary_json TEXT, started_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT, duration_ms INTEGER, FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE, FOREIGN KEY(resulting_revision) REFERENCES curriculum_revisions(id) ON DELETE SET NULL)",
-  "CREATE INDEX IF NOT EXISTS idx_curriculum_generation_runs_subject ON curriculum_generation_runs(subject_id, started_at DESC)"
+  "CREATE INDEX IF NOT EXISTS idx_curriculum_generation_runs_subject ON curriculum_generation_runs(subject_id, started_at DESC)",
+  // V5.7: Concept Coverage, Rubric-based Grading, and Teaching Order
+  `CREATE TABLE IF NOT EXISTS topic_concepts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    summary TEXT,
+    key_points_json TEXT NOT NULL DEFAULT '[]',
+    source_chunk_ids_json TEXT NOT NULL DEFAULT '[]',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    teach_order INTEGER NOT NULL DEFAULT 0,
+    prerequisite_ids_json TEXT NOT NULL DEFAULT '[]',
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','superseded')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE CASCADE,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_topic_concepts_topic ON topic_concepts(topic_id, teach_order)",
+  "CREATE INDEX IF NOT EXISTS idx_topic_concepts_subject ON topic_concepts(subject_id)",
+  `CREATE TABLE IF NOT EXISTS concept_progress (
+    concept_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'unseen' CHECK(state IN ('unseen','introduced','assessed')),
+    introduced_at TEXT,
+    last_assessed_at TEXT,
+    PRIMARY KEY (concept_id, user_id),
+    FOREIGN KEY (concept_id) REFERENCES topic_concepts(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS concept_assessments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    session_id INTEGER,
+    assessment_id INTEGER,
+    key_points_hit_json TEXT NOT NULL DEFAULT '[]',
+    misconception TEXT,
+    assistance_level TEXT,
+    score_10 REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (concept_id) REFERENCES topic_concepts(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE SET NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_concept_assessments_concept ON concept_assessments(concept_id, user_id, created_at DESC)",
+  // V5.8: Multi-page realistic Notebook pages
+  `CREATE TABLE IF NOT EXISTS subject_notebook_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    page_number INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    links_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_notebook_pages_subject ON subject_notebook_pages(subject_id, page_number)"
 ]
 
 export const MASTERED_INTERVAL = 21

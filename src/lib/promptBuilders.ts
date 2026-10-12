@@ -891,6 +891,35 @@ TEXT TO FORMAT:
 ${text}`
 }
 
+/**
+ * Build a prompt that formats and organizes raw notes without altering, removing, or fabricating material.
+ */
+export function buildOrganizeNotesPrompt(text: string): string {
+  return `You are an expert academic note structuring assistant.
+Your sole task is to take the student's raw lecture notes and reorganize them into a clean, beautifully formatted Markdown note.
+
+CRITICAL REQUIREMENTS:
+1. STRICT INFORMATION INTEGRITY:
+   - DO NOT add any new concepts, facts, examples, explanations, or external information.
+   - DO NOT remove, omit, or summarize away any notes, ideas, names, dates, formulas, numbers, or details that the student wrote.
+   - Every single point, claim, or item written in the original notes MUST be retained.
+2. PRESERVE SPECIAL TOKENS:
+   - If the text contains material links like [[material:123|filename.pdf]], keep them EXACTLY as [[material:123|filename.pdf]]. Never modify or remove them.
+3. STRUCTURE & READABILITY:
+   - Group related points under clear, intuitive Markdown headers (##, ###).
+   - Use clean, logical bullet points (- ) and numbered lists for sequential processes.
+   - Use bold (**term**) for key vocabulary or defined terms already present in the notes.
+   - Standardize mathematical and scientific equations into LaTeX ($...$ for inline and $$...$$ for standalone display equations).
+   - Fix blatant typos or grammar errors without altering technical terminology or intended meaning.
+4. OUTPUT FORMAT:
+   - Return ONLY the final organized markdown note.
+   - Do NOT wrap your entire response in markdown code fences (\`\`\`).
+   - Do NOT include conversational greetings, conclusions, notes, or commentary.
+
+RAW NOTES TO ORGANIZE:
+${text}`
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENHANCED RESPONSE PARSERS
 // ═══════════════════════════════════════════════════════════════════════════════

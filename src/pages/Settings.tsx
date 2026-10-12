@@ -473,6 +473,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
 
     window.electronAPI.getUpdateState?.().then(applyDownloadState).catch(() => {})
     window.electronAPI.onUpdateState?.(applyDownloadState)
+    window.electronAPI.getSystemArch?.().then(arch => {
+      if (arch) setDetectedArch(arch)
+    }).catch(() => {})
 
     loadUserLevel()
   }, [])
@@ -603,7 +606,9 @@ export default function Settings({ onStartDemo }: SettingsProps): React.JSX.Elem
   // Architecture selector for macOS (for users who want to override auto-detection)
   const [preferredArch, setPreferredArch] = useState<'auto' | 'arm64' | 'x64'>('auto')
   const isMac = navigator.userAgent.includes('Macintosh')
-  const detectedArch = typeof process !== 'undefined' && process.arch ? process.arch : 'unknown'
+  const [detectedArch, setDetectedArch] = useState<string>(
+    typeof process !== 'undefined' && process.arch ? process.arch : 'unknown'
+  )
 
   async function handleSavePreferredArch(): Promise<void> {
     await runSettingsAction('Save download architecture', async () => {

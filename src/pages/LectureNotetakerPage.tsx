@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { DocumentAnnotation, Lecture, Material, Subject } from '../types'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import NoteAIHelper from '../components/notes/NoteAIHelper'
 
 export default function LectureNotetakerPage(): React.JSX.Element {
   const { subjectId: subjectIdParam, lectureId: lectureIdParam } = useParams<{ subjectId: string; lectureId: string }>()
@@ -198,6 +199,31 @@ export default function LectureNotetakerPage(): React.JSX.Element {
           <div className="max-h-48 overflow-y-auto py-3 text-slate-600 dark:text-slate-300"><MarkdownRenderer content={lecture.raw_transcript} /></div>
         </details>
       )}
+
+      {/* Floating Note AI Helper */}
+      <div className="fixed bottom-6 right-6 z-40">
+        <NoteAIHelper
+          subjectName={subject?.name}
+          lectureTitle={lecture.title}
+          currentNotes={`Notes:\n${notes}\n\nCues/Questions:\n${questions}\n\nSummary:\n${summary}`}
+          onInsertText={(insertedText) => {
+            const editor = notesEditorRef.current
+            if (editor) {
+              const start = editor.selectionStart || notes.length
+              const end = editor.selectionEnd || notes.length
+              const next = notes.slice(0, start) + (notes ? '\n\n' : '') + insertedText + notes.slice(end)
+              notesDirtyRef.current = true
+              setNotes(next)
+              void saveSection('cue', next)
+            } else {
+              const next = notes ? `${notes}\n\n${insertedText}` : insertedText
+              notesDirtyRef.current = true
+              setNotes(next)
+              void saveSection('cue', next)
+            }
+          }}
+        />
+      </div>
     </div>
   )
 }

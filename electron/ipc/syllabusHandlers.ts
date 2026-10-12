@@ -54,7 +54,8 @@ function classifyGenerationFailure(message: string): string {
   const lower = message.toLowerCase()
   if (lower.includes('api key') || lower.includes('credential')) return 'missing_credentials'
   if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('abort')) return 'provider_timeout'
-  if (lower.includes('invalid syllabus') || lower.includes('json') || lower.includes('response')) return 'invalid_model_output'
+  if (lower.includes('token limit') || lower.includes('finish_reason: length') || lower.includes('reasoning without producing') || lower.includes('output token budget')) return 'output_truncated'
+  if (lower.includes('invalid syllabus') || lower.includes('json') || lower.includes('response') || lower.includes('empty')) return 'invalid_model_output'
   if (lower.includes('api error') || lower.includes('provider') || lower.includes('connect')) return 'provider_error'
   if (lower.includes('stale')) return 'stale'
   if (lower.includes('sqlite') || lower.includes('database') || lower.includes('constraint')) return 'persistence_error'
@@ -123,8 +124,8 @@ export function validateParsedCurriculum(
         }
       }
     }
-    if (options?.requireSourceMaterialIds && (mod.topics.length < 2 || mod.topics.length > 5)) {
-      throw new Error(`Invalid syllabus response: module "${mod.title}" must contain between 2 and 5 topics`)
+    if (options?.requireSourceMaterialIds && (mod.topics.length < 1 || mod.topics.length > 8)) {
+      throw new Error(`Invalid syllabus response: module "${mod.title}" must contain between 1 and 8 topics`)
     }
   }
   if (topicCount === 0) throw new Error('Invalid syllabus response: no topics generated')
@@ -817,13 +818,24 @@ Rules:
   try {
     if (!apiKey) throwGenerationError('AI API key not configured. Go to Settings to configure your AI provider.', 'missing_credentials')
 
-    const requestMessages = [{ role: 'user' as const, content: prompt }]
-    let responseText = await callAIMessages(requestMessages, { ...config, apiKey }, { type: 'json_object' })
+    const systemPrompt = 'You are an expert curriculum designer. Return ONLY a valid JSON object matching the requested schema. Ensure all required fields are present, and output the complete JSON response directly.'
+    const requestMessages = [
+      { role: 'system' as const, content: systemPrompt },
+      { role: 'user' as const, content: prompt }
+    ]
+    let responseText = ''
     let parsed: { modules: ParsedReconciledModule[]; material_module_assignments?: { material_filename: string; module_title: string }[] }
     let repairAttempt = 0
 
     for (;;) {
       try {
+        if (!responseText) {
+          responseText = await callAIMessages(
+            requestMessages,
+            { ...config, apiKey, maxTokens: 32768, temperature: 0.2, timeoutMs: 180_000 },
+            { type: 'json_object' }
+          )
+        }
         parsed = parseAIJson<typeof parsed>(responseText)
         if (!parsed.modules || !Array.isArray(parsed.modules)) throw new Error('Invalid syllabus response: missing modules array')
         validateParsedCurriculum(parsed.modules, { validMaterialIds, subjectId, requireSourceMaterialIds: true })
@@ -845,8 +857,11 @@ Rules:
         db.prepare('UPDATE curriculum_generation_runs SET repair_attempt = ? WHERE id = ?').run(repairAttempt, generationRunId)
         const reason = sanitizeGenerationError(validationError, apiKey)
         responseText = await callAIMessages(
-          [{ role: 'user', content: `${prompt}\n\nYour previous response failed local validation: ${reason}\nReturn a corrected JSON response only. Every topic must include concept_type, estimated_minutes, and at least one valid source_material_ids value from the supplied materials.` }],
-          { ...config, apiKey },
+          [
+            { role: 'system' as const, content: systemPrompt },
+            { role: 'user' as const, content: `${prompt}\n\nYour previous response failed local validation: ${reason}\nReturn a corrected JSON response only. Every topic must include concept_type, estimated_minutes, and at least one valid source_material_ids value from the supplied materials.` }
+          ],
+          { ...config, apiKey, maxTokens: 32768, temperature: 0.1, timeoutMs: 180_000 },
           { type: 'json_object' }
         )
       }

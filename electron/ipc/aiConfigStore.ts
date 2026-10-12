@@ -20,7 +20,11 @@ const DEPRECATED_MODELS: Record<string, string> = {
   'deepseek-coder': DEFAULT_MODEL,
   'deepseek-v2': DEFAULT_MODEL,
   'deepseek-v3': DEFAULT_MODEL,
-  'deepseek-r1': DEFAULT_MODEL
+  'deepseek-r1': DEFAULT_MODEL,
+  'deepseek-flash-4.1': DEFAULT_MODEL,
+  'deepseek-v4-flash': DEFAULT_MODEL,
+  'deepseek-v4.1-flash': DEFAULT_MODEL,
+  'deepseek-v4.1': DEFAULT_MODEL
 }
 
 /** Map a stored model name to a currently-supported one, leaving others untouched. */
