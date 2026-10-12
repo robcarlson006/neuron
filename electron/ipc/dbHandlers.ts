@@ -1141,6 +1141,8 @@ export function registerDbHandlers(): void {
         sessions: Number(currentStudySubject?.sessions || 0),
         retention: metrics?.retentionCount ? metrics.retentionSum / metrics.retentionCount : null,
         mastery: metrics?.cards ? metrics.mastered / metrics.cards : 0,
+        matured_cards: metrics?.mastered || 0,
+        scheduled_cards: metrics?.cards || 0,
         previous_reviews: Number(previousReviews?.reviews || 0),
         previous_correct: Number(previousReviews?.correct || 0),
         previous_study_minutes: previousStudySubject?.minutes == null ? null : Number(previousStudySubject.minutes)

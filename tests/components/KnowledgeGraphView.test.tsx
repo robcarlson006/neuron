@@ -2,6 +2,7 @@ import React from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import KnowledgeGraphView from '../../src/components/graphs/KnowledgeGraphView'
 import type { ConceptDependency, ConceptMastery, Card } from '../../src/types'
+import { deriveConceptLearningState } from '../../src/lib/learningState'
 
 // Mock react-router-dom useNavigate
 const mockNavigate = jest.fn()
@@ -24,6 +25,16 @@ describe('KnowledgeGraphView', () => {
     { id: 101, subject_id: 1, type: 'flashcard', front: 'What is a derivative?', back: 'Slope', is_manual: 0, concept: 'Derivatives', created_at: '2026-01-01' }
   ]
 
+  const learningStates = [
+    deriveConceptLearningState({ conceptId: 11, conceptLabel: 'Derivatives', now: new Date('2026-10-12T12:00:00Z'), assessments: [
+      { id: 1, outcome: 'correct', occurredAt: '2026-10-01T12:00:00Z', questionKey: 'derivative-1' },
+      { id: 2, outcome: 'correct', occurredAt: '2026-10-03T12:00:00Z', questionKey: 'derivative-2' }
+    ] }),
+    deriveConceptLearningState({ conceptId: 12, conceptLabel: 'Backpropagation', now: new Date('2026-10-12T12:00:00Z'), assessments: [
+      { id: 3, outcome: 'incorrect', occurredAt: '2026-10-03T12:00:00Z', questionKey: 'backprop-1' }
+    ] })
+  ]
+
   it('renders graph header, summary badges, and concept node labels', () => {
     render(
       <KnowledgeGraphView
@@ -31,6 +42,7 @@ describe('KnowledgeGraphView', () => {
         subjectName="Machine Learning"
         dependencies={dependencies}
         concepts={concepts}
+        learningStates={learningStates}
         cards={cards}
       />
     )
@@ -48,6 +60,7 @@ describe('KnowledgeGraphView', () => {
         subjectId={1}
         dependencies={dependencies}
         concepts={concepts}
+        learningStates={learningStates}
         cards={cards}
       />
     )
@@ -66,6 +79,7 @@ describe('KnowledgeGraphView', () => {
         subjectId={1}
         dependencies={dependencies}
         concepts={concepts}
+        learningStates={learningStates}
         cards={cards}
         onOpenTutor={mockTutor}
       />
@@ -76,9 +90,9 @@ describe('KnowledgeGraphView', () => {
     fireEvent.click(nodeLabel)
 
     // Inspector should open
-    expect(screen.getByText('BKT Knowledge Level')).toBeInTheDocument()
-    expect(screen.getAllByText('90%').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('10 test observations')).toBeInTheDocument()
+    expect(screen.getByText('Proficiency from recorded evidence')).toBeInTheDocument()
+    expect(screen.getByText('demonstrated')).toBeInTheDocument()
+    expect(screen.getByText('2 assessments · moderate evidence confidence')).toBeInTheDocument()
 
     // Study cards button click
     const studyBtn = screen.getByText(/Study Derivatives Cards/i)
@@ -93,6 +107,7 @@ describe('KnowledgeGraphView', () => {
         subjectId={1}
         dependencies={dependencies}
         concepts={concepts}
+        learningStates={learningStates}
         cards={cards}
       />
     )

@@ -25,7 +25,10 @@ export function retrieveGroundedEvidence(query: string, subjectId?: number | nul
   const filters: string[] = []
   const params: number[] = []
   if (subjectId) { filters.push('m.subject_id = ?'); params.push(subjectId) }
-  if (materialId) { filters.push('m.id = ?'); params.push(materialId) }
+  // The plural scope is authoritative. The singular ID is also present in
+  // legacy TutorSessionConfig values and represents its first item.
+  const scopedMaterialId = materialIds?.length ? undefined : materialId
+  if (scopedMaterialId) { filters.push('m.id = ?'); params.push(scopedMaterialId) }
   if (materialIds?.length) { filters.push(`m.id IN (${materialIds.map(() => '?').join(',')})`); params.push(...materialIds) }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
   const rows = db.prepare(`
@@ -41,7 +44,7 @@ export function retrieveGroundedEvidence(query: string, subjectId?: number | nul
     const materialFilters: string[] = ['content_text IS NOT NULL', "content_text != ''"]
     const materialParams: number[] = []
     if (subjectId) { materialFilters.push('subject_id = ?'); materialParams.push(subjectId) }
-    if (materialId) { materialFilters.push('id = ?'); materialParams.push(materialId) }
+    if (scopedMaterialId) { materialFilters.push('id = ?'); materialParams.push(scopedMaterialId) }
     if (materialIds?.length) { materialFilters.push(`id IN (${materialIds.map(() => '?').join(',')})`); materialParams.push(...materialIds) }
     const materials = db.prepare(`SELECT id, subject_id, filename, content_text FROM materials WHERE ${materialFilters.join(' AND ')}`).all(...materialParams) as Array<{ id: number; subject_id: number; filename: string; content_text: string }>
     const transientCandidates: RetrievalCandidate[] = []
@@ -64,7 +67,7 @@ export function retrieveGroundedEvidence(query: string, subjectId?: number | nul
   const materialFilters: string[] = ['content_text IS NOT NULL', "content_text != ''"]
   const materialParams: number[] = []
   if (subjectId) { materialFilters.push('subject_id = ?'); materialParams.push(subjectId) }
-  if (materialId) { materialFilters.push('id = ?'); materialParams.push(materialId) }
+  if (scopedMaterialId) { materialFilters.push('id = ?'); materialParams.push(scopedMaterialId) }
   if (materialIds?.length) { materialFilters.push(`id IN (${materialIds.map(() => '?').join(',')})`); materialParams.push(...materialIds) }
   const unindexedMaterials = db.prepare(`SELECT id, subject_id, filename, content_text FROM materials WHERE ${materialFilters.join(' AND ')}`).all(...materialParams) as Array<{ id: number; subject_id: number; filename: string; content_text: string }>
   for (const material of unindexedMaterials) {
@@ -80,7 +83,8 @@ export async function retrieveGroundedEvidenceAsync(query: string, subjectId?: n
   const filters: string[] = []
   const params: number[] = []
   if (subjectId) { filters.push('m.subject_id = ?'); params.push(subjectId) }
-  if (materialId) { filters.push('m.id = ?'); params.push(materialId) }
+  const scopedMaterialId = materialIds?.length ? undefined : materialId
+  if (scopedMaterialId) { filters.push('m.id = ?'); params.push(scopedMaterialId) }
   if (materialIds?.length) { filters.push(`m.id IN (${materialIds.map(() => '?').join(',')})`); params.push(...materialIds) }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
   const rows = db.prepare(`
@@ -100,7 +104,7 @@ export async function retrieveGroundedEvidenceAsync(query: string, subjectId?: n
   const materialFilters: string[] = ['content_text IS NOT NULL', "content_text != ''"]
   const materialParams: number[] = []
   if (subjectId) { materialFilters.push('subject_id = ?'); materialParams.push(subjectId) }
-  if (materialId) { materialFilters.push('id = ?'); materialParams.push(materialId) }
+  if (scopedMaterialId) { materialFilters.push('id = ?'); materialParams.push(scopedMaterialId) }
   if (materialIds?.length) { materialFilters.push(`id IN (${materialIds.map(() => '?').join(',')})`); materialParams.push(...materialIds) }
   const unindexedMaterials = db.prepare(`SELECT id, subject_id, filename, content_text FROM materials WHERE ${materialFilters.join(' AND ')}`).all(...materialParams) as Array<{ id: number; subject_id: number; filename: string; content_text: string }>
   for (const material of unindexedMaterials) {

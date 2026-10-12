@@ -456,6 +456,13 @@ const electronAPI = {
     ipcRenderer.invoke('concepts:getForTopic', topicId, userId),
   conceptsGetTopicRollups: (subjectId: number, userId?: number): Promise<Record<number, import('../src/types').TopicCoverageRollup>> =>
     ipcRenderer.invoke('concepts:getTopicRollups', subjectId, userId),
+  conceptsGetLearningStates: (subjectId: number, userId?: number, topicId?: number): Promise<import('../src/lib/learningState').ConceptLearningState[]> =>
+    ipcRenderer.invoke('concepts:getLearningStates', subjectId, userId, topicId),
+  onConceptLearningStateChanged: (callback: (payload: { subjectId: number; conceptId: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { subjectId: number; conceptId: number }): void => callback(payload)
+    ipcRenderer.on('concepts:learningStateChanged', handler)
+    return () => ipcRenderer.removeListener('concepts:learningStateChanged', handler)
+  },
   conceptsExtractForTopic: (topicId: number, options?: { forceReextract?: boolean }): Promise<import('../src/types').TopicConcept[]> =>
     ipcRenderer.invoke('concepts:extractForTopic', topicId, options),
 

@@ -31,6 +31,7 @@ import type {
   ModuleTopic,
   Card
 } from '../../types'
+import type { ConceptLearningState } from '../../lib/learningState'
 
 export interface KnowledgeGraphViewProps {
   subjectId: number
@@ -39,6 +40,7 @@ export interface KnowledgeGraphViewProps {
   concepts?: ConceptMastery[]
   modules?: (SyllabusModule & { topics?: ModuleTopic[] })[]
   cards?: Card[]
+  learningStates?: ConceptLearningState[]
   onAddDependency?: (prereq: string, target: string) => Promise<void>
   onDeleteDependency?: (prereq: string, target: string) => Promise<void>
   onOpenTutor?: (concept: string, node?: ConceptGraphNode) => void
@@ -46,7 +48,7 @@ export interface KnowledgeGraphViewProps {
   onOpenCurriculum?: (node: ConceptGraphNode) => void
 }
 
-type FilterOption = 'all' | 'gaps' | 'blocked' | 'learning' | 'mastered' | 'bottlenecks'
+type FilterOption = 'all' | 'gaps' | 'blocked' | 'learning' | 'mastered' | 'unassessed' | 'bottlenecks'
 
 export default function KnowledgeGraphView({
   subjectId,
@@ -55,6 +57,7 @@ export default function KnowledgeGraphView({
   concepts = [],
   modules = [],
   cards = [],
+  learningStates = [],
   onAddDependency,
   onDeleteDependency,
   onOpenTutor,
@@ -165,11 +168,12 @@ export default function KnowledgeGraphView({
       concepts,
       modules,
       cards,
+      learningStates,
       layoutWidth: canvasDim.width,
       layoutHeight: canvasDim.height,
       layoutMode
     })
-  }, [subjectId, dependencies, concepts, modules, cards, canvasDim.width, canvasDim.height, layoutMode])
+  }, [subjectId, dependencies, concepts, modules, cards, learningStates, canvasDim.width, canvasDim.height, layoutMode])
 
   const getNodePos = useCallback((nodeId: string): { x: number; y: number } => {
     if (draggedPositions[nodeId]) return draggedPositions[nodeId]
@@ -320,6 +324,7 @@ export default function KnowledgeGraphView({
       if (filter === 'blocked') return node.status === 'blocked'
       if (filter === 'learning') return node.status === 'learning' || node.status === 'shaky'
       if (filter === 'mastered') return node.status === 'mastered'
+      if (filter === 'unassessed') return node.status === 'unassessed'
       if (filter === 'bottlenecks') return node.isBottleneck || (node.bottleneckScore ?? 0) > 1.0
       return true
     })
@@ -522,11 +527,15 @@ export default function KnowledgeGraphView({
   // Node status colors and styles
   function getNodeStyle(node: ConceptGraphNode) {
     const isSelected = selectedNodeId === node.id
-    let ringColor = 'stroke-rose-500'
-    let fillColor = 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800'
-    let statusLabel = 'Gap'
+    let ringColor = 'stroke-slate-400'
+    let fillColor = 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+    let statusLabel = 'Not assessed'
 
-    if (node.status === 'mastered') {
+    if (node.status === 'gap') {
+      ringColor = 'stroke-rose-500'
+      fillColor = 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800'
+      statusLabel = 'Needs work'
+    } else if (node.status === 'mastered') {
       ringColor = 'stroke-emerald-500'
       fillColor = 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
       statusLabel = 'Mastered'
@@ -636,7 +645,7 @@ export default function KnowledgeGraphView({
           <span className="text-slate-400 dark:text-slate-500 mr-1 flex items-center gap-1">
             <Filter size={12} /> Filter:
           </span>
-          {(['all', 'bottlenecks', 'gaps', 'blocked', 'mastered'] as FilterOption[]).map(f => (
+          {(['all', 'bottlenecks', 'gaps', 'blocked', 'mastered', 'unassessed'] as FilterOption[]).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -867,10 +876,8 @@ export default function KnowledgeGraphView({
             {filteredNodes.map(node => {
               const pos = getNodePos(node.id)
               const { ringColor, isSelected } = getNodeStyle(node)
-              const masteryPercent = Math.round(node.masteryProb * 100)
               const radius = 26
-              const circumference = 2 * Math.PI * radius
-              const strokeDashoffset = circumference - (circumference * node.masteryProb)
+              const strokeDashoffset = 0
 
               return (
                 <g
@@ -948,7 +955,7 @@ export default function KnowledgeGraphView({
                     fill="none"
                     strokeWidth="3"
                     className={`${ringColor} transition-all duration-300`}
-                    strokeDasharray={circumference}
+                    strokeDasharray="4 5"
                     strokeDashoffset={strokeDashoffset}
                     strokeLinecap="round"
                     transform="rotate(-90)"
@@ -960,14 +967,14 @@ export default function KnowledgeGraphView({
                     textAnchor="middle"
                     className="fill-slate-900 dark:fill-slate-100 font-bold text-[11px]"
                   >
-                    {masteryPercent}%
+                    {node.learningState?.proficiency === 'demonstrated' || node.learningState?.proficiency === 'strong_evidence' ? '✓' : node.learningState?.proficiency === 'needs_work' ? '!' : '·'}
                   </text>
                   <text
                     y={11}
                     textAnchor="middle"
                     className="fill-slate-400 dark:fill-slate-500 text-[8px]"
                   >
-                    {node.observations} obs
+                    {node.learningState ? `${node.learningState.counts.assessments} answers` : 'unverified'}
                   </text>
 
                   {/* Node Label Below (Semantic Zoom: visible when zoom >= 0.25 or selected) */}
@@ -1063,13 +1070,13 @@ export default function KnowledgeGraphView({
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
                 <div>
                   <span className="text-slate-500 dark:text-slate-400 text-[11px] block">
-                    BKT Knowledge Level
+                    Proficiency from recorded evidence
                   </span>
                   <span className="text-lg font-extrabold text-slate-900 dark:text-slate-100">
-                    {Math.round(selectedNode.masteryProb * 100)}%
+                    {selectedNode.learningState?.proficiency.replace(/_/g, ' ') || 'Not assessed'}
                   </span>
                   <span className="text-[10px] text-slate-400 block">
-                    {selectedNode.observations} test observations
+                    {selectedNode.learningState ? `${selectedNode.learningState.counts.assessments} assessments · ${selectedNode.learningState.confidence.replace(/_/g, ' ')} confidence` : 'No assessment linked to this inventory concept'}
                   </span>
                 </div>
                 <div className="text-right">
@@ -1081,13 +1088,15 @@ export default function KnowledgeGraphView({
                         ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
                         : selectedNode.status === 'shaky'
                         ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
-                        : selectedNode.status === 'blocked'
+                        : selectedNode.status === 'blocked' || selectedNode.status === 'unassessed'
                         ? 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                         : 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
                     }`}
                   >
                     {selectedNode.status === 'blocked'
                       ? '🔒 Prerequisite Blocked'
+                      : selectedNode.status === 'unassessed'
+                      ? 'Not Assessed'
                       : selectedNode.status.toUpperCase()}
                   </span>
                   <span className="text-[10px] text-slate-400 block mt-1">
@@ -1107,7 +1116,9 @@ export default function KnowledgeGraphView({
                 </div>
               </div>
               <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-                {selectedNode.status === 'blocked'
+                {selectedNode.status === 'unassessed'
+                  ? 'No linked assessment evidence is available for this inventory concept yet.'
+                  : selectedNode.status === 'blocked'
                   ? 'Study the unmet prerequisite first, then return here for a retrieval check.'
                   : selectedNode.status === 'gap' || selectedNode.status === 'shaky'
                   ? 'This is a high-value next action: use a short tutor drill, then complete a mixed practice item.'
@@ -1157,8 +1168,8 @@ export default function KnowledgeGraphView({
                             </span>
                           </div>
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-slate-500">
-                              {pNode ? Math.round(pNode.masteryProb * 100) : 0}%
+                            <span className="text-[10px] font-bold text-slate-500 capitalize">
+                              {pNode?.learningState?.proficiency.replace(/_/g, ' ') || 'No evidence'}
                             </span>
                             <button
                               onClick={e => {
@@ -1199,8 +1210,8 @@ export default function KnowledgeGraphView({
                           <span className="truncate text-slate-700 dark:text-slate-300 font-medium">
                             {dNode?.label || dKey}
                           </span>
-                          <span className="text-[10px] font-bold text-slate-500">
-                            {dNode ? Math.round(dNode.masteryProb * 100) : 0}%
+                          <span className="text-[10px] font-bold text-slate-500 capitalize">
+                            {dNode?.learningState?.proficiency.replace(/_/g, ' ') || 'No evidence'}
                           </span>
                         </div>
                       )

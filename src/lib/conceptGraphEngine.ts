@@ -18,6 +18,7 @@ import type {
   ModuleTopic,
   Card
 } from '../types'
+import type { ConceptLearningState } from './learningState'
 
 export interface BuildGraphParams {
   subjectId: number
@@ -25,6 +26,7 @@ export interface BuildGraphParams {
   concepts?: ConceptMastery[]
   modules?: (SyllabusModule & { topics?: ModuleTopic[] })[]
   cards?: Card[]
+  learningStates?: ConceptLearningState[]
   layoutWidth?: number
   layoutHeight?: number
   layoutMode?: 'hierarchical' | 'force'
@@ -137,6 +139,7 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     concepts = [],
     modules = [],
     cards = [],
+    learningStates = [],
     layoutWidth = 900,
     layoutHeight = 650,
     layoutMode = 'hierarchical'
@@ -337,7 +340,8 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
       // Only manually asserted dependencies are prerequisites. Curriculum order
       // and card/topic association are useful context but are not proof of a
       // learning dependency.
-      const isMet = sourceNode.masteryProb >= 0.50 || (sourceNode.observations >= 3 && sourceNode.masteryProb >= 0.45)
+      const sourceProficiency = sourceNode.learningState?.proficiency
+      const isMet = !sourceProficiency || sourceProficiency === 'not_assessed' || sourceProficiency === 'demonstrated' || sourceProficiency === 'strong_evidence'
 
       edgeList.push({
         id: edgeKey,
@@ -359,12 +363,47 @@ export function buildConceptGraph(params: BuildGraphParams): ConceptGraphData {
     }
   }
 
+  // Attach exact, unambiguous inventory states before graph layout/status
+  // derivation so concepts without cards or legacy mastery still appear.
+  const statesByLabel = new Map<string, ConceptLearningState[]>()
+  for (const state of learningStates) {
+    const key = normalizeConceptKey(state.conceptLabel)
+    statesByLabel.set(key, [...(statesByLabel.get(key) || []), state])
+  }
+  for (const [labelKey, matchingStates] of statesByLabel) {
+    if (matchingStates.length !== 1) continue
+    const learningState = matchingStates[0]
+    const node = nodeMap.get(labelKey) || getOrCreateNode(learningState.conceptLabel, 'Concept')
+    node.conceptId = learningState.conceptId
+    node.learningState = learningState
+    node.observations = learningState.counts.assessments
+    node.evidenceCount = learningState.counts.assessments
+    node.evidenceKind = learningState.counts.assessments ? 'observed' : 'curriculum'
+    node.evidenceSources = ['concept_learning_state']
+  }
+
   // 3. Topological Layering & Cycle Safety
   const nodes = Array.from(nodeMap.values())
   computeTopologicalLayers(nodes, nodeMap)
 
   // 4. Prerequisite Readiness & Status Assignment
   for (const node of nodes) {
+    if (!node.learningState || node.learningState.proficiency === 'not_assessed') {
+      node.status = 'unassessed'
+      continue
+    }
+    if (node.learningState.proficiency === 'needs_work') {
+      node.status = 'gap'
+      continue
+    }
+    if (node.learningState.proficiency === 'developing') {
+      node.status = 'learning'
+      continue
+    }
+    if (node.learningState.proficiency === 'demonstrated' || node.learningState.proficiency === 'strong_evidence') {
+      node.status = 'mastered'
+      continue
+    }
     const hasUnmetPrereq = node.prerequisites.some(pKey => {
       const pNode = nodeMap.get(pKey)
       return !pNode || pNode.masteryProb < 0.50

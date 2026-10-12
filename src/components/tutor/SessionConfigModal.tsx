@@ -377,12 +377,15 @@ export default function SessionConfigModal({
       }
     } else if (studyMode === 'material') {
       const activeMats = materialsList.filter(m => selectedMaterialIds.includes(m.id))
-      chosenMaterialIds = activeMats.map(m => m.id)
+      // The modal's material list loads asynchronously. Preserve the explicit
+      // selection even if Start is clicked before it finishes, so startup can
+      // report unavailable sources instead of silently collapsing to ID 1.
+      chosenMaterialIds = [...new Set(selectedMaterialIds)]
       chosenMaterialId = chosenMaterialIds[0] || propMaterialId
-      chosenMaterialName = activeMats.length === 1
-        ? activeMats[0].filename
-        : activeMats.length > 1
-          ? `${activeMats.length} selected materials`
+      chosenMaterialName = chosenMaterialIds.length === 1
+        ? activeMats.find(material => material.id === chosenMaterialIds[0])?.filename || propMaterialName
+        : chosenMaterialIds.length > 1
+          ? `${chosenMaterialIds.length} selected materials`
           : propMaterialName
       const activeModule = modules.find(module => module.id === selectedModuleId)
       const selectedLearningTopic = selectedTopics[0] || selectedTopic || activeModule?.topics?.[0]?.title

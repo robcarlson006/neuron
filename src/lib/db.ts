@@ -697,6 +697,13 @@ export const DB_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_tutor_session_targets_session ON tutor_session_targets(session_id, sort_order, id);
 
+  CREATE TABLE IF NOT EXISTS tutor_session_learning_plans (
+    session_id INTEGER PRIMARY KEY,
+    plan_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS daily_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -1102,6 +1109,11 @@ export const MIGRATIONS_SQL = [
   "CREATE INDEX IF NOT EXISTS idx_learner_memory_lookup ON learner_memory_items(user_id, subject_id, status, updated_at DESC)",
   `CREATE TABLE IF NOT EXISTS memory_evidence_links (id INTEGER PRIMARY KEY AUTOINCREMENT, memory_id INTEGER NOT NULL, message_id TEXT, learning_event_id INTEGER, material_id INTEGER, chunk_index INTEGER, relation TEXT NOT NULL DEFAULT 'supports', created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (memory_id) REFERENCES learner_memory_items(id) ON DELETE CASCADE, FOREIGN KEY (learning_event_id) REFERENCES learning_events(id) ON DELETE SET NULL, FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL)`,
   "CREATE INDEX IF NOT EXISTS idx_memory_evidence_memory ON memory_evidence_links(memory_id)",
+  // Unified concept-learning event links. Nullable additions preserve all legacy rows.
+  "ALTER TABLE learning_events ADD COLUMN concept_id INTEGER REFERENCES topic_concepts(id) ON DELETE SET NULL",
+  "ALTER TABLE learning_events ADD COLUMN idempotency_key TEXT",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_events_idempotency ON learning_events(idempotency_key) WHERE idempotency_key IS NOT NULL",
+  "CREATE INDEX IF NOT EXISTS idx_learning_events_concept ON learning_events(user_id, concept_id, created_at DESC)",
   `CREATE TABLE IF NOT EXISTS session_summaries (session_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, subject_id INTEGER NOT NULL, summary TEXT NOT NULL, open_loops_json TEXT NOT NULL DEFAULT '[]', concepts_json TEXT NOT NULL DEFAULT '[]', source_version TEXT NOT NULL DEFAULT 'v1', updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE)`,
   "ALTER TABLE session_summaries ADD COLUMN unresolved_misconceptions_json TEXT NOT NULL DEFAULT '[]'",
   "ALTER TABLE session_summaries ADD COLUMN next_retrieval_targets_json TEXT NOT NULL DEFAULT '[]'",
@@ -1129,6 +1141,8 @@ export const MIGRATIONS_SQL = [
   "CREATE INDEX IF NOT EXISTS idx_adaptive_concept_states_lookup ON adaptive_concept_states(user_id, subject_id, updated_at DESC)",
   `CREATE TABLE IF NOT EXISTS tutor_task_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, concept TEXT NOT NULL, task_type TEXT NOT NULL, task_key TEXT NOT NULL, difficulty REAL NOT NULL DEFAULT 50, observations INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(subject_id, task_key), FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE)`,
   `CREATE TABLE IF NOT EXISTS tutor_turn_assessments (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, student_message_id TEXT, tutor_message_id TEXT, concept TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('correct','partial','incorrect','unassessed')), score REAL, confidence REAL NOT NULL DEFAULT 0.5, assistance_level TEXT NOT NULL DEFAULT 'unassessed', task_type TEXT, task_difficulty REAL, evidence_span TEXT, misconception TEXT, followed_scaffold INTEGER, changed_goal INTEGER, source_evidence_json TEXT NOT NULL DEFAULT '[]', idempotency_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE)`,
+  "ALTER TABLE tutor_turn_assessments ADD COLUMN concept_id INTEGER REFERENCES topic_concepts(id) ON DELETE SET NULL",
+  "CREATE INDEX IF NOT EXISTS idx_tutor_assessment_concept ON tutor_turn_assessments(concept_id, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS idx_tutor_turn_assessments_session ON tutor_turn_assessments(session_id, created_at DESC)",
   `CREATE TABLE IF NOT EXISTS tutor_teach_back_gates (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, topic_id INTEGER, concept TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','needs_revision','passed','incomplete')), attempt_count INTEGER NOT NULL DEFAULT 0, feedback TEXT, required_assessment_id INTEGER, passed_assessment_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(session_id, concept), FOREIGN KEY(session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE, FOREIGN KEY(topic_id) REFERENCES module_topics(id) ON DELETE SET NULL, FOREIGN KEY(required_assessment_id) REFERENCES tutor_turn_assessments(id) ON DELETE SET NULL, FOREIGN KEY(passed_assessment_id) REFERENCES tutor_turn_assessments(id) ON DELETE SET NULL)`,
   "CREATE INDEX IF NOT EXISTS idx_tutor_teach_back_gates_active ON tutor_teach_back_gates(session_id, status, updated_at DESC)",
@@ -1445,6 +1459,12 @@ export const MIGRATIONS_SQL = [
     FOREIGN KEY (topic_id) REFERENCES module_topics(id) ON DELETE SET NULL
   )`,
   "CREATE INDEX IF NOT EXISTS idx_tutor_session_targets_session ON tutor_session_targets(session_id, sort_order, id)",
+  `CREATE TABLE IF NOT EXISTS tutor_session_learning_plans (
+    session_id INTEGER PRIMARY KEY,
+    plan_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES tutor_sessions(id) ON DELETE CASCADE
+  )`,
   // V5.4: Practice Problem Psychometrics & Cognitive Demands
   "ALTER TABLE practice_problems ADD COLUMN stimulus TEXT",
   "ALTER TABLE practice_problems ADD COLUMN stem_lead_in TEXT",

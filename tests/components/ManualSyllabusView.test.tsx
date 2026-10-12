@@ -156,6 +156,34 @@ describe('ManualSyllabusView', () => {
     expect(screen.getByText('Generate Cards')).toBeInTheDocument()
   })
 
+  it('passes every selected material from a six-document week to tutor startup', () => {
+    const sixMaterials = Array.from({ length: 6 }, (_, index) => ({
+      ...sampleMaterials[index % sampleMaterials.length],
+      id: 201 + index,
+      filename: `Week 1 source ${index + 1}.md`
+    }))
+    const sixMaterialWeek = { ...sampleWeeks[0], materials: sixMaterials }
+    render(
+      <ManualSyllabusView
+        subjectId={1}
+        subjectName="Microeconomics"
+        weeks={[sixMaterialWeek]}
+        materials={sixMaterials}
+        cards={[]}
+        onReload={mockOnReload}
+        onTutorMaterial={mockOnTutorMaterial}
+        onTutorMaterials={mockOnTutorMaterials}
+        onOpenMaterial={mockOnOpenMaterial}
+        onGenerateCards={mockOnGenerateCards}
+      />
+    )
+
+    fireEvent.click(screen.getByText('Select all'))
+    fireEvent.click(screen.getByRole('button', { name: /Start Tutor \(6 materials\)/i }))
+
+    expect(mockOnTutorMaterials).toHaveBeenCalledWith(sixMaterials, 'Week 1')
+  })
+
   it('opens GenerateCardsModal when Generate Cards button is clicked', () => {
     render(
       <ManualSyllabusView

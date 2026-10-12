@@ -25,6 +25,7 @@ import SubjectNotesPage from './SubjectNotesPage'
 import TopActionButton from '../components/TopActionButton'
 import { Activity, BookOpen, Sparkles, Zap } from '../components/icons'
 import SubjectAppearancePicker, { DEFAULT_SUBJECT_COLOR, DEFAULT_SUBJECT_ICON, SubjectIcon } from '../components/SubjectAppearancePicker'
+import type { ConceptLearningState } from '../lib/learningState'
 
 type Tab = 'cards' | 'curriculum' | 'manual' | 'graph' | 'practice' | 'materials' | 'lectures' | 'notes' | 'deadlines'
 
@@ -140,6 +141,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   const [showDeadlineForm, setShowDeadlineForm] = useState(false)
   const [cardsWithSchedule, setCardsWithSchedule] = useState<CardWithSchedule[]>([])
   const [concepts, setConcepts] = useState<ConceptMastery[]>([])
+  const [conceptLearningStates, setConceptLearningStates] = useState<ConceptLearningState[]>([])
   const [conceptDependencies, setConceptDependencies] = useState<ConceptDependency[]>([])
   const [focusCurriculumTopicId, setFocusCurriculumTopicId] = useState<number | undefined>(undefined)
   const [showCramOptimizer, setShowCramOptimizer] = useState(false)
@@ -160,6 +162,14 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       setEditIcon(subject?.subject_icon || DEFAULT_SUBJECT_ICON)
       setEditColor(subject?.color || DEFAULT_SUBJECT_COLOR)
     }
+  }, [subjectId, user])
+
+  useEffect(() => {
+    if (!window.electronAPI?.onConceptLearningStateChanged) return
+    const unsubscribe = window.electronAPI.onConceptLearningStateChanged(event => {
+      if (event.subjectId === subjectId) void loadAllData()
+    })
+    return () => { if (typeof unsubscribe === 'function') unsubscribe() }
   }, [subjectId, user])
 
   // ── Nearest Exam & Readiness Projection ──
@@ -295,6 +305,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
       }
       setCardsWithSchedule((schedCards as CardWithSchedule[]) || [])
       setConcepts((conMastery as ConceptMastery[]) || [])
+      try {
+        const states = await window.electronAPI.conceptsGetLearningStates(subjectId, user?.id)
+        setConceptLearningStates(states || [])
+      } catch { setConceptLearningStates([]) }
       setConceptDependencies((deps as ConceptDependency[]) || [])
       setManualWeeks((loadedManualWeeks as ManualSyllabusWeek[]) || [])
 
@@ -321,6 +335,10 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
                   ...t,
                   concept_count: r.total_concepts,
                   concepts_assessed: r.assessed_concepts,
+                  concepts_practised: r.practised_concepts ?? r.assessed_concepts,
+                  concepts_demonstrated: r.demonstrated_concepts ?? 0,
+                  concepts_needing_work: r.needs_work_concepts ?? 0,
+                  concept_reviews_due: r.reviews_due ?? 0,
                   coverage_percentage: r.coverage_percentage,
                   mastery_score_10: r.mastery_score_10,
                   has_concept_data: true
@@ -1573,6 +1591,7 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
             subjectName={subject.name}
             dependencies={conceptDependencies}
             concepts={concepts}
+            learningStates={conceptLearningStates}
             modules={modules}
             cards={cards}
             onAddDependency={async (prereq, target) => {

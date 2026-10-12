@@ -745,7 +745,7 @@ export default function CurriculumView({
                                   </button>
                                 </div>
                               )}
-                              {/* Concept Coverage & 0-10 Rubric Mastery Badges */}
+                              {/* Shared concept coverage and proficiency counts */}
                               {topic.concept_count !== undefined && topic.concept_count > 0 ? (
                                 <button
                                   type="button"
@@ -754,7 +754,7 @@ export default function CurriculumView({
                                     e.stopPropagation()
                                     toggleTopicConcepts(topic.id)
                                   }}
-                                  title="Click to view granular concept breakdown and 0-10 rubric mastery"
+                                  title="Open the concept list with evidence-derived proficiency and review states"
                                   className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
                                 >
                                   <div className="w-10 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden flex-shrink-0">
@@ -763,14 +763,9 @@ export default function CurriculumView({
                                       style={{ width: `${topic.coverage_percentage || 0}%` }}
                                     />
                                   </div>
-                                  <span>{topic.concepts_assessed || 0}/{topic.concept_count}</span>
-                                  {topic.mastery_score_10 !== null && topic.mastery_score_10 !== undefined ? (
-                                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                                      · {topic.mastery_score_10}/10
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-400 dark:text-slate-500">· –</span>
-                                  )}
+                                  <span>{topic.concepts_practised ?? topic.concepts_assessed ?? 0}/{topic.concept_count} practised</span>
+                                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">· {topic.concepts_demonstrated ?? 0} demonstrated</span>
+                                  {(topic.concept_reviews_due ?? 0) > 0 && <span className="font-semibold text-amber-600 dark:text-amber-400">· {topic.concept_reviews_due} due</span>}
                                   <span className="text-[9px] opacity-60">{expandedTopicId === topic.id ? '▲' : '▼'}</span>
                                 </button>
                               ) : (
@@ -841,13 +836,13 @@ export default function CurriculumView({
                                           <span className="font-medium text-slate-800 dark:text-slate-200">
                                             {concept.label}
                                           </span>
-                                          {concept.progress_state === 'assessed' ? (
+                                          {concept.learning_state?.coverage === 'practised' || concept.progress_state === 'assessed' ? (
                                             <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
-                                              Covered & Assessed
+                                              Practised
                                             </span>
-                                          ) : concept.progress_state === 'introduced' ? (
+                                          ) : concept.learning_state?.coverage === 'introduced' || concept.progress_state === 'introduced' ? (
                                             <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300">
-                                              Introduced (Taught)
+                                              Introduced
                                             </span>
                                           ) : (
                                             <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
@@ -876,19 +871,14 @@ export default function CurriculumView({
                                       </div>
                                       <div className="flex flex-col items-end flex-shrink-0">
                                         <div className="text-[11px] font-semibold">
-                                          {concept.mastery_score_10 !== null && concept.mastery_score_10 !== undefined ? (
-                                            <span className={concept.mastery_score_10 >= 8 ? 'text-emerald-600 dark:text-emerald-400' : concept.mastery_score_10 >= 5 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}>
-                                              {concept.mastery_score_10}/10
-                                            </span>
-                                          ) : (
-                                            <span className="text-slate-400" title="Not yet assessed with an active recall question">
-                                              –
-                                            </span>
-                                          )}
+                                          <span className={concept.learning_state?.proficiency === 'needs_work' ? 'text-rose-600 dark:text-rose-400' : concept.learning_state?.proficiency === 'demonstrated' || concept.learning_state?.proficiency === 'strong_evidence' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+                                            {concept.learning_state?.proficiency.replace(/_/g, ' ') || (concept.mastery_score_10 != null ? `${concept.mastery_score_10}/10 rubric` : 'Not assessed')}
+                                          </span>
                                         </div>
                                         <span className="text-[9px] text-slate-400 mt-0.5">
                                           {concept.assessment_count || 0} answer{(concept.assessment_count || 0) === 1 ? '' : 's'}
                                         </span>
+                                        {concept.learning_state && <span className="text-[9px] text-slate-400 mt-0.5" title={concept.learning_state.explanation.join(' ')}>{concept.learning_state.review.replace(/_/g, ' ')}</span>}
                                       </div>
                                     </div>
                                   ))}

@@ -23,6 +23,8 @@ export interface LearningEventInput {
   sessionId?: number
   messageId?: string
   concept: string
+  conceptId?: number
+  idempotencyKey?: string
   outcome: 'correct' | 'partial' | 'incorrect' | 'unassessed'
   score?: number
   confidence?: number
@@ -108,8 +110,8 @@ export class LearnerMemoryService {
       INSERT INTO tutor_turn_assessments (
         session_id, student_message_id, tutor_message_id, concept, outcome, score, confidence,
         assistance_level, task_type, task_difficulty, evidence_span, misconception,
-        followed_scaffold, changed_goal, source_evidence_json, idempotency_key, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        followed_scaffold, changed_goal, source_evidence_json, idempotency_key, created_at, concept_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       assessment.sessionId, assessment.studentMessageId || null, assessment.tutorMessageId || null,
       assessment.concept.trim() || 'General', assessment.outcome, assessment.score,
@@ -117,7 +119,7 @@ export class LearnerMemoryService {
       assessment.taskDifficulty ?? null, assessment.evidenceSpan || null, assessment.misconception || null,
       assessment.followedScaffold == null ? null : assessment.followedScaffold ? 1 : 0,
       assessment.changedGoal == null ? null : assessment.changedGoal ? 1 : 0,
-      JSON.stringify(assessment.sourceEvidence || []), key, now
+      JSON.stringify(assessment.sourceEvidence || []), key, now, assessment.conceptId || null
     )
     const state = this.getAdaptiveStateForAssessment(assessment)
     this.recordTaskProfile(assessment)
@@ -175,6 +177,8 @@ export class LearnerMemoryService {
       sessionId: assessment.sessionId,
       messageId: assessment.studentMessageId,
       concept: assessment.concept,
+      conceptId: assessment.conceptId,
+      idempotencyKey: `learning:${assessment.idempotencyKey || `${assessment.sessionId}:${assessment.studentMessageId || assessment.createdAt || assessment.concept}`}`,
       outcome: assessment.outcome,
       score: assessment.score ?? undefined,
       confidence: assessment.confidence,
@@ -189,8 +193,8 @@ export class LearnerMemoryService {
     const result = this.db.prepare(`
       INSERT INTO learning_events (
         user_id, subject_id, session_id, message_id, concept, outcome, score,
-        confidence, assistance_level, evidence_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        confidence, assistance_level, evidence_json, concept_id, idempotency_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.userId,
       input.subjectId,
@@ -201,7 +205,9 @@ export class LearnerMemoryService {
       input.score ?? null,
       clamp(input.confidence ?? 0.5),
       input.assistanceLevel || 'none',
-      JSON.stringify(evidence)
+      JSON.stringify(evidence),
+      input.conceptId || null,
+      input.idempotencyKey || null
     )
     const eventId = Number(result.lastInsertRowid || 0)
     return eventId

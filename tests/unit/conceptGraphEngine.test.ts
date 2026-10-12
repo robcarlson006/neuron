@@ -7,6 +7,7 @@ import {
   removeOverlaps
 } from '../../src/lib/conceptGraphEngine'
 import type { ConceptDependency, ConceptMastery, SyllabusModule, Card } from '../../src/types'
+import { deriveConceptLearningState } from '../../src/lib/learningState'
 
 describe('conceptGraphEngine', () => {
   describe('normalizeConceptKey', () => {
@@ -113,11 +114,10 @@ describe('conceptGraphEngine', () => {
       const matrixNode = graph.nodes.find(n => n.id === 'matrix multiplication')!
       const backpropNode = graph.nodes.find(n => n.id === 'backpropagation')!
 
-      expect(derivativesNode.status).toBe('mastered')
-      expect(chainRuleNode.status).toBe('mastered')
-      expect(matrixNode.status).toBe('gap')
-      // Backprop has unmet prerequisite (Matrix Multiplication mastery = 0.30) so status must be 'blocked'
-      expect(backpropNode.status).toBe('blocked')
+      expect(derivativesNode.status).toBe('unassessed')
+      expect(chainRuleNode.status).toBe('unassessed')
+      expect(matrixNode.status).toBe('unassessed')
+      expect(backpropNode.status).toBe('unassessed')
 
       // Layering verification
       expect(derivativesNode.layer).toBe(0)
@@ -131,6 +131,28 @@ describe('conceptGraphEngine', () => {
       // Matrix multiplication blocks Backpropagation, so it should be identified as a top bottleneck!
       expect(matrixNode.bottleneckScore).toBeGreaterThan(0)
       expect(graph.metrics.suggestedNextConcept).toBe('matrix multiplication')
+    })
+
+    it('uses authoritative concept evidence and leaves legacy probabilities unverified', () => {
+      const state = deriveConceptLearningState({
+        conceptId: 51,
+        conceptLabel: 'Opportunity cost',
+        assessments: [
+          { id: 'a', outcome: 'correct', occurredAt: '2026-10-01T10:00:00Z', questionKey: 'q1' },
+          { id: 'b', outcome: 'correct', occurredAt: '2026-10-03T10:00:00Z', questionKey: 'q2' }
+        ]
+      })
+      const graph = buildConceptGraph({
+        subjectId: 1,
+        concepts: [{ id: 2, user_id: 1, subject_id: 1, concept: 'Legacy score', mastery_prob: 0.99, observations: 50, updated_at: '2026-10-01' }],
+        learningStates: [state]
+      })
+      expect(graph.nodes.find(node => node.label === 'Opportunity cost')).toMatchObject({
+        conceptId: 51,
+        status: 'mastered',
+        learningState: { proficiency: 'demonstrated' }
+      })
+      expect(graph.nodes.find(node => node.label === 'Legacy score')?.status).toBe('unassessed')
     })
 
     it('safely handles circular dependencies without hanging', () => {

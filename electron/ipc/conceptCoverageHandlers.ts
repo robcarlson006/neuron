@@ -18,14 +18,108 @@ import type {
   TopicConcept,
   TopicCoverageRollup
 } from '../../src/types'
+import { deriveConceptLearningState, type ConceptAssessmentEvidence, type ConceptLearningState } from '../../src/lib/learningState'
 
 let db: Database.Database
+
+function loadConceptAssessmentEvidence(
+  database: Database.Database,
+  conceptId: number,
+  userId: number,
+  subjectId: number
+): ConceptAssessmentEvidence[] {
+  const rubricRows = database.prepare(`
+    SELECT ca.id, ca.score_10, ca.assistance_level, ca.misconception, ca.created_at,
+      ta.outcome, ta.task_type, ta.idempotency_key, ta.id AS turn_id
+    FROM concept_assessments ca LEFT JOIN tutor_turn_assessments ta ON ta.id = ca.assessment_id
+    WHERE ca.concept_id = ? AND ca.user_id = ? ORDER BY ca.created_at
+  `).all(conceptId, userId) as Array<{
+    id: number; score_10: number; assistance_level: string | null; misconception: string | null;
+    created_at: string; outcome: ConceptAssessmentEvidence['outcome'] | null; task_type: string | null;
+    idempotency_key: string | null; turn_id: number | null
+  }>
+  const linkedTurnIds = new Set(rubricRows.map(row => row.turn_id).filter((id): id is number => id != null))
+  const turnRows = database.prepare(`
+    SELECT ta.id, ta.outcome, ta.score, ta.assistance_level, ta.misconception,
+      ta.task_type, ta.idempotency_key, ta.created_at
+    FROM tutor_turn_assessments ta JOIN tutor_sessions ts ON ts.id = ta.session_id
+    WHERE ta.concept_id = ? AND ts.user_id = ? AND ts.subject_id = ? ORDER BY ta.created_at
+  `).all(conceptId, userId, subjectId) as Array<{
+    id: number; outcome: ConceptAssessmentEvidence['outcome']; score: number | null;
+    assistance_level: string | null; misconception: string | null; task_type: string | null;
+    idempotency_key: string | null; created_at: string
+  }>
+  const all: ConceptAssessmentEvidence[] = rubricRows.map(row => ({
+    id: row.turn_id ?? row.id,
+    outcome: row.outcome || 'unassessed',
+    score: row.score_10,
+    scoreScale: 10,
+    assistanceLevel: row.assistance_level as ConceptAssessmentEvidence['assistanceLevel'],
+    questionKey: row.idempotency_key || `legacy-assessment:${row.id}`,
+    taskType: row.task_type,
+    misconception: row.misconception,
+    occurredAt: row.created_at
+  }))
+  for (const row of turnRows) {
+    if (linkedTurnIds.has(row.id)) continue
+    all.push({
+      id: row.id,
+      outcome: row.outcome,
+      score: row.score,
+      scoreScale: 1,
+      assistanceLevel: row.assistance_level as ConceptAssessmentEvidence['assistanceLevel'],
+      questionKey: row.idempotency_key,
+      taskType: row.task_type,
+      misconception: row.misconception,
+      occurredAt: row.created_at
+    })
+  }
+  all.sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))
+  let previousAt: string | undefined
+  return all.map(item => {
+    const delayedEnough = Boolean(previousAt && Date.parse(item.occurredAt) - Date.parse(previousAt) >= 86_400_000)
+    previousAt = item.occurredAt
+    const correct = item.outcome === 'correct' || (item.outcome === 'unassessed' && (item.score ?? 0) / (item.scoreScale || 1) >= 0.8)
+    return { ...item, delayedReview: delayedEnough && correct }
+  })
+}
 
 export function setConceptCoverageDatabase(database: Database.Database): void {
   db = database
 }
 
 export function registerConceptCoverageHandlers(): void {
+  // Shared authoritative state projection for every concept-bearing surface.
+  // It is rebuilt from the existing stable inventory and persisted evidence;
+  // legacy free-text probabilities are intentionally excluded.
+  ipcMain.handle(
+    'concepts:getLearningStates',
+    (_event, subjectId: number, userId?: number, topicId?: number): ConceptLearningState[] => {
+      if (!db || !subjectId) return []
+      const resolvedUserId = userId || 1
+      const concepts = db.prepare(`
+        SELECT c.id, c.label, p.introduced_at
+        FROM topic_concepts c
+        LEFT JOIN concept_progress p ON p.concept_id = c.id AND p.user_id = ?
+        WHERE c.subject_id = ? AND c.status = 'active' AND (? IS NULL OR c.topic_id = ?)
+        ORDER BY c.teach_order, c.id
+      `).all(resolvedUserId, subjectId, topicId ?? null, topicId ?? null) as Array<{
+        id: number; label: string; introduced_at: string | null
+      }>
+      const states: ConceptLearningState[] = []
+      for (const concept of concepts) {
+          const evidence = loadConceptAssessmentEvidence(db, concept.id, resolvedUserId, subjectId)
+        states.push(deriveConceptLearningState({
+          conceptId: concept.id,
+          conceptLabel: concept.label,
+          introducedAt: concept.introduced_at,
+          assessments: evidence
+        }))
+      }
+      return states
+    }
+  )
+
   // 1. Get all concepts for a topic with user progress attached
   ipcMain.handle(
     'concepts:getForTopic',
@@ -68,14 +162,16 @@ export function registerConceptCoverageHandlers(): void {
         // Also fetch assessment history for each concept to compute mastery score
         const concepts: TopicConcept[] = []
         for (const row of rows) {
-          const assessments = db.prepare(`
-            SELECT score_10 FROM concept_assessments
-            WHERE concept_id = ? AND user_id = ?
-            ORDER BY created_at DESC
-          `).all(row.id, resolvedUserId) as Array<{ score_10: number }>
+          const assessments = loadConceptAssessmentEvidence(db, row.id, resolvedUserId, row.subject_id)
 
-          const scores = assessments.map((a) => a.score_10)
+          const scores = assessments.map(a => (a.score ?? 0) * (a.scoreScale === 1 ? 10 : 1)).reverse()
           const mastery = computeConceptMastery(scores)
+          const learningState = deriveConceptLearningState({
+            conceptId: row.id,
+            conceptLabel: row.label,
+            introducedAt: row.introduced_at,
+            assessments
+          })
 
           concepts.push({
             id: row.id,
@@ -95,7 +191,8 @@ export function registerConceptCoverageHandlers(): void {
             introduced_at: row.introduced_at || undefined,
             last_assessed_at: row.last_assessed_at || undefined,
             mastery_score_10: mastery.masteryScore10,
-            assessment_count: mastery.count
+            assessment_count: mastery.count,
+            learning_state: learningState
           })
         }
 
@@ -141,13 +238,14 @@ export function registerConceptCoverageHandlers(): void {
             if (rows.length === 0) return []
 
             return rows.map((r) => {
-              const assessments = db.prepare(`
-                SELECT score_10 FROM concept_assessments
-                WHERE concept_id = ? AND user_id = ?
-                ORDER BY created_at DESC
-              `).all(r.id, resolvedUserId) as Array<{ score_10: number }>
-
-              const mastery = computeConceptMastery(assessments.map((a) => a.score_10))
+              const assessments = loadConceptAssessmentEvidence(db, r.id, resolvedUserId, r.subject_id)
+              const mastery = computeConceptMastery(assessments.map(a => (a.score ?? 0) * (a.scoreScale === 1 ? 10 : 1)).reverse())
+              const learningState = deriveConceptLearningState({
+                conceptId: r.id,
+                conceptLabel: r.label,
+                introducedAt: r.introduced_at,
+                assessments
+              })
               return {
                 id: r.id,
                 topic_id: r.topic_id,
@@ -164,7 +262,8 @@ export function registerConceptCoverageHandlers(): void {
                 created_at: r.created_at,
                 progress_state: r.progress_state,
                 mastery_score_10: mastery.masteryScore10,
-                assessment_count: mastery.count
+                assessment_count: mastery.count,
+                learning_state: learningState
               } as TopicConcept
             })
           })()
@@ -188,11 +287,11 @@ export function registerConceptCoverageHandlers(): void {
 
       try {
         const topicRow = db.prepare(`
-          SELECT t.id, t.title, t.module_id, m.subject_id
+          SELECT t.id, t.title, t.module_id, m.subject_id, t.source_material_ids
           FROM module_topics t
           JOIN syllabus_modules m ON m.id = t.module_id
           WHERE t.id = ?
-        `).get(topicId) as { id: number; title: string; module_id: number; subject_id: number } | undefined
+        `).get(topicId) as { id: number; title: string; module_id: number; subject_id: number; source_material_ids?: string | null } | undefined
 
         if (!topicRow) return []
 
@@ -215,25 +314,33 @@ export function registerConceptCoverageHandlers(): void {
           }))
         }
 
-        // Gather relevant source chunks from document_chunks for this topic / module / subject
-        // 1) By module syllabus materials
+        // Use topic-specific source IDs first, then the module's assigned
+        // materials. Never silently substitute the first 40 chunks in the
+        // whole subject: that can omit selected sources and include unrelated
+        // material in the concept inventory.
+        let sourceMaterialIds: number[] = []
+        try {
+          const parsed = JSON.parse(topicRow.source_material_ids || '[]')
+          if (Array.isArray(parsed)) sourceMaterialIds = parsed.map(Number).filter(Number.isInteger)
+        } catch { /* fall back to the module assignment */ }
+        if (!sourceMaterialIds.length) {
+          sourceMaterialIds = (db.prepare(`
+            SELECT id FROM materials WHERE subject_id = ? AND module_id = ? ORDER BY sort_order, id
+          `).all(topicRow.subject_id, topicRow.module_id) as Array<{ id: number }>).map(row => row.id)
+        }
+        if (!sourceMaterialIds.length) return []
+        const placeholders = sourceMaterialIds.map(() => '?').join(',')
         const chunks = db.prepare(`
           SELECT c.id, c.chunk_index, c.title, c.text
           FROM document_chunks c
           JOIN materials mat ON mat.id = c.material_id
-          WHERE mat.subject_id = ?
-          ORDER BY c.material_id ASC, c.chunk_index ASC
+          WHERE mat.subject_id = ? AND mat.id IN (${placeholders})
+          ORDER BY mat.sort_order, mat.id, c.chunk_index
           LIMIT 40
-        `).all(topicRow.subject_id) as Array<{ id: string; chunk_index: number; title: string; text: string }>
+        `).all(topicRow.subject_id, ...sourceMaterialIds) as Array<{ id: string; chunk_index: number; title: string; text: string }>
 
         if (chunks.length === 0) {
-          // If no chunks, synthesize from topic title
-          chunks.push({
-            id: `topic_${topicId}_chunk_0`,
-            chunk_index: 0,
-            title: topicRow.title,
-            text: `Lecture topic: ${topicRow.title}. Core concepts and essential mechanisms.`
-          })
+          return []
         }
 
         // Call AI for concept extraction

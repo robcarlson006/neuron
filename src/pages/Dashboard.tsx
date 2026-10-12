@@ -44,6 +44,14 @@ export default function Dashboard({
     if (user) loadDashboard()
   }, [user, subjects])
 
+  useEffect(() => {
+    if (!window.electronAPI?.onConceptLearningStateChanged) return
+    const unsubscribe = window.electronAPI.onConceptLearningStateChanged(({ subjectId }) => {
+      if (subjects.some(subject => subject.id === subjectId)) void loadDashboard()
+    })
+    return () => { if (typeof unsubscribe === 'function') unsubscribe() }
+  }, [subjects, user])
+
   async function loadDashboard(): Promise<void> {
     if (!user) return
     setLoading(true)
@@ -83,7 +91,7 @@ export default function Dashboard({
           const dueCards = allDue.filter((c: { subject_id: number }) => c.subject_id === subject.id)
 
           const masteredCount = schedules.filter(s => s.interval >= 21).length
-          const masteryPercent = schedules.length > 0 ? (masteredCount / schedules.length) * 100 : 0
+          const masteryPercent = schedules.length > 0 ? (masteredCount / schedules.length) * 100 : null
 
           const subjectDeadlines = (deadlines as Deadline[]).filter(d => d.subject_id === subject.id)
           const nextDeadline = subjectDeadlines.sort(

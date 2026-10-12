@@ -81,6 +81,29 @@ describe('Tutor application integration', () => {
     ])
   })
 
+  it('keeps the full selected-material scope and unified concept inventory available when a session is resumed', () => {
+    const selectedMaterialIds = [101, 102, 103, 104, 105, 106]
+    const learningPlan = {
+      selectedMaterialIds,
+      materialNames: { 101: 'Lecture 1.pptx', 102: 'Chapter 1.pdf', 103: 'Transcript 1.md' },
+      processedMaterialIds: selectedMaterialIds,
+      unprocessedMaterials: [],
+      truncatedMaterialIds: [],
+      concepts: [
+        { label: 'Scarcity', sourceMaterialIds: [101, 102], teachOrder: 1 },
+        { label: 'Marginal Analysis', sourceMaterialIds: [104], teachOrder: 2 }
+      ],
+      status: 'ready'
+    }
+    db.prepare('UPDATE tutor_sessions SET source_material_ids = ? WHERE id = ?').run(JSON.stringify(selectedMaterialIds), sessionId)
+    db.prepare('INSERT INTO tutor_session_learning_plans (session_id, plan_json) VALUES (?, ?)').run(sessionId, JSON.stringify(learningPlan))
+
+    const restoredSession = db.prepare('SELECT source_material_ids FROM tutor_sessions WHERE id = ?').get(sessionId)
+    const restoredPlan = db.prepare('SELECT plan_json FROM tutor_session_learning_plans WHERE session_id = ?').get(sessionId)
+    expect(JSON.parse(restoredSession.source_material_ids)).toEqual(selectedMaterialIds)
+    expect(JSON.parse(restoredPlan.plan_json).concepts.map((concept: { label: string }) => concept.label)).toEqual(['Scarcity', 'Marginal Analysis'])
+  })
+
   it('parses numeric discrepancies conservatively and updates learner memory from assessment outcomes', () => {
     const prompt = buildTutorAssessmentPrompt(
       'A worker gives up £24 to take this job. What is the cost in dollars at the stated conversion?',
@@ -101,6 +124,26 @@ describe('Tutor application integration', () => {
     expect(memory.state).toMatchObject({ concept: 'Opportunity cost', observations: 1 })
     expect(db.prepare('SELECT outcome FROM tutor_turn_assessments WHERE id = ?').get(memory.id).outcome).toBe('partial')
     expect(db.prepare('SELECT outcome FROM learning_events WHERE session_id = ? AND message_id = ?').get(sessionId, 'student-1').outcome).toBe('partial')
+  })
+
+  it('persists stable concept links idempotently and does not inflate duplicate tutor attempts', () => {
+    const conceptId = insert(db, `INSERT INTO topic_concepts (
+      topic_id, subject_id, label, key_points_json, source_chunk_ids_json, content_hash
+    ) VALUES (?, ?, ?, '[]', '[]', 'test-hash')`, 1, subjectId, 'Opportunity cost')
+    const assessment = parseTutorAssessment(JSON.stringify({
+      outcome: 'correct', score: 1, confidence: 0.9, assistance_level: 'none', task_type: 'transfer'
+    }), sessionId, 'Opportunity cost', `${sessionId}:student-stable`, 'student-stable')
+    assessment.conceptId = conceptId
+
+    const memory = new LearnerMemoryService(db)
+    const first = memory.recordTutorAssessment(assessment)
+    const duplicate = memory.recordTutorAssessment(assessment)
+
+    expect(first.duplicate).toBe(false)
+    expect(duplicate.duplicate).toBe(true)
+    expect(db.prepare('SELECT concept_id FROM tutor_turn_assessments WHERE id = ?').get(first.id).concept_id).toBe(conceptId)
+    expect(db.prepare('SELECT concept_id FROM learning_events WHERE session_id = ?').get(sessionId).concept_id).toBe(conceptId)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM learning_events WHERE session_id = ?').get(sessionId).count).toBe(1)
   })
 
   it('selects appropriate policy moves from opening through correct, partial, misconception, and impasse turns', () => {

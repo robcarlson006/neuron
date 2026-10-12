@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/robcarlson006/neuron/releases/tag/v5.4.0"><img alt="Release 5.4.0" src="https://img.shields.io/badge/release-v5.4.0-5b5bd6"></a>
+  <a href="https://github.com/robcarlson006/neuron/releases/tag/v5.5.0"><img alt="Release 5.5.0" src="https://img.shields.io/badge/release-v5.5.0-5b5bd6"></a>
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white">
   <img alt="Electron" src="https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white">
   <img alt="Vite" src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white">
@@ -25,7 +25,7 @@ Neuron turns your course materials into a guided learning system. Study with a S
 
 | Study workflow | How it helps |
 | --- | --- |
-| **Socratic active-recall tutor** | Learn in fast-paced teaching units of roughly 35–80 words. Each turn asks you to retrieve and apply an idea, detects misconceptions, adapts its scaffolding, and uses teach-back to check mastery. |
+| **Socratic active-recall tutor** | Learn from one or several selected documents in a unified tutor session. Each turn asks you to retrieve and apply an idea, detects misconceptions, adapts its scaffolding, and records evidence across stable curriculum concepts. |
 | **Smart syllabus and curriculum** | Import documents, PDFs, or syllabus material. Neuron extracts a concept tree, then tracks concepts across multi-turn study sessions so progress reflects understanding rather than page count. |
 | **FSRS-5 spaced repetition** | Schedule reviews around predicted memory, with confidence tracking and open-ended active-recall prompts. AI semantic grading evaluates the meaning of your answer and returns useful feedback. |
 | **Audio lecture notes** | Capture lecture audio and work with subject notes using AI assistance to organize and revisit key ideas. |
@@ -39,7 +39,7 @@ flowchart LR
     B --> C[Study with Socratic tutor]
     C --> D[Recall, explain, and teach back]
     D --> E[AI checks answer and misconception]
-    E --> F[Update confidence and mastery]
+    E --> F[Update concept evidence and misconceptions]
     F --> G[FSRS-5 schedules next review]
     G --> C
     B -. local study records .-> H[(SQLite on your device)]
@@ -58,17 +58,17 @@ Your subject material and learning history are managed locally. When you configu
 
 ## Downloads
 
-Get the latest release from [GitHub Releases](https://github.com/robcarlson006/neuron/releases/latest). Version **5.4.0** installers:
+Get the latest release from [GitHub Releases](https://github.com/robcarlson006/neuron/releases/latest). Version **5.5.0** installers:
 
 | Platform | Installer | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [Neuron-5.4.0-arm64.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron-5.4.0-arm64.dmg) | M-series Macs |
-| macOS Intel | [Neuron-5.4.0.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron-5.4.0.dmg) | Intel Macs |
-| Windows | [Neuron Setup 5.4.0.exe](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron.Setup.5.4.0.exe) | 64-bit installer |
-| Linux | [Neuron-5.4.0.AppImage](https://github.com/robcarlson006/neuron/releases/download/v5.4.0/Neuron-5.4.0.AppImage) | x64 AppImage |
+| macOS Apple Silicon | [Neuron-5.5.0-arm64.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron-5.5.0-arm64.dmg) | M-series Macs |
+| macOS Intel | [Neuron-5.5.0.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron-5.5.0.dmg) | Intel Macs |
+| Windows | [Neuron Setup 5.5.0.exe](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron.Setup.5.5.0.exe) | 64-bit installer |
+| Linux | [Neuron-5.5.0.AppImage](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron-5.5.0.AppImage) | x64 AppImage |
 
 > [!NOTE]
-> If an asset link is not available yet, open the [v5.4.0 release page](https://github.com/robcarlson006/neuron/releases/tag/v5.4.0) to see the published downloads.
+> If an asset link is not available yet, open the [v5.5.0 release page](https://github.com/robcarlson006/neuron/releases/tag/v5.5.0) to see the published downloads.
 
 ### macOS: Gatekeeper
 
@@ -89,8 +89,8 @@ Windows SmartScreen may show **Windows protected your PC** for an unsigned insta
 Make the file executable, then launch it:
 
 ```bash
-chmod +x Neuron-5.4.0.AppImage
-./Neuron-5.4.0.AppImage
+chmod +x Neuron-5.5.0.AppImage
+./Neuron-5.5.0.AppImage
 ```
 
 ## Quick start

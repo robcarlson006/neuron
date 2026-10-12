@@ -325,7 +325,7 @@ export interface SM2Result {
 
 export interface SubjectWithStats {
   subject: Subject
-  masteryPercent: number
+  masteryPercent: number | null
   cardsDue: number
   nextDeadline?: Deadline
   totalCards: number
@@ -965,6 +965,10 @@ export interface ModuleTopic {
   // Concept-level coverage & rubric mastery
   concept_count?: number
   concepts_assessed?: number
+  concepts_practised?: number
+  concepts_demonstrated?: number
+  concepts_needing_work?: number
+  concept_reviews_due?: number
   coverage_percentage?: number
   mastery_score_10?: number | null
   has_concept_data?: boolean
@@ -994,6 +998,7 @@ export interface TopicConcept {
   assessment_count?: number
   is_due_for_review?: boolean
   retrievability?: number
+  learning_state?: import('../lib/learningState').ConceptLearningState
 }
 
 export interface ConceptAssessmentRecord {
@@ -1025,6 +1030,10 @@ export interface TopicCoverageRollup {
   coverage_percentage: number
   mastery_score_10: number | null
   has_concept_data: boolean
+  practised_concepts?: number
+  demonstrated_concepts?: number
+  needs_work_concepts?: number
+  reviews_due?: number
 }
 
 /** A bounded, source-grounded statement the learner should be able to demonstrate. */
@@ -1259,6 +1268,7 @@ export interface GapAnalysisItem {
   estimatedMinutes?: number
   /** Canonical curriculum ID when this gap maps to a syllabus topic. */
   topicId?: number
+  conceptId?: number
   /** Signals merged into this single learner-facing gap. */
   gapKinds?: Array<'unseen' | 'new_content' | 'low_mastery' | 'struggling' | 'refresh'>
   /** Short, inspectable explanations for the signals above. */
@@ -1475,6 +1485,8 @@ export interface AnalyticsSubjectStats {
   sessions: number
   retention: number | null
   mastery: number
+  matured_cards?: number
+  scheduled_cards?: number
   previous_reviews: number
   previous_correct: number
   previous_study_minutes: number | null
@@ -2044,7 +2056,7 @@ export interface ConceptDependency {
   weight?: number
 }
 
-export type ConceptNodeStatus = 'mastered' | 'learning' | 'shaky' | 'gap' | 'blocked'
+export type ConceptNodeStatus = 'mastered' | 'learning' | 'shaky' | 'gap' | 'blocked' | 'unassessed'
 
 export interface ConceptGraphNode {
   id: string // normalized concept key
@@ -2052,7 +2064,9 @@ export interface ConceptGraphNode {
   category?: string
   moduleId?: number
   topicId?: number
+  conceptId?: number
   masteryProb: number // 0.0 - 1.0 (BKT posterior or score)
+  learningState?: import('../lib/learningState').ConceptLearningState
   status: ConceptNodeStatus
   observations: number
   cardCount: number

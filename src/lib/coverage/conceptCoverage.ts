@@ -124,12 +124,12 @@ export function computeTopicRollup(
 
   for (const c of concepts) {
     const state: ConceptProgressState = c.progress_state || 'unseen'
-    if (state === 'assessed') {
+    if (c.learning_state?.coverage === 'practised' || state === 'assessed') {
       assessedCount++
-      if (c.mastery_score_10 !== null && c.mastery_score_10 !== undefined) {
+      if (!c.learning_state && c.mastery_score_10 !== null && c.mastery_score_10 !== undefined) {
         totalAssessedScore += c.mastery_score_10
       }
-    } else if (state === 'introduced') {
+    } else if (c.learning_state?.coverage === 'introduced' || state === 'introduced') {
       introducedCount++
     } else {
       unseenCount++
@@ -137,10 +137,13 @@ export function computeTopicRollup(
   }
 
   const coverage = Math.round((assessedCount / concepts.length) * 100)
-  const averageMastery =
-    assessedCount > 0
-      ? Math.round((totalAssessedScore / assessedCount) * 10) / 10
-      : null
+  const learningStates = concepts.map(concept => concept.learning_state)
+  const demonstratedCount = learningStates.filter(state => state?.proficiency === 'demonstrated' || state?.proficiency === 'strong_evidence').length
+  const needsWorkCount = learningStates.filter(state => state?.proficiency === 'needs_work').length
+  const reviewsDue = learningStates.filter(state => state?.review === 'review_due' || state?.review === 'review_overdue').length
+  const averageMastery = learningStates.some(Boolean)
+    ? null
+    : assessedCount > 0 ? Math.round((totalAssessedScore / assessedCount) * 10) / 10 : null
 
   return {
     topic_id: topicId,
@@ -150,7 +153,11 @@ export function computeTopicRollup(
     unseen_concepts: unseenCount,
     coverage_percentage: coverage,
     mastery_score_10: averageMastery,
-    has_concept_data: true
+    has_concept_data: true,
+    practised_concepts: assessedCount,
+    demonstrated_concepts: demonstratedCount,
+    needs_work_concepts: needsWorkCount,
+    reviews_due: reviewsDue
   }
 }
 
@@ -285,6 +292,18 @@ export function buildCoveragePlan(concepts: TopicConcept[]): ConceptCoveragePlan
     const mastery = c.mastery_score_10
     const count = c.assessment_count || 0
     const isDue = Boolean(c.is_due_for_review)
+
+    if (c.learning_state) {
+      const learning = c.learning_state
+      if (learning.review === 'review_due' || learning.review === 'review_overdue' || learning.proficiency === 'needs_work' || learning.proficiency === 'developing') {
+        reviewCandidates.push(c)
+      } else if (learning.proficiency === 'demonstrated' || learning.proficiency === 'strong_evidence') {
+        doneCandidates.push(c)
+      } else {
+        newCandidates.push(c)
+      }
+      continue
+    }
 
     if (state === 'assessed') {
       if (isDue || mastery === null || mastery === undefined || mastery < 8.0 || count < 2) {
