@@ -91,7 +91,7 @@ describe('SessionConfigModal - New Content & Multi-Module Study', () => {
   })
 
   it('shows every gap, preselects the recommended gap, and carries selected targets plus optional time', async () => {
-    ;(window.electronAPI.tutorGetGapAnalysis as jest.Mock).mockResolvedValue({
+    (window.electronAPI.tutorGetGapAnalysis as jest.Mock).mockResolvedValue({
       items: [
         { type: 'struggled', topic: 'Utility Functions', topicId: 21, priority: 1, recommendedMinutes: 25, details: 'Low mastery' },
         { type: 'uncovered', topic: 'Indifference Curves', topicId: 22, priority: 2, recommendedMinutes: 20, details: 'Not yet assessed' }
@@ -269,6 +269,48 @@ describe('SessionConfigModal - New Content & Multi-Module Study', () => {
     expect(parsedConfig.material_ids).toEqual([7, 8])
     expect(parsedConfig.lecture_ids).toBeUndefined()
     expect(parsedConfig.annotation_ids).toEqual([])
+  })
+
+  it('preserves resolved curriculum materials through async loading and sends them with syllabus targets', async () => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      libraryGetFiles: jest.fn().mockResolvedValue([
+        { id: 7, filename: 'Lecture 1.pdf' },
+        { id: 8, filename: 'Chapter 1.pdf' }
+      ]),
+      listLectures: jest.fn().mockResolvedValue([]),
+      listDocumentAnnotations: jest.fn().mockResolvedValue([])
+    } as any
+
+    render(
+      <MemoryRouter>
+        <SessionConfigModal
+          subjectId={101}
+          subjectName="Principles of Microeconomics"
+          initialMode="syllabus"
+          initialModuleId={1}
+          initialTopics={['Budget constraints', 'Preferences']}
+          materialIds={[7, 8]}
+          materialId={7}
+          onClose={jest.fn()}
+        />
+      </MemoryRouter>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Material.*Study a file/i }))
+    const lecture = await screen.findByRole('button', { name: /Lecture 1\.pdf/i })
+    const chapter = await screen.findByRole('button', { name: /Chapter 1\.pdf/i })
+    expect(lecture).toHaveClass('bg-violet-600')
+    expect(chapter).toHaveClass('bg-violet-600')
+    expect(screen.getByText(/2 selected/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Syllabus/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Start session/i }))
+    const targetUrl = mockNavigate.mock.calls[0][0]
+    const configParam = new URLSearchParams(targetUrl.split('?')[1]).get('config')
+    const parsedConfig = JSON.parse(decodeURIComponent(configParam!))
+    expect(parsedConfig.target_topics).toEqual(['Budget constraints', 'Preferences'])
+    expect(parsedConfig.material_ids).toEqual([7, 8])
   })
 
   it('selects material annotations by default and removes them from tutor context when deselected', async () => {

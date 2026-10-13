@@ -162,25 +162,25 @@ describe('CurriculumView', () => {
     // 2. Click top banner "Study New Content (2)" button
     const bannerStudyBtns = screen.getAllByRole('button', { name: /study new content/i })
     fireEvent.click(bannerStudyBtns[0])
-    expect(mockOnStartTutor).toHaveBeenCalledWith(undefined, ['Glycolysis pathway', 'Fermentation alternative'], 'new_content')
+    expect(mockOnStartTutor).toHaveBeenCalledWith(undefined, ['Glycolysis pathway', 'Fermentation alternative'], 'new_content', [101, 102])
 
     // 3. Click individual topic badge
     mockOnStartTutor.mockClear()
     const newContentBadge = screen.getByRole('button', { name: /⚠️ New Content/i })
     fireEvent.click(newContentBadge)
-    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Glycolysis pathway'], 'new_content')
+    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Glycolysis pathway'], 'new_content', [101])
 
     // 4. Click gap badge
     mockOnStartTutor.mockClear()
     const gapBadge = screen.getByRole('button', { name: /✨ new/i })
     fireEvent.click(gapBadge)
-    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Fermentation alternative'], 'new_content')
+    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Fermentation alternative'], 'new_content', [102])
 
     // 5. Click module-level "Study New Content (2)" action button
     mockOnStartTutor.mockClear()
     const moduleStudyBtn = bannerStudyBtns[1]
     fireEvent.click(moduleStudyBtn)
-    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Glycolysis pathway', 'Fermentation alternative'], 'new_content')
+    expect(mockOnStartTutor).toHaveBeenCalledWith(1, ['Glycolysis pathway', 'Fermentation alternative'], 'new_content', [101, 102])
 
     // 6. Test "Select new content" quick action
     const selectNewBtn = screen.getByRole('button', { name: /select new content/i })

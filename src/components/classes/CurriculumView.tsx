@@ -27,7 +27,7 @@ interface CurriculumViewProps {
   modules: (SyllabusModule & { topics?: ModuleTopic[] })[]
   subjectName?: string
   moduleTutorStats?: Record<number, ModuleTutorStats>
-  onStartTutor: (moduleId?: number, selectedTopics?: string[], mode?: string) => void
+  onStartTutor: (moduleId?: number, selectedTopics?: string[], mode?: string, selectedTopicIds?: number[]) => void
   onStartSpacedReview?: (moduleId?: number, selectedTopics?: string[]) => void
   onGenerateCards: (moduleId: number, options?: ModuleCardGenOptions) => void
   onToggleTopic: (topicId: number, studied: boolean) => void
@@ -296,7 +296,7 @@ export default function CurriculumView({
               type="button"
               onClick={() => {
                 const allNewTitles = allNewTopics.map(item => item.topic.title)
-                onStartTutor(undefined, allNewTitles, 'new_content')
+                onStartTutor(undefined, allNewTitles, 'new_content', allNewTopics.map(item => item.topic.id))
               }}
               className="px-3.5 py-1.5 sm:py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
             >
@@ -561,7 +561,7 @@ export default function CurriculumView({
                             draggable={Boolean(onReorderTopics)}
                             onDragStart={() => {
                               if (onReorderTopics) {
-                                ;(window as Window & { __neuronDraggedTopic?: { moduleId: number; topicId: number } }).__neuronDraggedTopic = { moduleId: mod.id, topicId: topic.id }
+                                (window as Window & { __neuronDraggedTopic?: { moduleId: number; topicId: number } }).__neuronDraggedTopic = { moduleId: mod.id, topicId: topic.id }
                               }
                             }}
                             onDragOver={(event) => {
@@ -618,7 +618,7 @@ export default function CurriculumView({
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    onStartTutor(mod.id, [topic.title], 'new_content')
+                                    onStartTutor(mod.id, [topic.title], 'new_content', [topic.id])
                                   }}
                                   title="Newly added learning gap. Click to study with AI Tutor."
                                   className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 flex items-center gap-1 hover:bg-purple-200 dark:hover:bg-purple-900 transition-colors cursor-pointer flex-shrink-0"
@@ -633,7 +633,7 @@ export default function CurriculumView({
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    onStartTutor(mod.id, [topic.title], 'new_content')
+                                    onStartTutor(mod.id, [topic.title], 'new_content', [topic.id])
                                   }}
                                   title="New materials have added new concepts. Click to study with AI Tutor."
                                   className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 flex items-center gap-1 hover:bg-amber-200 dark:hover:bg-amber-900 transition-colors cursor-pointer flex-shrink-0"
@@ -804,7 +804,7 @@ export default function CurriculumView({
                                 <div className="flex items-center gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => onStartTutor(mod.id, [topic.title], 'syllabus')}
+                                    onClick={() => onStartTutor(mod.id, [topic.title], 'syllabus', [topic.id])}
                                     className="text-[11px] font-medium px-2.5 py-0.5 rounded bg-violet-600 hover:bg-violet-700 text-white transition-colors"
                                   >
                                     Study with Tutor
@@ -897,12 +897,10 @@ export default function CurriculumView({
                 <div className="px-4 py-3 flex items-center gap-2 border-t border-slate-100 dark:border-slate-700 flex-wrap">
                   <button
                     onClick={() => {
-                      const chosenTopicTitles = modTopics.length > 0
-                        ? (selectedCount > 0
-                            ? modTopics.filter(t => selectedSet.has(t.id)).map(t => t.title)
-                            : modTopics.map(t => t.title))
+                      const chosenTopics = modTopics.length > 0
+                        ? (selectedCount > 0 ? modTopics.filter(t => selectedSet.has(t.id)) : modTopics)
                         : []
-                      onStartTutor(mod.id, chosenTopicTitles)
+                      onStartTutor(mod.id, chosenTopics.map(topic => topic.title), undefined, chosenTopics.map(topic => topic.id))
                     }}
                     className="flex-1 min-w-[120px] px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm"
                   >
@@ -914,10 +912,10 @@ export default function CurriculumView({
                     <button
                       type="button"
                       onClick={() => {
-                        const newTitles = modTopics
-                          .filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
-                          .map(t => t.title)
-                        onStartTutor(mod.id, newTitles, 'new_content')
+                        const newTopics = modTopics.filter(t => Boolean(t.has_new_material || t.is_gap) && !t.completed && !(t as any).studied)
+                        const newTitles = newTopics.map(t => t.title)
+                        const newTopicIds = newTopics.map(t => t.id)
+                        onStartTutor(mod.id, newTitles, 'new_content', newTopicIds)
                       }}
                       title="Launch AI Tutor focusing on all new and updated topics in this module"
                       className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"

@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/appStore'
 import CurriculumView from '../../components/classes/CurriculumView'
 import SessionConfigModal from '../../components/tutor/SessionConfigModal'
 import CurriculumProgressBar from '../../components/classes/CurriculumProgressBar'
+import { resolveCurriculumMaterialIds } from '../../lib/curriculumMaterialSelection'
 import LoadingProgressBar from '../../components/common/LoadingProgressBar'
 import type { SyllabusModule, ModuleTopic, Subject, Material, ModuleTutorStats } from '../../types'
 
@@ -26,6 +27,7 @@ export default function ClassOverview(): React.JSX.Element {
     subjectId: number
     subjectName: string
     materialId?: number
+    materialIds?: number[]
     materialName?: string
     initialTopic?: string
     initialTopics?: string[]
@@ -77,13 +79,16 @@ export default function ClassOverview(): React.JSX.Element {
 
   // ── Actions ──
 
-  function handleStartTutor(moduleId?: number, selectedTopics?: string[], mode?: string): void {
+  function handleStartTutor(moduleId?: number, selectedTopics?: string[], mode?: string, selectedTopicIds?: number[]): void {
     if (subject) {
+      const materialIds = resolveCurriculumMaterialIds(moduleId, selectedTopicIds || [], modules, materials)
       setShowConfigModal({
         subjectId,
         subjectName: subject.name,
         moduleId,
         initialTopics: selectedTopics,
+        materialIds,
+        materialId: materialIds[0],
         initialMode: (mode as any) || (moduleId ? 'syllabus' : 'new_content')
       })
     }
@@ -345,6 +350,7 @@ export default function ClassOverview(): React.JSX.Element {
           subjectId={showConfigModal.subjectId}
           subjectName={showConfigModal.subjectName}
           materialId={showConfigModal.materialId}
+          materialIds={showConfigModal.materialIds}
           materialName={showConfigModal.materialName}
           initialTopic={showConfigModal.initialTopic}
           initialTopics={showConfigModal.initialTopics}

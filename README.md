@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/robcarlson006/neuron/releases/tag/v5.5.0"><img alt="Release 5.5.0" src="https://img.shields.io/badge/release-v5.5.0-5b5bd6"></a>
+  <a href="https://github.com/robcarlson006/neuron/releases/tag/v5.5.1"><img alt="Release 5.5.1" src="https://img.shields.io/badge/release-v5.5.1-5b5bd6"></a>
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white">
   <img alt="Electron" src="https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white">
   <img alt="Vite" src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white">
@@ -58,17 +58,17 @@ Your subject material and learning history are managed locally. When you configu
 
 ## Downloads
 
-Get the latest release from [GitHub Releases](https://github.com/robcarlson006/neuron/releases/latest). Version **5.5.0** installers:
+Get the latest release from [GitHub Releases](https://github.com/robcarlson006/neuron/releases/latest). Version **5.5.1** installers:
 
 | Platform | Installer | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [Neuron-5.5.0-arm64.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron-5.5.0-arm64.dmg) | M-series Macs |
-| macOS Intel | [Neuron-5.5.0.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron-5.5.0.dmg) | Intel Macs |
-| Windows | [Neuron Setup 5.5.0.exe](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron.Setup.5.5.0.exe) | 64-bit installer |
-| Linux | [Neuron-5.5.0.AppImage](https://github.com/robcarlson006/neuron/releases/download/v5.5.0/Neuron-5.5.0.AppImage) | x64 AppImage |
+| macOS Apple Silicon | [Neuron-5.5.1-arm64.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.5.1/Neuron-5.5.1-arm64.dmg) | M-series Macs |
+| macOS Intel | [Neuron-5.5.1.dmg](https://github.com/robcarlson006/neuron/releases/download/v5.5.1/Neuron-5.5.1.dmg) | Intel Macs |
+| Windows | [Neuron Setup 5.5.1.exe](https://github.com/robcarlson006/neuron/releases/download/v5.5.1/Neuron.Setup.5.5.1.exe) | 64-bit installer |
+| Linux | [Neuron-5.5.1.AppImage](https://github.com/robcarlson006/neuron/releases/download/v5.5.1/Neuron-5.5.1.AppImage) | x64 AppImage |
 
 > [!NOTE]
-> If an asset link is not available yet, open the [v5.5.0 release page](https://github.com/robcarlson006/neuron/releases/tag/v5.5.0) to see the published downloads.
+> If an asset link is not available yet, open the [v5.5.1 release page](https://github.com/robcarlson006/neuron/releases/tag/v5.5.1) to see the published downloads.
 
 ### macOS: Gatekeeper
 
@@ -89,8 +89,8 @@ Windows SmartScreen may show **Windows protected your PC** for an unsigned insta
 Make the file executable, then launch it:
 
 ```bash
-chmod +x Neuron-5.5.0.AppImage
-./Neuron-5.5.0.AppImage
+chmod +x Neuron-5.5.1.AppImage
+./Neuron-5.5.1.AppImage
 ```
 
 ## Quick start

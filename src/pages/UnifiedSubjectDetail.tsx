@@ -14,6 +14,7 @@ import KnowledgeGraphView from '../components/graphs/KnowledgeGraphView'
 import { calculateExamReadiness, type CardWithSchedule } from '../lib/readinessEngine'
 import type { Card, CardFolder, CardSchedule, Deadline, SyllabusModule, ModuleTopic, Material, FolderSyncEvent, Lecture, ModuleTutorStats, ConceptMastery, ConceptDependency, ManualSyllabusWeek } from '../types'
 import { normalizeSyllabusResult } from '../lib/syllabusResult'
+import { resolveCurriculumMaterialIds } from '../lib/curriculumMaterialSelection'
 import { useLectureRecordingStore } from '../store/lectureRecordingStore'
 import LectureAudioPlayer from '../components/classes/LectureAudioPlayer'
 import LectureNotesModal from '../components/classes/LectureNotesModal'
@@ -476,13 +477,16 @@ export default function UnifiedSubjectDetail(): React.JSX.Element {
   }
 
   // ── Curriculum action handlers ──
-  function handleStartTutor(moduleId?: number, selectedTopics?: string[], mode?: string): void {
+  function handleStartTutor(moduleId?: number, selectedTopics?: string[], mode?: string, selectedTopicIds?: number[]): void {
     if (subject) {
+      const materialIds = resolveCurriculumMaterialIds(moduleId, selectedTopicIds || [], modules, materials)
       setShowConfigModal({
         subjectId,
         subjectName: subject.name,
         moduleId,
         initialTopics: selectedTopics,
+        materialIds,
+        materialId: materialIds[0],
         initialMode: (mode as any) || (moduleId ? 'syllabus' : 'new_content')
       })
     }

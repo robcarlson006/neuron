@@ -233,7 +233,6 @@ export default function SessionConfigModal({
           const annotationMap = Object.fromEntries(lectureAnnotationEntries) as Record<number, DocumentAnnotation[]>
           setLectureAnnotationsById(annotationMap)
           setSelectedLectureAnnotationIds([])
-          if (propMaterialId) setSelectedMaterialIds([propMaterialId])
         }
       } catch (err) {
         console.error('Failed to load syllabus/materials for config modal:', err)
@@ -381,7 +380,7 @@ export default function SessionConfigModal({
       // selection even if Start is clicked before it finishes, so startup can
       // report unavailable sources instead of silently collapsing to ID 1.
       chosenMaterialIds = [...new Set(selectedMaterialIds)]
-      chosenMaterialId = chosenMaterialIds[0] || propMaterialId
+      chosenMaterialId = chosenMaterialIds[0]
       chosenMaterialName = chosenMaterialIds.length === 1
         ? activeMats.find(material => material.id === chosenMaterialIds[0])?.filename || propMaterialName
         : chosenMaterialIds.length > 1
@@ -403,7 +402,9 @@ export default function SessionConfigModal({
       depth_level: finalDepth,
       never_studied: neverStudied || studyMode === 'new_content',
       material_id: chosenMaterialId,
-      material_ids: studyMode === 'material' ? chosenMaterialIds : undefined,
+      // Curriculum launch may start in Syllabus mode while carrying explicit
+      // resolved source IDs. Keep that same source scope in the session request.
+      material_ids: selectedMaterialIds.length > 0 ? [...new Set(selectedMaterialIds)] : undefined,
       material_name: chosenMaterialName,
       annotation_ids: studyMode === 'material'
         ? [...selectedAnnotationIds, ...selectedLectureAnnotationIds]
@@ -1044,7 +1045,7 @@ export default function SessionConfigModal({
                 ) : (
                   <div>
                     <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-1">
-                      Choose Material / Document:
+                      Choose Material / Document ({selectedMaterialIds.length} selected):
                     </label>
                     <div className="space-y-1.5 max-h-40 overflow-y-auto">
                       {materialsList.map(mat => {
